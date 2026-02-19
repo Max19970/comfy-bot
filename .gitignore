@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Local environment and secrets
+.env
+
+# Tool caches
+.ruff_cache/
+.pytest_cache/
+.mypy_cache/
+
+# IDE
+.idea/
+.vscode/
+
+# Logs and temporary files
+*.log
+*.tmp
+
+# Runtime user data
+presets/*.json
+!presets/.gitkeep
+smart_prompt_guides/*.json
+!smart_prompt_guides/.gitkeep
+sessions/*.json
+!sessions/.gitkeep

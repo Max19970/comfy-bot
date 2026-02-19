@@ -1,0 +1,241 @@
+from __future__ import annotations
+
+import asyncio
+from dataclasses import asdict, dataclass
+from typing import Awaitable, Callable
+
+from aiogram import F, Router
+from aiogram.filters import Command
+from aiogram.fsm.context import FSMContext
+from aiogram.types import (
+    CallbackQuery,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Message,
+)
+
+from comfyui_client import ComfyUIClient, GenerationParams
+from core.runtime import PromptRequest, RuntimeStore
+
+
+@dataclass
+class PromptEditorFlowHandlersDeps:
+    runtime: RuntimeStore
+    client: ComfyUIClient
+    callback_user_id: Callable[[CallbackQuery], int]
+    message_user_id: Callable[[Message], int]
+    ensure_models: Callable[[Message], Awaitable[bool]]
+    default_params: Callable[[], GenerationParams]
+    open_prompt_request: Callable[..., Awaitable[None]]
+    require_prompt_request_for_callback: Callable[
+        [CallbackQuery], Awaitable[tuple[int, PromptRequest] | None]
+    ]
+    show_prompt_editor: Callable[..., Awaitable[None]]
+    changed_params_count: Callable[[GenerationParams], int]
+    run_generate_operation: Callable[[Message, FSMContext, int], Awaitable[None]]
+
+
+def register_prompt_editor_flow_handlers(
+    router: Router,
+    deps: PromptEditorFlowHandlersDeps,
+) -> None:
+    def _latest_user_generation(uid: int):
+        candidates = [
+            item
+            for item in deps.runtime.active_generations.values()
+            if item.owner_uid == uid
+        ]
+        if not candidates:
+            return None
+        candidates.sort(key=lambda item: item.created_at, reverse=True)
+        return candidates[0]
+
+    @router.message(Command("generate"))
+    async def cmd_generate(msg: Message, state: FSMContext):
+        if not await deps.ensure_models(msg):
+            return
+        await deps.open_prompt_request(
+            msg,
+            state,
+            deps.message_user_id(msg),
+            deps.default_params(),
+            operation="generate",
+            notice="✨ Новый запрос создан.",
+        )
+
+    @router.message(Command("repeat"))
+    async def cmd_repeat(msg: Message, state: FSMContext):
+        uid = deps.message_user_id(msg)
+        if uid not in deps.runtime.last_params:
+            await msg.answer("❌ Нет предыдущей генерации. Используйте /generate.")
+            return
+        if not await deps.ensure_models(msg):
+            return
+
+        params = GenerationParams(**asdict(deps.runtime.last_params[uid]))
+        params.seed = -1
+        await deps.open_prompt_request(
+            msg,
+            state,
+            uid,
+            params,
+            operation="generate",
+            notice="🔁 Загружен последний запрос (seed = random).",
+        )
+
+    @router.callback_query(F.data == "pe:back")
+    async def pe_back(cb: CallbackQuery, state: FSMContext):
+        uid = deps.callback_user_id(cb)
+        await deps.show_prompt_editor(cb.message, state, uid, edit=True)
+        await cb.answer()
+
+    @router.callback_query(F.data == "pe:cancel")
+    async def pe_cancel(cb: CallbackQuery, state: FSMContext):
+        payload = await deps.require_prompt_request_for_callback(cb)
+        if not payload:
+            return
+
+        uid, req = payload
+        changed_count = deps.changed_params_count(req.params)
+        if changed_count > 0:
+            kb = InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        InlineKeyboardButton(
+                            text="✅ Отменить",
+                            callback_data="pe:cancel:confirm",
+                        ),
+                        InlineKeyboardButton(
+                            text="💾 Сохранить",
+                            callback_data="pe:save",
+                        ),
+                    ],
+                    [
+                        InlineKeyboardButton(
+                            text="⬅️ Назад",
+                            callback_data="pe:back",
+                        )
+                    ],
+                ]
+            )
+            await cb.message.edit_text(
+                f"⚠️ Вы изменили {changed_count} параметров. Точно отменить редактор?",
+                reply_markup=kb,
+            )
+            await cb.answer()
+            return
+
+        deps.runtime.active_prompt_requests.pop(uid, None)
+        await state.clear()
+        await cb.message.edit_text("❌ Операция отменена.")
+        await cb.answer()
+
+    @router.callback_query(F.data == "pe:cancel:confirm")
+    async def pe_cancel_confirm(cb: CallbackQuery, state: FSMContext):
+        uid = deps.callback_user_id(cb)
+        deps.runtime.active_prompt_requests.pop(uid, None)
+        await state.clear()
+        await cb.message.edit_text("❌ Операция отменена.")
+        await cb.answer()
+
+    @router.callback_query(F.data.startswith("pe:gen:cancel"))
+    async def pe_gen_cancel(cb: CallbackQuery, state: FSMContext):
+        uid = deps.callback_user_id(cb)
+        data_value = cb.data or ""
+        parts = data_value.split(":")
+        generation_id = parts[3] if len(parts) >= 4 else ""
+
+        gen = None
+        if generation_id and generation_id != "pending":
+            candidate = deps.runtime.active_generations.get(generation_id)
+            if candidate and candidate.owner_uid == uid:
+                gen = candidate
+        if gen is None:
+            gen = _latest_user_generation(uid)
+
+        if gen:
+            if not gen.task.done():
+                gen.task.cancel()
+            if gen.prompt_id:
+                asyncio.create_task(deps.client.cancel_prompt(gen.prompt_id))
+            await cb.answer("❌ Отменяю...", show_alert=False)
+        else:
+            await cb.answer("Нечего отменять.", show_alert=True)
+
+    @router.callback_query(F.data == "pe:proceed")
+    async def pe_proceed(cb: CallbackQuery, state: FSMContext):
+        payload = await deps.require_prompt_request_for_callback(cb)
+        if not payload:
+            return
+
+        uid, req = payload
+        if req.operation == "generate":
+            if not req.params.positive.strip():
+                kb = InlineKeyboardMarkup(
+                    inline_keyboard=[
+                        [
+                            InlineKeyboardButton(
+                                text="✅ Да",
+                                callback_data="pe:gen:empty:yes",
+                            ),
+                            InlineKeyboardButton(
+                                text="❌ Нет",
+                                callback_data="pe:gen:empty:no",
+                            ),
+                        ]
+                    ]
+                )
+                await cb.message.edit_text(
+                    "⚠️ Positive prompt пустой. Всё равно генерировать?",
+                    reply_markup=kb,
+                )
+                await cb.answer()
+                return
+
+            await cb.answer()
+            await deps.run_generate_operation(cb.message, state, uid)
+            return
+        await cb.answer()
+        await cb.message.answer(f"Неизвестная операция: {req.operation}")
+
+    @router.callback_query(F.data == "pe:gen:empty:yes")
+    async def pe_generate_empty_yes(cb: CallbackQuery, state: FSMContext):
+        payload = await deps.require_prompt_request_for_callback(cb)
+        if not payload:
+            return
+
+        uid, _ = payload
+        await cb.answer()
+        await deps.run_generate_operation(cb.message, state, uid)
+
+    @router.callback_query(F.data == "pe:gen:empty:no")
+    async def pe_generate_empty_no(cb: CallbackQuery, state: FSMContext):
+        payload = await deps.require_prompt_request_for_callback(cb)
+        if not payload:
+            return
+
+        uid, _ = payload
+        await deps.show_prompt_editor(
+            cb.message,
+            state,
+            uid,
+            edit=True,
+            notice="ℹ️ Генерация отменена: заполните Positive или подтвердите пустой prompt.",
+        )
+        await cb.answer()
+
+    @router.callback_query(F.data == "pe:gen:back")
+    async def pe_generate_back_to_editor(cb: CallbackQuery, state: FSMContext):
+        payload = await deps.require_prompt_request_for_callback(cb)
+        if not payload:
+            return
+
+        uid, _ = payload
+        await deps.show_prompt_editor(
+            cb.message,
+            state,
+            uid,
+            edit=True,
+            notice="↩️ Возвращаемся в редактор.",
+        )
+        await cb.answer()

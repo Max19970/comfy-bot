@@ -22,7 +22,7 @@ from aiogram.types import (
 
 from comfyui_client import ComfyUIClient
 from core.html_utils import h
-from core.image_utils import image_dimensions
+from core.image_utils import image_dimensions, resize_image_by_percent, shrink_image_to_box
 from core.models import GenerationParams
 from core.runtime import ActiveGeneration, PreviewArtifact, PromptRequest, RuntimeStore
 from core.ui_copy import START_TEXT, main_menu_keyboard
@@ -98,19 +98,60 @@ def register_prompt_editor_send_handlers(
             except TelegramBadRequest:
                 pass
 
-    def _artifact_menu_keyboard(artifact: PreviewArtifact) -> InlineKeyboardMarkup:
-        params = artifact.params
-        sampler_status = "✅" if artifact.enable_sampler_pass else "❌"
-        hires_status = "✅" if params.enable_hires_fix else "❌"
-        freeu_status = "✅" if params.enable_freeu else "❌"
-        pag_status = "✅" if params.enable_pag else "❌"
-        upsc_status = "✅" if params.upscale_model else "❌"
-
+    def _artifact_hub_keyboard(artifact: PreviewArtifact) -> InlineKeyboardMarkup:
         return InlineKeyboardMarkup(
             inline_keyboard=[
                 [
                     InlineKeyboardButton(
-                        text=f"🔁 Сэмплер {sampler_status}",
+                        text="📐 Сэмплинг",
+                        callback_data=f"img:sub:smp:{artifact.artifact_id}",
+                    ),
+                    InlineKeyboardButton(
+                        text="✨ Улучшения",
+                        callback_data=f"img:sub:enh:{artifact.artifact_id}",
+                    ),
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="🖼 Размер",
+                        callback_data=f"img:sub:size:{artifact.artifact_id}",
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="🧬 В редактор",
+                        callback_data=f"img:to_editor:{artifact.artifact_id}",
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="▶️ Запустить улучшения",
+                        callback_data=f"img:run:{artifact.artifact_id}",
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="⬅️ Назад",
+                        callback_data=f"img:back:{artifact.artifact_id}",
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="⬅️ В меню",
+                        callback_data="menu:root",
+                    )
+                ],
+            ]
+        )
+
+    def _artifact_sampling_keyboard(artifact: PreviewArtifact) -> InlineKeyboardMarkup:
+        params = artifact.params
+        sampler_status = "✅" if artifact.enable_sampler_pass else "❌"
+        return InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text=f"🔁 Сэмплер-проход {sampler_status}",
                         callback_data=f"img:tgl:smp:{artifact.artifact_id}",
                     )
                 ],
@@ -140,6 +181,23 @@ def register_prompt_editor_send_handlers(
                         callback_data=f"img:menu:scheduler:{artifact.artifact_id}",
                     ),
                 ],
+                [
+                    InlineKeyboardButton(
+                        text="⬅️ Назад",
+                        callback_data=f"img:open:{artifact.artifact_id}",
+                    )
+                ],
+            ]
+        )
+
+    def _artifact_enhancements_keyboard(artifact: PreviewArtifact) -> InlineKeyboardMarkup:
+        params = artifact.params
+        hires_status = "✅" if params.enable_hires_fix else "❌"
+        freeu_status = "✅" if params.enable_freeu else "❌"
+        pag_status = "✅" if params.enable_pag else "❌"
+        upsc_status = "✅" if params.upscale_model else "❌"
+        return InlineKeyboardMarkup(
+            inline_keyboard=[
                 [
                     InlineKeyboardButton(
                         text=f"🛠 Hi-res {hires_status}",
@@ -178,37 +236,47 @@ def register_prompt_editor_send_handlers(
                 ],
                 [
                     InlineKeyboardButton(
-                        text="🧬 В редактор",
-                        callback_data=f"img:to_editor:{artifact.artifact_id}",
-                    )
-                ],
-                [
-                    InlineKeyboardButton(
-                        text="▶️ Запустить улучшения",
-                        callback_data=f"img:run:{artifact.artifact_id}",
-                    )
-                ],
-                [
-                    InlineKeyboardButton(
                         text="⬅️ Назад",
-                        callback_data=f"img:back:{artifact.artifact_id}",
-                    )
-                ],
-                [
-                    InlineKeyboardButton(
-                        text="⬅️ В меню",
-                        callback_data="menu:root",
+                        callback_data=f"img:open:{artifact.artifact_id}",
                     )
                 ],
             ]
         )
 
-    def _artifact_menu_caption(artifact: PreviewArtifact) -> str:
+    def _artifact_size_keyboard(artifact: PreviewArtifact) -> InlineKeyboardMarkup:
+        shrink_label = "off"
+        if artifact.shrink_width and artifact.shrink_height:
+            shrink_label = f"{artifact.shrink_width}x{artifact.shrink_height}"
+        return InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text=f"🗜 Сжатие {artifact.compression_percent}%",
+                        callback_data=f"img:menu:cmp:{artifact.artifact_id}",
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text=f"📦 Shrink {shrink_label}",
+                        callback_data=f"img:menu:shk:{artifact.artifact_id}",
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="⬅️ Назад",
+                        callback_data=f"img:open:{artifact.artifact_id}",
+                    )
+                ],
+            ]
+        )
+
+    def _artifact_hub_caption(artifact: PreviewArtifact) -> str:
         params = artifact.params
         lines = [
             "✨ <b>Улучшения для этой картинки</b>",
             f"Шаг цепочки: <code>{artifact.generation_step}</code>",
             f"Seed: <code>{artifact.used_seed}</code>",
+            f"Размер: <code>{params.width}x{params.height}</code>",
         ]
         modes: list[str] = []
         if artifact.enable_sampler_pass:
@@ -221,8 +289,79 @@ def register_prompt_editor_send_handlers(
             modes.append("🎯 pag")
         if params.upscale_model:
             modes.append("🔍 upscale")
+        if artifact.compression_percent < 100:
+            modes.append(f"🗜 сжатие {artifact.compression_percent}%")
+        if artifact.shrink_width and artifact.shrink_height:
+            modes.append(f"📦 shrink {artifact.shrink_width}x{artifact.shrink_height}")
         lines.append("Режимы: " + (", ".join(modes) if modes else "<i>не выбраны</i>"))
+        lines.append("Откройте нужный тематический раздел для настройки.")
         return "\n".join(lines)
+
+    def _artifact_sampling_caption(artifact: PreviewArtifact) -> str:
+        params = artifact.params
+        sampler_pass = "✅ включен" if artifact.enable_sampler_pass else "❌ выключен"
+        return (
+            "📐 <b>Сэмплинг</b>\n"
+            "\n"
+            f"<b>Сэмплер-проход:</b> {sampler_pass}\n"
+            f"<b>Steps:</b> <code>{params.steps}</code>  "
+            f"<b>CFG:</b> <code>{params.cfg}</code>\n"
+            f"<b>Denoise:</b> <code>{params.denoise}</code>\n"
+            f"<b>Sampler:</b> <code>{h(params.sampler)}</code>\n"
+            f"<b>Scheduler:</b> <code>{h(params.scheduler)}</code>"
+        )
+
+    def _artifact_enhancements_caption(artifact: PreviewArtifact) -> str:
+        params = artifact.params
+        upscaler = h(params.upscale_model) if params.upscale_model else "off"
+        return (
+            "✨ <b>Улучшения</b>\n"
+            "\n"
+            f"<b>Hi-res:</b> {'✅' if params.enable_hires_fix else '❌'}  "
+            f"<b>Scale:</b> <code>{params.hires_scale}</code>  "
+            f"<b>Denoise:</b> <code>{params.hires_denoise}</code>\n"
+            f"<b>FreeU:</b> {'✅' if params.enable_freeu else '❌'}\n"
+            f"<b>PAG:</b> {'✅' if params.enable_pag else '❌'}  "
+            f"<b>Scale:</b> <code>{params.pag_scale}</code>\n"
+            f"<b>Upscaler:</b> <code>{upscaler}</code>"
+        )
+
+    def _artifact_size_caption(artifact: PreviewArtifact) -> str:
+        params = artifact.params
+        shrink_line = "off"
+        if artifact.shrink_width and artifact.shrink_height:
+            shrink_line = f"{artifact.shrink_width}x{artifact.shrink_height}"
+        return (
+            "🖼 <b>Размер</b>\n"
+            "\n"
+            f"<b>Текущий размер:</b> <code>{params.width}x{params.height}</code>\n"
+            f"<b>Сжатие:</b> <code>{artifact.compression_percent}%</code>\n"
+            f"<b>Shrink:</b> <code>{shrink_line}</code>\n"
+            "\n"
+            "Сжатие применяется в самом конце улучшения, уже после "
+            "sampler/hi-res/upscaler, с сохранением пропорций.\n"
+            "Shrink (XxY) ограничивает итог по рамке без апскейла."
+        )
+
+    def _artifact_menu_caption(artifact: PreviewArtifact, menu: str = "hub") -> str:
+        if menu == "smp":
+            return _artifact_sampling_caption(artifact)
+        if menu == "enh":
+            return _artifact_enhancements_caption(artifact)
+        if menu == "size":
+            return _artifact_size_caption(artifact)
+        return _artifact_hub_caption(artifact)
+
+    def _artifact_menu_keyboard(
+        artifact: PreviewArtifact, menu: str = "hub"
+    ) -> InlineKeyboardMarkup:
+        if menu == "smp":
+            return _artifact_sampling_keyboard(artifact)
+        if menu == "enh":
+            return _artifact_enhancements_keyboard(artifact)
+        if menu == "size":
+            return _artifact_size_keyboard(artifact)
+        return _artifact_hub_keyboard(artifact)
 
     async def _edit_preview_message(
         cb: CallbackQuery,
@@ -243,11 +382,42 @@ def register_prompt_editor_send_handlers(
         except TelegramBadRequest:
             await message.answer(caption, reply_markup=reply_markup)
 
+    async def _render_artifact_menu(
+        cb: CallbackQuery,
+        artifact: PreviewArtifact,
+        *,
+        menu: str = "hub",
+    ) -> None:
+        await _edit_preview_message(
+            cb,
+            caption=_artifact_menu_caption(artifact, menu),
+            reply_markup=_artifact_menu_keyboard(artifact, menu),
+        )
+
+    def _submenu_back_callback(menu_key: str, artifact_id: str) -> str:
+        if menu_key in {"steps", "cfg", "den", "sampler", "scheduler"}:
+            return f"img:sub:smp:{artifact_id}"
+        if menu_key in {"hrs", "hrd", "pags", "up"}:
+            return f"img:sub:enh:{artifact_id}"
+        if menu_key in {"cmp", "shk"}:
+            return f"img:sub:size:{artifact_id}"
+        return f"img:open:{artifact_id}"
+
+    def _submenu_for_field(field: str) -> str:
+        if field in {"steps", "cfg", "denoise"}:
+            return "smp"
+        if field in {"hires_scale", "hires_denoise", "pag_scale"}:
+            return "enh"
+        if field in {"compression_percent", "shrink_size"}:
+            return "size"
+        return "hub"
+
     def _simple_value_keyboard(
         *,
         artifact_id: str,
         key: str,
         values: list[str],
+        back_callback: str,
     ) -> InlineKeyboardMarkup:
         rows: list[list[InlineKeyboardButton]] = []
         row: list[InlineKeyboardButton] = []
@@ -275,7 +445,7 @@ def register_prompt_editor_send_handlers(
             [
                 InlineKeyboardButton(
                     text="⬅️ Назад",
-                    callback_data=f"img:open:{artifact_id}",
+                    callback_data=back_callback,
                 )
             ]
         )
@@ -287,6 +457,7 @@ def register_prompt_editor_send_handlers(
         menu: str,
         items: list[str],
         page: int,
+        back_callback: str,
     ) -> InlineKeyboardMarkup:
         page_size = 8
         total_pages = max(1, (len(items) + page_size - 1) // page_size)
@@ -325,11 +496,70 @@ def register_prompt_editor_send_handlers(
             [
                 InlineKeyboardButton(
                     text="⬅️ Назад",
-                    callback_data=f"img:open:{artifact_id}",
+                    callback_data=back_callback,
                 )
             ]
         )
         return InlineKeyboardMarkup(inline_keyboard=rows)
+
+    def _shrink_value_keyboard(*, artifact_id: str, back_callback: str) -> InlineKeyboardMarkup:
+        rows = [
+            [
+                InlineKeyboardButton(
+                    text="1024x1024",
+                    callback_data=f"img:set:shrink_size:{artifact_id}:1024x1024",
+                ),
+                InlineKeyboardButton(
+                    text="1280x720",
+                    callback_data=f"img:set:shrink_size:{artifact_id}:1280x720",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="1920x1080",
+                    callback_data=f"img:set:shrink_size:{artifact_id}:1920x1080",
+                ),
+                InlineKeyboardButton(
+                    text="2048x2048",
+                    callback_data=f"img:set:shrink_size:{artifact_id}:2048x2048",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="❌ Выключить",
+                    callback_data=f"img:set:shrink_size:{artifact_id}:off",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="✏️ Ввести XxY",
+                    callback_data=f"img:custom:shrink_size:{artifact_id}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="⬅️ Назад",
+                    callback_data=back_callback,
+                )
+            ],
+        ]
+        return InlineKeyboardMarkup(inline_keyboard=rows)
+
+    def _parse_shrink_size(value: str) -> tuple[int, int] | None:
+        raw = value.strip().lower().replace(" ", "").replace("х", "x")
+        if "x" not in raw:
+            return None
+        left, right = raw.split("x", 1)
+        if not left or not right:
+            return None
+        try:
+            width = int(left)
+            height = int(right)
+        except ValueError:
+            return None
+        if not (1 <= width <= 4096 and 1 <= height <= 4096):
+            return None
+        return (width, height)
 
     def _custom_field_meta(field: str) -> tuple[str, float | int, float | int]:
         if field == "steps":
@@ -344,6 +574,8 @@ def register_prompt_editor_send_handlers(
             return ("Hi-res denoise", 0.0, 1.0)
         if field == "pag_scale":
             return ("PAG scale", 0.5, 10.0)
+        if field == "compression_percent":
+            return ("Сжатие (%)", 1, 100)
         raise ValueError("unknown field")
 
     def _apply_field_value(
@@ -372,6 +604,9 @@ def register_prompt_editor_send_handlers(
             return True
         if field == "pag_scale":
             artifact.params.pag_scale = float(value)
+            return True
+        if field == "compression_percent":
+            artifact.compression_percent = int(value)
             return True
         return False
 
@@ -523,11 +758,30 @@ def register_prompt_editor_send_handlers(
             await cb.answer("⚠️ Картинка не найдена.", show_alert=True)
             return
 
-        await _edit_preview_message(
-            cb,
-            caption=_artifact_menu_caption(artifact),
-            reply_markup=_artifact_menu_keyboard(artifact),
-        )
+        await _render_artifact_menu(cb, artifact, menu="hub")
+        await cb.answer()
+
+    @router.callback_query(F.data.startswith("img:sub:"))
+    async def image_open_submenu(cb: CallbackQuery):
+        uid = cb.from_user.id
+        data_value = cb.data or ""
+        parts = data_value.split(":")
+        if len(parts) != 4:
+            await cb.answer("⚠️ Некорректный запрос.", show_alert=True)
+            return
+
+        menu_key = parts[2]
+        artifact_id = parts[3]
+        artifact = _user_artifact(uid, artifact_id)
+        if not artifact:
+            await cb.answer("⚠️ Картинка не найдена.", show_alert=True)
+            return
+
+        if menu_key not in {"smp", "enh", "size"}:
+            await cb.answer("⚠️ Неизвестный раздел.", show_alert=True)
+            return
+
+        await _render_artifact_menu(cb, artifact, menu=menu_key)
         await cb.answer()
 
     @router.callback_query(F.data.startswith("img:tgl:"))
@@ -548,10 +802,12 @@ def register_prompt_editor_send_handlers(
 
         if toggle_key == "smp":
             artifact.enable_sampler_pass = not artifact.enable_sampler_pass
+            submenu = "smp"
         elif toggle_key == "hi":
             artifact.params.enable_hires_fix = not artifact.params.enable_hires_fix
             if artifact.params.enable_hires_fix:
                 artifact.enable_sampler_pass = True
+            submenu = "enh"
         elif toggle_key == "fu":
             if not deps.client.info.freeu_supported:
                 await cb.answer("⚠️ FreeU не поддерживается сервером.", show_alert=True)
@@ -559,6 +815,7 @@ def register_prompt_editor_send_handlers(
             artifact.params.enable_freeu = not artifact.params.enable_freeu
             if artifact.params.enable_freeu:
                 artifact.enable_sampler_pass = True
+            submenu = "enh"
         elif toggle_key == "pag":
             if not deps.client.info.pag_supported:
                 await cb.answer("⚠️ PAG не поддерживается сервером.", show_alert=True)
@@ -566,15 +823,12 @@ def register_prompt_editor_send_handlers(
             artifact.params.enable_pag = not artifact.params.enable_pag
             if artifact.params.enable_pag:
                 artifact.enable_sampler_pass = True
+            submenu = "enh"
         else:
             await cb.answer("⚠️ Неизвестный переключатель.", show_alert=True)
             return
 
-        await _edit_preview_message(
-            cb,
-            caption=_artifact_menu_caption(artifact),
-            reply_markup=_artifact_menu_keyboard(artifact),
-        )
+        await _render_artifact_menu(cb, artifact, menu=submenu)
         await cb.answer("✅ Обновлено")
 
     @router.callback_query(F.data.startswith("img:menu:"))
@@ -592,11 +846,14 @@ def register_prompt_editor_send_handlers(
             await cb.answer("⚠️ Картинка не найдена.", show_alert=True)
             return
 
+        back_callback = _submenu_back_callback(menu_key, artifact_id)
+
         if menu_key == "steps":
             kb = _simple_value_keyboard(
                 artifact_id=artifact_id,
                 key="steps",
                 values=["10", "15", "20", "25", "30", "40"],
+                back_callback=back_callback,
             )
             await _edit_preview_message(
                 cb,
@@ -610,6 +867,7 @@ def register_prompt_editor_send_handlers(
                 artifact_id=artifact_id,
                 key="cfg",
                 values=["4.0", "5.0", "6.0", "7.0", "8.0", "10.0"],
+                back_callback=back_callback,
             )
             await _edit_preview_message(cb, caption="Выберите CFG:", reply_markup=kb)
             await cb.answer()
@@ -619,6 +877,7 @@ def register_prompt_editor_send_handlers(
                 artifact_id=artifact_id,
                 key="denoise",
                 values=["0.2", "0.3", "0.4", "0.5", "0.6", "0.7", "0.8"],
+                back_callback=back_callback,
             )
             await _edit_preview_message(cb, caption="Выберите Denoise:", reply_markup=kb)
             await cb.answer()
@@ -628,6 +887,7 @@ def register_prompt_editor_send_handlers(
                 artifact_id=artifact_id,
                 key="hires_scale",
                 values=["1.25", "1.5", "1.75", "2.0"],
+                back_callback=back_callback,
             )
             await _edit_preview_message(cb, caption="Выберите Hi-res scale:", reply_markup=kb)
             await cb.answer()
@@ -637,6 +897,7 @@ def register_prompt_editor_send_handlers(
                 artifact_id=artifact_id,
                 key="hires_denoise",
                 values=["0.3", "0.4", "0.5", "0.6", "0.7"],
+                back_callback=back_callback,
             )
             await _edit_preview_message(cb, caption="Выберите Hi-res denoise:", reply_markup=kb)
             await cb.answer()
@@ -646,6 +907,7 @@ def register_prompt_editor_send_handlers(
                 artifact_id=artifact_id,
                 key="pag_scale",
                 values=["1.0", "2.0", "3.0", "4.0", "5.0"],
+                back_callback=back_callback,
             )
             await _edit_preview_message(cb, caption="Выберите PAG scale:", reply_markup=kb)
             await cb.answer()
@@ -657,6 +919,7 @@ def register_prompt_editor_send_handlers(
                 menu="sampler",
                 items=samplers,
                 page=0,
+                back_callback=back_callback,
             )
             await _edit_preview_message(cb, caption="Выберите sampler:", reply_markup=kb)
             await cb.answer()
@@ -668,6 +931,7 @@ def register_prompt_editor_send_handlers(
                 menu="scheduler",
                 items=schedulers,
                 page=0,
+                back_callback=back_callback,
             )
             await _edit_preview_message(cb, caption="Выберите scheduler:", reply_markup=kb)
             await cb.answer()
@@ -679,8 +943,34 @@ def register_prompt_editor_send_handlers(
                 menu="up",
                 items=upscalers,
                 page=0,
+                back_callback=back_callback,
             )
             await _edit_preview_message(cb, caption="Выберите upscaler:", reply_markup=kb)
+            await cb.answer()
+            return
+        if menu_key == "cmp":
+            kb = _simple_value_keyboard(
+                artifact_id=artifact_id,
+                key="compression_percent",
+                values=["100", "90", "80", "70", "60", "50"],
+                back_callback=back_callback,
+            )
+            await _edit_preview_message(cb, caption="Выберите сжатие (%):", reply_markup=kb)
+            await cb.answer()
+            return
+        if menu_key == "shk":
+            kb = _shrink_value_keyboard(
+                artifact_id=artifact_id,
+                back_callback=back_callback,
+            )
+            await _edit_preview_message(
+                cb,
+                caption=(
+                    "Выберите shrink-лимит (XxY).\n"
+                    "Метод shrink уменьшает картинку до рамки без апскейла и сохраняет пропорции."
+                ),
+                reply_markup=kb,
+            )
             await cb.answer()
             return
 
@@ -720,6 +1010,7 @@ def register_prompt_editor_send_handlers(
             menu=menu,
             items=items,
             page=page,
+            back_callback=_submenu_back_callback(menu, artifact_id),
         )
         await _edit_preview_message(cb, caption=caption, reply_markup=kb)
         await cb.answer()
@@ -766,11 +1057,8 @@ def register_prompt_editor_send_handlers(
             await cb.answer("⚠️ Неизвестный выбор.", show_alert=True)
             return
 
-        await _edit_preview_message(
-            cb,
-            caption=_artifact_menu_caption(artifact),
-            reply_markup=_artifact_menu_keyboard(artifact),
-        )
+        submenu = "smp" if menu in {"sampler", "scheduler"} else "enh"
+        await _render_artifact_menu(cb, artifact, menu=submenu)
         await cb.answer("✅ Обновлено")
 
     @router.callback_query(F.data.startswith("img:set:"))
@@ -792,7 +1080,22 @@ def register_prompt_editor_send_handlers(
 
         try:
             parsed_value: float | int
-            if field == "steps":
+            if field == "shrink_size":
+                if raw_value == "off":
+                    artifact.shrink_width = None
+                    artifact.shrink_height = None
+                    await _render_artifact_menu(cb, artifact, menu="size")
+                    await cb.answer("✅ Shrink выключен")
+                    return
+                parsed = _parse_shrink_size(raw_value)
+                if not parsed:
+                    await cb.answer("⚠️ Формат shrink должен быть XxY.", show_alert=True)
+                    return
+                artifact.shrink_width, artifact.shrink_height = parsed
+                await _render_artifact_menu(cb, artifact, menu="size")
+                await cb.answer("✅ Shrink обновлен")
+                return
+            if field in {"steps", "compression_percent"}:
                 parsed_value = int(raw_value)
             else:
                 parsed_value = float(raw_value)
@@ -803,11 +1106,7 @@ def register_prompt_editor_send_handlers(
             await cb.answer("⚠️ Не удалось применить значение.", show_alert=True)
             return
 
-        await _edit_preview_message(
-            cb,
-            caption=_artifact_menu_caption(artifact),
-            reply_markup=_artifact_menu_keyboard(artifact),
-        )
+        await _render_artifact_menu(cb, artifact, menu=_submenu_for_field(field))
         await cb.answer("✅ Параметр обновлен")
 
     @router.callback_query(F.data.startswith("img:custom:"))
@@ -831,6 +1130,19 @@ def register_prompt_editor_send_handlers(
             await cb.answer("⚠️ Картинка не найдена.", show_alert=True)
             return
 
+        if field == "shrink_size":
+            deps.runtime.pending_image_inputs[uid] = {
+                "artifact_id": artifact_id,
+                "field": field,
+                "submenu": "size",
+            }
+            await message.answer(
+                "✏️ Введите shrink-лимит в формате XxY (например 1280x720).\n"
+                "Допустимый диапазон каждой стороны: 1..4096."
+            )
+            await cb.answer()
+            return
+
         try:
             label, min_val, max_val = _custom_field_meta(field)
         except ValueError:
@@ -840,6 +1152,7 @@ def register_prompt_editor_send_handlers(
         deps.runtime.pending_image_inputs[uid] = {
             "artifact_id": artifact_id,
             "field": field,
+            "submenu": _submenu_for_field(field),
         }
         await message.answer(
             f"✏️ Введите {label} ({min_val}..{max_val}).\nМожно использовать точку или запятую."
@@ -902,6 +1215,18 @@ def register_prompt_editor_send_handlers(
             await msg.answer("⚠️ Картинка уже недоступна.")
             return
 
+        if field == "shrink_size":
+            parsed = _parse_shrink_size(raw)
+            if not parsed:
+                await msg.answer("⚠️ Формат shrink: XxY, например 1280x720.")
+                return
+            artifact.shrink_width, artifact.shrink_height = parsed
+            deps.runtime.pending_image_inputs.pop(uid, None)
+            await msg.answer(
+                "✅ Shrink обновлен. Вернитесь к превью-картинке и нажмите «✨ Улучшить»."
+            )
+            return
+
         try:
             label, min_val, max_val = _custom_field_meta(field)
         except ValueError:
@@ -912,7 +1237,7 @@ def register_prompt_editor_send_handlers(
         value_raw = raw.replace(",", ".")
         try:
             value: float | int
-            if field == "steps":
+            if field in {"steps", "compression_percent"}:
                 value = int(float(value_raw))
             else:
                 value = float(value_raw)
@@ -949,9 +1274,14 @@ def register_prompt_editor_send_handlers(
             return
         artifact_item = artifact
 
-        if not artifact.enable_sampler_pass and not artifact.params.upscale_model:
+        if (
+            not artifact.enable_sampler_pass
+            and not artifact.params.upscale_model
+            and artifact.compression_percent >= 100
+            and not (artifact.shrink_width and artifact.shrink_height)
+        ):
             await cb.answer(
-                "⚠️ Включите сэмплер или выберите upscaler.",
+                "⚠️ Включите сэмплер, выберите upscaler или задайте сжатие/shrink.",
                 show_alert=True,
             )
             return
@@ -997,8 +1327,11 @@ def register_prompt_editor_send_handlers(
                 run_params.batch_size = 1
                 run_params.reference_images = []
                 run_params.reference_strength = 0.8
-                if run_params.seed < 0:
+                if artifact_item.enable_sampler_pass and run_params.seed < 0:
                     run_params.seed = random.randint(0, 2**63 - 1)
+                result_seed = (
+                    int(run_params.seed) if run_params.seed >= 0 else artifact_item.used_seed
+                )
 
                 async def _prompt_id_cb(prompt_id: str) -> None:
                     active = deps.runtime.active_generations.get(generation_id)
@@ -1013,13 +1346,17 @@ def register_prompt_editor_send_handlers(
                         progress_cb=_progress,
                         prompt_id_cb=_prompt_id_cb,
                     )
-                else:
+                    result_seed = int(run_params.seed)
+                elif run_params.upscale_model:
                     images = await deps.client.upscale_image_only(
                         image_bytes=source_bytes,
                         upscale_model=run_params.upscale_model,
                         progress_cb=_progress,
                         prompt_id_cb=_prompt_id_cb,
                     )
+                else:
+                    await _progress(0, 0, "Без ComfyUI: только сжатие")
+                    images = [source_bytes]
 
                 if not images:
                     await status_msg.edit_text(
@@ -1028,6 +1365,24 @@ def register_prompt_editor_send_handlers(
                     return
 
                 result_image = images[0]
+                if artifact_item.compression_percent < 100:
+                    await _progress(0, 0, f"Сжимаю до {artifact_item.compression_percent}%")
+                    result_image = resize_image_by_percent(
+                        result_image,
+                        artifact_item.compression_percent,
+                    )
+                if artifact_item.shrink_width and artifact_item.shrink_height:
+                    await _progress(
+                        0,
+                        0,
+                        f"Shrink до {artifact_item.shrink_width}x{artifact_item.shrink_height}",
+                    )
+                    result_image = shrink_image_to_box(
+                        result_image,
+                        artifact_item.shrink_width,
+                        artifact_item.shrink_height,
+                    )
+
                 next_params = GenerationParams(**asdict(run_params))
                 try:
                     next_w, next_h = image_dimensions(result_image)
@@ -1042,10 +1397,13 @@ def register_prompt_editor_send_handlers(
                     owner_uid=artifact_item.owner_uid,
                     image_bytes=result_image,
                     params=next_params,
-                    used_seed=int(run_params.seed),
+                    used_seed=result_seed,
                     parent_artifact_id=artifact_item.artifact_id,
                     generation_step=artifact_item.generation_step + 1,
                     enable_sampler_pass=artifact_item.enable_sampler_pass,
+                    compression_percent=artifact_item.compression_percent,
+                    shrink_width=artifact_item.shrink_width,
+                    shrink_height=artifact_item.shrink_height,
                 )
                 deps.runtime.register_preview_artifact(next_artifact)
                 deps.runtime.prune_preview_artifacts(artifact_item.owner_uid)
@@ -1053,13 +1411,13 @@ def register_prompt_editor_send_handlers(
                 deps.runtime.last_params[artifact_item.owner_uid] = GenerationParams(
                     **asdict(next_params)
                 )
-                deps.runtime.last_seeds[artifact_item.owner_uid] = int(run_params.seed)
+                deps.runtime.last_seeds[artifact_item.owner_uid] = result_seed
                 deps.runtime.persist()
 
                 sent_previews = await deps.deliver_generated_images(
                     status_msg,
                     [result_image],
-                    used_seed=run_params.seed,
+                    used_seed=result_seed,
                     mode="photo",
                     preview_keyboards=[
                         deps.preview_image_keyboard(
@@ -1071,10 +1429,25 @@ def register_prompt_editor_send_handlers(
                 if sent_previews:
                     next_artifact.preview_chat_id = sent_previews[0].chat.id
                     next_artifact.preview_message_id = sent_previews[0].message_id
+
+                extra_lines: list[str] = []
+                if artifact_item.compression_percent < 100:
+                    extra_lines.append(
+                        f"🗜 Сжатие применено: {artifact_item.compression_percent}% от результата."
+                    )
+                if artifact_item.shrink_width and artifact_item.shrink_height:
+                    extra_lines.append(
+                        "📦 Shrink применен: "
+                        f"{artifact_item.shrink_width}x{artifact_item.shrink_height}."
+                    )
+                detail_block = "\n".join(extra_lines)
+                if detail_block:
+                    detail_block += "\n"
                 await _move_main_panel_to_bottom(
                     artifact_item.owner_uid,
                     status_msg,
                     "✅ Улучшение завершено. Отправил новую превью.\n"
+                    f"{detail_block}"
                     "Для каждой превью доступны: отправка PNG и меню улучшений.",
                 )
             except asyncio.CancelledError:

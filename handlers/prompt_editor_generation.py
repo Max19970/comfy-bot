@@ -173,6 +173,10 @@ async def run_generate_operation(
         last_edit_time = 0.0
         last_text = status_intro
         edit_interval = 0.8
+        expected_previews = max(1, generation_params.batch_size)
+        ready_previews = 0
+        sent_previews = 0
+        preview_send_failures = 0
 
         async def _progress(current: int, total: int, text: str) -> None:
             nonlocal last_edit_time, last_text
@@ -189,6 +193,7 @@ async def run_generate_operation(
                 lines = [first_line]
                 if total > 0:
                     lines.append(progress_bar(current, total))
+                lines.append(f"🖼 Получено: <code>{sent_previews}/{expected_previews}</code>")
                 lines.extend(["", status_intro])
 
                 next_text = "\n".join(lines)
@@ -211,13 +216,59 @@ async def run_generate_operation(
                 active.prompt_id = prompt_id
                 deps.runtime.persist()
 
+        async def _deliver_preview_image(image_bytes: bytes) -> None:
+            nonlocal ready_previews, sent_previews, preview_send_failures
+            ready_previews += 1
+            artifact_id = uuid.uuid4().hex
+            artifact_params = GenerationParams(**asdict(params))
+            try:
+                width, height = image_dimensions(image_bytes)
+                artifact_params.width = width
+                artifact_params.height = height
+            except (OSError, ValueError):
+                pass
+
+            artifact = PreviewArtifact(
+                artifact_id=artifact_id,
+                owner_uid=uid,
+                image_bytes=image_bytes,
+                params=artifact_params,
+                used_seed=int(used_seed),
+            )
+            deps.runtime.register_preview_artifact(artifact)
+            deps.prune_preview_artifacts(uid)
+
+            try:
+                sent_preview_messages = await deps.deliver_generated_images(
+                    status_msg,
+                    [image_bytes],
+                    used_seed=used_seed,
+                    mode="photo",
+                    preview_keyboards=[deps.preview_image_keyboard(artifact_id, None)],
+                    index_offset=ready_previews - 1,
+                    total_count=expected_previews,
+                )
+                if sent_preview_messages:
+                    artifact.preview_chat_id = sent_preview_messages[0].chat.id
+                    artifact.preview_message_id = sent_preview_messages[0].message_id
+                    sent_previews += 1
+                else:
+                    preview_send_failures += 1
+            except (TelegramBadRequest, RuntimeError):
+                preview_send_failures += 1
+                deps.logger.exception("Failed to deliver generated preview")
+
         try:
             images = await deps.client.generate(
                 generation_params,
                 reference_images=reference_images,
                 progress_cb=_progress,
                 prompt_id_cb=_prompt_id_cb,
+                image_cb=_deliver_preview_image,
             )
+            if images:
+                for image_bytes in images:
+                    await _deliver_preview_image(image_bytes)
         except asyncio.CancelledError:
             try:
                 await status_msg.edit_text(f"{status_intro}\n\n❌ Генерация отменена.")
@@ -246,7 +297,7 @@ async def run_generate_operation(
             deps.runtime.active_generations.pop(generation_id, None)
             deps.runtime.persist()
 
-        if not images:
+        if ready_previews <= 0:
             await status_msg.edit_text(
                 f"{status_intro}\n\n❌ Изображения не найдены.",
                 reply_markup=return_to_editor_kb,
@@ -257,47 +308,14 @@ async def run_generate_operation(
         deps.runtime.last_seeds[uid] = used_seed
         deps.runtime.persist()
 
-        preview_keyboards: list[InlineKeyboardMarkup] = []
-        created_artifacts: list[PreviewArtifact] = []
-        for image_bytes in images:
-            artifact_id = uuid.uuid4().hex
-            artifact_params = GenerationParams(**asdict(params))
-            try:
-                width, height = image_dimensions(image_bytes)
-                artifact_params.width = width
-                artifact_params.height = height
-            except (OSError, ValueError):
-                pass
-            artifact = PreviewArtifact(
-                artifact_id=artifact_id,
-                owner_uid=uid,
-                image_bytes=image_bytes,
-                params=artifact_params,
-                used_seed=int(used_seed),
+        preview_notice = "🖼 Превью отправлялись по мере готовности."
+        if preview_send_failures > 0:
+            preview_notice = (
+                "⚠️ Часть превью не удалось отправить как фото. " "Можно скачать PNG без сжатия."
             )
-            deps.runtime.register_preview_artifact(artifact)
-            created_artifacts.append(artifact)
-            preview_keyboards.append(deps.preview_image_keyboard(artifact_id, None))
-        deps.prune_preview_artifacts(uid)
-
-        preview_notice = "🖼 Превью отправлено как Telegram-фото."
-        try:
-            sent_preview_messages = await deps.deliver_generated_images(
-                status_msg,
-                images,
-                used_seed=used_seed,
-                mode="photo",
-                preview_keyboards=preview_keyboards,
-            )
-            for artifact, sent in zip(created_artifacts, sent_preview_messages, strict=False):
-                artifact.preview_chat_id = sent.chat.id
-                artifact.preview_message_id = sent.message_id
-        except (TelegramBadRequest, RuntimeError):
-            deps.logger.exception("Failed to deliver generated preview")
-            preview_notice = "⚠️ Не удалось отправить превью как фото. Можно скачать PNG без сжатия."
 
         done_text = (
-            f"✅ <b>Готово!</b> {len(images)} изобр. | Seed: <code>{used_seed}</code>\n"
+            f"✅ <b>Готово!</b> {sent_previews} изобр. | Seed: <code>{used_seed}</code>\n"
             f"\n{preview_notice}\n"
             "Для каждой превью доступны: отправка PNG и меню улучшений."
         )
@@ -341,4 +359,5 @@ class _ClientLike(Protocol):
         reference_images: list[bytes] | None = None,
         progress_cb: Callable[[int, int, str], Awaitable[None]] | None = None,
         prompt_id_cb: Callable[[str], Awaitable[None]] | None = None,
+        image_cb: Callable[[bytes], Awaitable[None]] | None = None,
     ) -> list[bytes]: ...

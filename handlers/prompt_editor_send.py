@@ -83,10 +83,13 @@ async def deliver_generated_images(
     used_seed: int | str,
     mode: str,
     preview_keyboards: list[InlineKeyboardMarkup] | None = None,
+    index_offset: int = 0,
+    total_count: int | None = None,
 ) -> list[Message]:
     preview_messages: list[Message] = []
+    total = total_count if total_count and total_count > 0 else len(images)
     for index, img_bytes in enumerate(images):
-        caption = f"🖼 {index + 1}/{len(images)} | Seed: {used_seed}"
+        caption = f"🖼 {index_offset + index + 1}/{total} | Seed: {used_seed}"
         preview_kb = None
         if preview_keyboards and index < len(preview_keyboards):
             preview_kb = preview_keyboards[index]

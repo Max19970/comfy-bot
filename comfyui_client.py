@@ -36,6 +36,7 @@ LANCZOS_RESAMPLE = getattr(_resampling, "LANCZOS", 1)
 _NO_DEFAULT = object()
 
 GenerationProgressCallback = Callable[[int, int, str], Awaitable[None]]
+GenerationImageCallback = Callable[[bytes], Awaitable[None]]
 
 
 def _compose_reference_image(
@@ -913,6 +914,66 @@ class ComfyUIClient:
             return None
         return max(0, int(value))
 
+    @staticmethod
+    def _image_info_key(img_info: Any) -> str | None:
+        if not isinstance(img_info, dict):
+            return None
+        filename = str(img_info.get("filename") or "").strip()
+        if not filename:
+            return None
+        subfolder = str(img_info.get("subfolder") or "").strip()
+        img_type = str(img_info.get("type") or "output").strip() or "output"
+        return f"{img_type}:{subfolder}:{filename}"
+
+    @staticmethod
+    def _history_image_entries(history_entry: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+        outputs = history_entry.get("outputs", {})
+        if not isinstance(outputs, dict):
+            return []
+
+        def node_sort_key(node_id: str) -> tuple[int, str]:
+            try:
+                return (0, f"{int(node_id):09d}")
+            except (TypeError, ValueError):
+                return (1, str(node_id))
+
+        entries: list[tuple[str, dict[str, Any]]] = []
+        for node_id in sorted(outputs.keys(), key=node_sort_key):
+            node_output = outputs.get(node_id)
+            if not isinstance(node_output, dict):
+                continue
+            node_images = node_output.get("images", [])
+            if not isinstance(node_images, list):
+                continue
+            for img_info in node_images:
+                if not isinstance(img_info, dict):
+                    continue
+                key = ComfyUIClient._image_info_key(img_info)
+                if key:
+                    entries.append((key, img_info))
+        return entries
+
+    async def _download_image_from_info(self, img_info: dict[str, Any]) -> bytes | None:
+        session = await self._get_session()
+        filename = str(img_info.get("filename") or "")
+        subfolder = str(img_info.get("subfolder") or "")
+        img_type = str(img_info.get("type") or "output")
+        params = {
+            "filename": filename,
+            "subfolder": subfolder,
+            "type": img_type,
+        }
+        url = f"{self.base_url}/view"
+        try:
+            async with session.get(
+                url, params=params, timeout=aiohttp.ClientTimeout(total=60)
+            ) as resp:
+                resp.raise_for_status()
+                return await resp.read()
+        except (aiohttp.ClientError, asyncio.TimeoutError, OSError):
+            logger.exception("Failed to download image %s", filename)
+            return None
+
     async def _stream_progress_via_websocket(
         self,
         prompt_id: str,
@@ -921,6 +982,8 @@ class ComfyUIClient:
         workflow: dict[str, Any],
         timeout: float,
         progress_cb: GenerationProgressCallback,
+        image_cb: GenerationImageCallback | None = None,
+        delivered_image_keys: set[str] | None = None,
     ) -> bool:
         session = await self._get_session()
         ws_url = self._ws_url(self.base_url, client_id)
@@ -988,6 +1051,7 @@ class ComfyUIClient:
                             "execution_start",
                             "execution_cached",
                             "executing",
+                            "executed",
                             "progress",
                             "execution_success",
                             "execution_error",
@@ -1087,6 +1151,35 @@ class ComfyUIClient:
                             )
                             continue
 
+                        if event_type == "executed":
+                            if not image_cb:
+                                continue
+                            output = data.get("output")
+                            if not isinstance(output, dict):
+                                continue
+                            node_images = output.get("images", [])
+                            if not isinstance(node_images, list):
+                                continue
+
+                            for img_info in node_images:
+                                key = self._image_info_key(img_info)
+                                if not key:
+                                    continue
+                                if delivered_image_keys is not None and key in delivered_image_keys:
+                                    continue
+                                if not isinstance(img_info, dict):
+                                    continue
+
+                                image_bytes = await self._download_image_from_info(img_info)
+                                if not image_bytes:
+                                    continue
+
+                                if delivered_image_keys is not None:
+                                    delivered_image_keys.add(key)
+                                await image_cb(image_bytes)
+
+                            continue
+
                         if event_type == "execution_error":
                             details = (
                                 data.get("exception_message")
@@ -1141,6 +1234,8 @@ class ComfyUIClient:
         timeout: float = 600,
         poll_interval: float = 1.5,
         progress_cb: GenerationProgressCallback | None = None,
+        image_cb: GenerationImageCallback | None = None,
+        delivered_image_keys: set[str] | None = None,
     ) -> dict[str, Any]:
         if not progress_cb:
             return await self.wait_for_completion(
@@ -1164,6 +1259,8 @@ class ComfyUIClient:
                 workflow=workflow,
                 timeout=timeout,
                 progress_cb=progress_cb,
+                image_cb=image_cb,
+                delivered_image_keys=delivered_image_keys,
             )
         )
 
@@ -1367,35 +1464,22 @@ class ComfyUIClient:
 
         return None
 
+    async def get_images_with_keys(
+        self,
+        history_entry: dict[str, Any],
+    ) -> list[tuple[str, bytes]]:
+        """Download all output images with stable dedup keys."""
+        images: list[tuple[str, bytes]] = []
+        for key, img_info in self._history_image_entries(history_entry):
+            image_bytes = await self._download_image_from_info(img_info)
+            if image_bytes:
+                images.append((key, image_bytes))
+        return images
+
     async def get_images(self, history_entry: dict[str, Any]) -> list[bytes]:
         """Download all output images from a completed prompt history entry."""
-        session = await self._get_session()
-        images: list[bytes] = []
-
-        outputs = history_entry.get("outputs", {})
-        for _node_id, node_output in outputs.items():
-            node_images = node_output.get("images", [])
-            for img_info in node_images:
-                filename = img_info.get("filename", "")
-                subfolder = img_info.get("subfolder", "")
-                img_type = img_info.get("type", "output")
-
-                params = {
-                    "filename": filename,
-                    "subfolder": subfolder,
-                    "type": img_type,
-                }
-                url = f"{self.base_url}/view"
-                try:
-                    async with session.get(
-                        url, params=params, timeout=aiohttp.ClientTimeout(total=60)
-                    ) as resp:
-                        resp.raise_for_status()
-                        images.append(await resp.read())
-                except (aiohttp.ClientError, asyncio.TimeoutError, OSError):
-                    logger.exception("Failed to download image %s", filename)
-
-        return images
+        images_with_keys = await self.get_images_with_keys(history_entry)
+        return [image for _, image in images_with_keys]
 
     # -- convenience ---------------------------------------------------------
 
@@ -1405,8 +1489,10 @@ class ComfyUIClient:
         *,
         progress_cb: GenerationProgressCallback | None = None,
         prompt_id_cb: Callable[[str], Awaitable[None]] | None = None,
+        image_cb: GenerationImageCallback | None = None,
     ) -> list[bytes]:
         client_id = uuid.uuid4().hex if progress_cb else None
+        delivered_image_keys: set[str] = set()
         prompt_id = await self.queue_prompt(workflow, client_id=client_id)
         if prompt_id_cb:
             await prompt_id_cb(prompt_id)
@@ -1420,6 +1506,8 @@ class ComfyUIClient:
                 client_id=client_id,
                 workflow=workflow,
                 progress_cb=progress_cb,
+                image_cb=image_cb,
+                delivered_image_keys=delivered_image_keys,
             )
         else:
             history = await self.wait_for_completion(prompt_id)
@@ -1427,7 +1515,15 @@ class ComfyUIClient:
         if progress_cb:
             await progress_cb(1, 1, "Генерация завершена. Получаю изображения...")
 
-        return await self.get_images(history)
+        images_with_keys = await self.get_images_with_keys(history)
+        if image_cb:
+            for key, image_bytes in images_with_keys:
+                if key in delivered_image_keys:
+                    continue
+                delivered_image_keys.add(key)
+                await image_cb(image_bytes)
+            return []
+        return [image_bytes for _, image_bytes in images_with_keys]
 
     async def generate_from_image(
         self,
@@ -1436,6 +1532,7 @@ class ComfyUIClient:
         image_bytes: bytes,
         progress_cb: GenerationProgressCallback | None = None,
         prompt_id_cb: Callable[[str], Awaitable[None]] | None = None,
+        image_cb: GenerationImageCallback | None = None,
     ) -> list[bytes]:
         """Run generation pipeline from an already existing image (img2img)."""
         reference_image_name = await self.upload_input_image(image_bytes)
@@ -1448,6 +1545,7 @@ class ComfyUIClient:
             workflow,
             progress_cb=progress_cb,
             prompt_id_cb=prompt_id_cb,
+            image_cb=image_cb,
         )
 
     async def upscale_image_only(
@@ -1457,6 +1555,7 @@ class ComfyUIClient:
         upscale_model: str,
         progress_cb: GenerationProgressCallback | None = None,
         prompt_id_cb: Callable[[str], Awaitable[None]] | None = None,
+        image_cb: GenerationImageCallback | None = None,
     ) -> list[bytes]:
         """Run pure upscaler workflow for an existing image."""
         if not upscale_model:
@@ -1483,6 +1582,7 @@ class ComfyUIClient:
             workflow,
             progress_cb=progress_cb,
             prompt_id_cb=prompt_id_cb,
+            image_cb=image_cb,
         )
 
     async def generate(
@@ -1492,6 +1592,7 @@ class ComfyUIClient:
         reference_images: list[bytes] | None = None,
         progress_cb: GenerationProgressCallback | None = None,
         prompt_id_cb: Callable[[str], Awaitable[None]] | None = None,
+        image_cb: GenerationImageCallback | None = None,
     ) -> list[bytes]:
         """Full generation pipeline: build workflow -> queue -> wait -> download."""
         reference_image_name: str | None = None
@@ -1534,6 +1635,7 @@ class ComfyUIClient:
             workflow,
             progress_cb=progress_cb,
             prompt_id_cb=prompt_id_cb,
+            image_cb=image_cb,
         )
 
     async def check_connection(self) -> bool:

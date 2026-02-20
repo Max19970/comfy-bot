@@ -55,6 +55,9 @@ class PreviewArtifact:
     parent_artifact_id: str | None = None
     generation_step: int = 0
     enable_sampler_pass: bool = False
+    compression_percent: int = 100
+    shrink_width: int | None = None
+    shrink_height: int | None = None
     preview_chat_id: int | None = None
     preview_message_id: int | None = None
     image_path: str | None = None
@@ -373,6 +376,9 @@ def _preview_artifact_to_dict(item: PreviewArtifact) -> dict[str, Any]:
         "parent_artifact_id": item.parent_artifact_id,
         "generation_step": int(item.generation_step),
         "enable_sampler_pass": bool(item.enable_sampler_pass),
+        "compression_percent": int(item.compression_percent),
+        "shrink_width": item.shrink_width,
+        "shrink_height": item.shrink_height,
         "preview_chat_id": item.preview_chat_id,
         "preview_message_id": item.preview_message_id,
         "image_path": item.image_path,
@@ -407,6 +413,17 @@ def _preview_artifact_from_dict(
         used_seed = _to_int(payload.get("used_seed"), default=-1)
         created_at = _to_float(payload.get("created_at"), default=time.time())
         generation_step = _to_int(payload.get("generation_step"), default=0)
+        compression_percent = _to_int(payload.get("compression_percent"), default=100)
+        compression_percent = max(1, min(100, compression_percent))
+        shrink_width = _as_int_or_none(payload.get("shrink_width"))
+        shrink_height = _as_int_or_none(payload.get("shrink_height"))
+        if (
+            shrink_width is not None
+            and shrink_height is not None
+            and (shrink_width < 1 or shrink_height < 1)
+        ):
+            shrink_width = None
+            shrink_height = None
 
         return PreviewArtifact(
             artifact_id=artifact_id,
@@ -422,6 +439,9 @@ def _preview_artifact_from_dict(
             ),
             generation_step=generation_step,
             enable_sampler_pass=bool(payload.get("enable_sampler_pass", False)),
+            compression_percent=compression_percent,
+            shrink_width=shrink_width,
+            shrink_height=shrink_height,
             preview_chat_id=preview_chat_id,
             preview_message_id=preview_message_id,
             image_path=image_path,

@@ -69,3 +69,39 @@ def compress_for_photo(
 def image_dimensions(image_bytes: bytes) -> tuple[int, int]:
     with Image.open(BytesIO(image_bytes)) as image:
         return image.width, image.height
+
+
+def resize_image_by_percent(image_bytes: bytes, percent: int) -> bytes:
+    if percent < 1 or percent > 100:
+        raise ValueError("percent must be in 1..100")
+    if percent == 100:
+        return image_bytes
+
+    with Image.open(BytesIO(image_bytes)) as image:
+        target_w = max(1, int(round(image.width * percent / 100.0)))
+        target_h = max(1, int(round(image.height * percent / 100.0)))
+        resized = image.resize((target_w, target_h), LANCZOS_RESAMPLE)
+        buffer = BytesIO()
+        resized.save(buffer, format="PNG", optimize=True)
+        return buffer.getvalue()
+
+
+def shrink_image_to_box(image_bytes: bytes, max_width: int, max_height: int) -> bytes:
+    if max_width < 1 or max_height < 1:
+        raise ValueError("max_width and max_height must be >= 1")
+
+    with Image.open(BytesIO(image_bytes)) as image:
+        ratio = min(
+            max_width / image.width,
+            max_height / image.height,
+            1.0,
+        )
+        if ratio >= 1.0:
+            return image_bytes
+
+        target_w = max(1, int(round(image.width * ratio)))
+        target_h = max(1, int(round(image.height * ratio)))
+        resized = image.resize((target_w, target_h), LANCZOS_RESAMPLE)
+        buffer = BytesIO()
+        resized.save(buffer, format="PNG", optimize=True)
+        return buffer.getvalue()

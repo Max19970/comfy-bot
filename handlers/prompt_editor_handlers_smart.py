@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 import logging
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Awaitable, Callable
+from typing import cast
 
 from aiogram import F, Router
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
 from aiogram.types import (
     CallbackQuery,
@@ -35,9 +38,7 @@ class PromptEditorSmartHandlersDeps:
     show_smart_prompt_result_confirmation: Callable[..., Awaitable[None]]
     show_prompt_editor: Callable[..., Awaitable[None]]
     smart_prompt_is_enabled: Callable[[], bool]
-    add_reference_from_message: Callable[
-        [Message, list[dict[str, str]]], tuple[int, bool]
-    ]
+    add_reference_from_message: Callable[[Message, list[dict[str, str]]], tuple[int, bool]]
     merge_prompt_text: Callable[[str, str], str]
     prompt_input_text: Callable[..., str]
     back_keyboard: Callable[..., InlineKeyboardMarkup]
@@ -48,8 +49,17 @@ def register_prompt_editor_smart_handlers(
     router: Router,
     deps: PromptEditorSmartHandlersDeps,
 ) -> None:
+    def _callback_message(cb: CallbackQuery) -> Message | None:
+        if cb.message is None or not hasattr(cb.message, "edit_text"):
+            return None
+        return cast(Message, cb.message)
+
     @router.callback_query(F.data == "pe:smart:start")
     async def pe_smart_prompt_start(cb: CallbackQuery, state: FSMContext):
+        message = _callback_message(cb)
+        if message is None:
+            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
+            return
         payload = await deps.require_prompt_request_for_callback(cb)
         if not payload:
             return
@@ -85,7 +95,7 @@ def register_prompt_editor_smart_handlers(
             ]
         )
         await state.set_state(PromptEditorStates.entering_smart_prompt)
-        await cb.message.edit_text("\n".join(lines), reply_markup=kb)
+        await message.edit_text("\n".join(lines), reply_markup=kb)
         await cb.answer()
 
     @router.message(PromptEditorStates.entering_smart_prompt)
@@ -136,7 +146,7 @@ def register_prompt_editor_smart_handlers(
         except SmartPromptError as exc:
             try:
                 await status_msg.delete()
-            except Exception:
+            except TelegramBadRequest:
                 pass
             await deps.show_prompt_editor(
                 msg,
@@ -145,17 +155,17 @@ def register_prompt_editor_smart_handlers(
                 notice=f"Умный промпт не выполнен: {exc}",
             )
             return
-        except Exception:
+        except (RuntimeError, ValueError, OSError, asyncio.TimeoutError) as exc:
             deps.logger.exception("Smart prompt failed")
             try:
                 await status_msg.delete()
-            except Exception:
+            except TelegramBadRequest:
                 pass
             await deps.show_prompt_editor(
                 msg,
                 state,
                 uid,
-                notice="❌ Умный промпт не выполнен: внутренняя ошибка.",
+                notice=f"❌ Умный промпт не выполнен: {exc}",
             )
             return
 
@@ -217,12 +227,8 @@ def register_prompt_editor_smart_handlers(
         generated_positive = str(data.get("pe_smart_generated_positive") or "").strip()
         generated_negative = str(data.get("pe_smart_generated_negative") or "").strip()
 
-        req.params.positive = deps.merge_prompt_text(
-            req.params.positive, generated_positive
-        )
-        req.params.negative = deps.merge_prompt_text(
-            req.params.negative, generated_negative
-        )
+        req.params.positive = deps.merge_prompt_text(req.params.positive, generated_positive)
+        req.params.negative = deps.merge_prompt_text(req.params.negative, generated_negative)
 
         meta_notice = str(data.get("pe_smart_notice") or "").strip()
         notice = "📝 TIPO-промпт объединён с текущими Positive/Negative."
@@ -273,6 +279,10 @@ def register_prompt_editor_smart_handlers(
 
     @router.callback_query(F.data == "pe:smart:edit")
     async def pe_smart_edit(cb: CallbackQuery, state: FSMContext):
+        message = _callback_message(cb)
+        if message is None:
+            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
+            return
         payload = await deps.require_prompt_request_for_callback(cb)
         if not payload:
             return
@@ -282,7 +292,7 @@ def register_prompt_editor_smart_handlers(
         generated_positive = str(data.get("pe_smart_generated_positive") or "").strip()
 
         await state.set_state(PromptEditorStates.entering_smart_result_positive)
-        await cb.message.edit_text(
+        await message.edit_text(
             deps.prompt_input_text("positive", generated_positive),
             reply_markup=deps.back_keyboard("pe:smart:result:back"),
         )

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 
-from comfyui_client import ComfyUIClient, GenerationParams
+from comfyui_client import ComfyUIClient
 from core.html_utils import h
+from core.models import GenerationParams
 from core.runtime import RuntimeStore
 from core.states import PromptEditorStates
 from core.ui import loras_text
@@ -194,7 +196,7 @@ async def show_lora_menu(
                 }
                 await state.set_state(PromptEditorStates.editing)
                 return
-        except Exception:
+        except TelegramBadRequest:
             pass
 
     if edit:
@@ -209,7 +211,7 @@ async def show_lora_menu(
                 }
                 await state.set_state(PromptEditorStates.editing)
                 return
-        except Exception:
+        except TelegramBadRequest:
             pass
 
     sent = await message.answer(text, reply_markup=kb)

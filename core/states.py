@@ -17,11 +17,23 @@ class DownloadStates(StatesGroup):
     choosing_type = State()
     choosing_source = State()
     choosing_filters = State()
+    entering_author = State()
     entering_query = State()
     choosing_result = State()
     choosing_version = State()
     confirming_download = State()
     downloading = State()
+
+
+class DeleteModelStates(StatesGroup):
+    choosing_type = State()
+    choosing_file = State()
+    confirming_delete = State()
+
+
+class ServiceSettingsStates(StatesGroup):
+    entering_generation_value = State()
+    entering_download_author = State()
 
 
 class PromptEditorStates(StatesGroup):
@@ -47,6 +59,7 @@ class PromptEditorStates(StatesGroup):
     entering_custom_hires_scale = State()
     entering_custom_hires_denoise = State()
     entering_custom_pag_scale = State()
+    entering_custom_controlnet_strength = State()
     entering_custom_tile_size = State()
     entering_custom_vae_tile_size = State()
     entering_custom_tile_overlap = State()

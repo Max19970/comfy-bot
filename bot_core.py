@@ -36,10 +36,10 @@ from core.ui import (
     custom_btn,
     loras_text,
     paginated_keyboard,
-    params_summary_full,
-    params_summary_simple,
     params_summary,
     params_summary_for_mode,
+    params_summary_full,
+    params_summary_simple,
 )
 
 __all__ = [

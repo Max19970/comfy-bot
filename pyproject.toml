@@ -1,0 +1,50 @@
+[tool.black]
+line-length = 100
+target-version = ["py310"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+ignore = ["E501", "E731"]
+
+[tool.ruff.lint.per-file-ignores]
+"test_smart_prompt.py" = ["E402"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-q"
+asyncio_default_fixture_loop_scope = "function"
+
+[tool.mypy]
+python_version = "3.10"
+warn_unused_ignores = true
+warn_redundant_casts = true
+no_implicit_optional = true
+check_untyped_defs = true
+ignore_missing_imports = true
+pretty = true
+files = [
+  "core",
+  "comfyui_client.py",
+  "handlers/common.py",
+  "handlers/common_core_handlers.py",
+  "handlers/common_ops_handlers.py",
+  "handlers/download.py",
+  "handlers/download_flow_handlers.py",
+  "handlers/prompt_editor.py",
+  "handlers/prompt_editor_generation.py",
+  "handlers/prompt_editor_ops.py",
+  "handlers/prompt_editor_session.py",
+  "handlers/prompt_editor_smart_result.py",
+  "handlers/prompt_editor_subhandlers.py",
+  "handlers/prompt_editor_view.py",
+  "handlers/registry.py",
+  "model_downloader.py",
+  "smart_prompt.py",
+  "tests",
+]
+exclude = ["test_smart_prompt.py"]

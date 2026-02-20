@@ -7,14 +7,12 @@ import re
 import zlib
 from typing import Any
 
-from comfyui_client import GenerationParams
+from core.models import GenerationParams
 from core.storage import dict_to_params, params_to_dict
 
 PROMPT_EXCHANGE_VERSION = 1
 PROMPT_EXCHANGE_PREFIX = f"CBOT_PROMPT_V{PROMPT_EXCHANGE_VERSION}:"
-PROMPT_EXCHANGE_TOKEN_RE = re.compile(
-    r"CBOT_PROMPT_V(?P<version>\d+):(?P<payload>[A-Za-z0-9_-]+)"
-)
+PROMPT_EXCHANGE_TOKEN_RE = re.compile(r"CBOT_PROMPT_V(?P<version>\d+):(?P<payload>[A-Za-z0-9_-]+)")
 PROMPT_EXCHANGE_MAX_BYTES = 64_000
 
 
@@ -38,10 +36,8 @@ def import_prompt_token(text: str) -> GenerationParams:
     params_payload = _extract_params_payload(payload)
     try:
         return dict_to_params(params_payload)
-    except Exception as exc:
-        raise PromptExchangeError(
-            "Не удалось прочитать параметры из кода обмена."
-        ) from exc
+    except (TypeError, ValueError, KeyError) as exc:
+        raise PromptExchangeError("Не удалось прочитать параметры из кода обмена.") from exc
 
 
 def _payload_from_text(text: str) -> dict[str, Any]:
@@ -57,15 +53,13 @@ def _payload_from_text(text: str) -> dict[str, Any]:
     if json_payload is not None:
         return json_payload
 
-    raise PromptExchangeError(
-        "Код обмена не найден. Вставьте код вида CBOT_PROMPT_V1:..."
-    )
+    raise PromptExchangeError("Код обмена не найден. Вставьте код вида CBOT_PROMPT_V1:...")
 
 
 def _decode_token_payload(token_match: re.Match) -> dict[str, Any]:
     try:
         version = int(token_match.group("version"))
-    except Exception as exc:
+    except (TypeError, ValueError) as exc:
         raise PromptExchangeError("Не удалось распознать версию кода обмена.") from exc
 
     if version != PROMPT_EXCHANGE_VERSION:
@@ -77,9 +71,7 @@ def _decode_token_payload(token_match: re.Match) -> dict[str, Any]:
     try:
         compressed = base64.urlsafe_b64decode(padded)
     except (binascii.Error, ValueError) as exc:
-        raise PromptExchangeError(
-            "Код обмена повреждён: ошибка base64-декодирования."
-        ) from exc
+        raise PromptExchangeError("Код обмена повреждён: ошибка base64-декодирования.") from exc
 
     try:
         raw = zlib.decompress(compressed)
@@ -91,7 +83,7 @@ def _decode_token_payload(token_match: re.Match) -> dict[str, Any]:
 
     try:
         payload = json.loads(raw.decode("utf-8"))
-    except Exception as exc:
+    except (UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError) as exc:
         raise PromptExchangeError("Код обмена повреждён: некорректный JSON.") from exc
 
     if not isinstance(payload, dict):
@@ -99,9 +91,7 @@ def _decode_token_payload(token_match: re.Match) -> dict[str, Any]:
 
     payload_version = int(payload.get("v") or PROMPT_EXCHANGE_VERSION)
     if payload_version != PROMPT_EXCHANGE_VERSION:
-        raise PromptExchangeError(
-            f"Неподдерживаемая версия данных: v{payload_version}."
-        )
+        raise PromptExchangeError(f"Неподдерживаемая версия данных: v{payload_version}.")
 
     return payload
 
@@ -113,7 +103,7 @@ def _try_parse_json_payload(source: str) -> dict[str, Any] | None:
 
     try:
         payload = json.loads(candidate)
-    except Exception:
+    except json.JSONDecodeError:
         return None
 
     return payload if isinstance(payload, dict) else None

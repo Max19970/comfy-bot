@@ -12,7 +12,7 @@ def prompt_input_text(
     allow_clear: bool = False,
 ) -> str:
     label = "Positive" if field_name == "positive" else "Negative"
-    base = f"✏️ Введите <b>{label}</b> prompt"
+    base = f"✏️ Введите <b>{label}</b>"
     if allow_clear:
         base += " (или <code>-</code> для очистки)"
     base += ":"

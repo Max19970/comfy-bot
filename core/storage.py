@@ -6,7 +6,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-from comfyui_client import GenerationParams
+from core.models import GenerationParams
 
 PRESETS_DIR = Path(__file__).resolve().parent.parent / "presets"
 SMART_PROMPT_GUIDES_DIR = Path(__file__).resolve().parent.parent / "smart_prompt_guides"
@@ -44,7 +44,7 @@ def load_smart_prompt_guides(user_id: int) -> dict[str, str]:
 
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
+    except (OSError, json.JSONDecodeError, TypeError, ValueError):
         return {}
 
     if not isinstance(raw, dict):
@@ -83,7 +83,7 @@ def load_runtime_session() -> dict[str, Any]:
 
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
+    except (OSError, json.JSONDecodeError, TypeError, ValueError):
         return {}
 
     return raw if isinstance(raw, dict) else {}
@@ -102,18 +102,14 @@ def save_runtime_session(payload: dict[str, Any]) -> None:
 def params_to_dict(params: GenerationParams) -> dict[str, Any]:
     data = asdict(params)
     data["loras"] = [list(item) for item in data.get("loras", [])]
-    data["reference_images"] = _normalize_reference_images(
-        data.get("reference_images", [])
-    )
+    data["reference_images"] = _normalize_reference_images(data.get("reference_images", []))
     return data
 
 
 def dict_to_params(data: dict[str, Any]) -> GenerationParams:
     payload = dict(data)
     payload["loras"] = [tuple(item) for item in payload.get("loras", [])]
-    payload["reference_images"] = _normalize_reference_images(
-        payload.get("reference_images", [])
-    )
+    payload["reference_images"] = _normalize_reference_images(payload.get("reference_images", []))
     known = {f.name for f in _dc.fields(GenerationParams)}
     payload = {k: v for k, v in payload.items() if k in known}
     return GenerationParams(**payload)

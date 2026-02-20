@@ -34,7 +34,6 @@ def editor_keyboard(
     pro_mode: bool = False,
 ) -> InlineKeyboardMarkup:
     params = req.params
-    seed_text = str(params.seed) if params.seed >= 0 else "🎲"
     smart_label = "🧠 Smart" if smart_prompt_enabled else "🧠 Smart (off)"
 
     enh_count = sum(
@@ -63,12 +62,8 @@ def editor_keyboard(
                 ),
             ],
             [
-                InlineKeyboardButton(
-                    text="🟢 Positive", callback_data="pe:edit:positive"
-                ),
-                InlineKeyboardButton(
-                    text="🔴 Negative", callback_data="pe:edit:negative"
-                ),
+                InlineKeyboardButton(text="🟢 Positive", callback_data="pe:edit:positive"),
+                InlineKeyboardButton(text="🔴 Negative", callback_data="pe:edit:negative"),
             ],
             [
                 InlineKeyboardButton(text=smart_label, callback_data="pe:smart:start"),
@@ -96,9 +91,7 @@ def editor_keyboard(
                     text=f"🔢 Steps {params.steps}",
                     callback_data="pe:edit:steps",
                 ),
-                InlineKeyboardButton(
-                    text=f"CFG {params.cfg}", callback_data="pe:edit:cfg"
-                ),
+                InlineKeyboardButton(text=f"CFG {params.cfg}", callback_data="pe:edit:cfg"),
             ],
             [
                 InlineKeyboardButton(
@@ -114,6 +107,12 @@ def editor_keyboard(
                 InlineKeyboardButton(
                     text="📋 Копировать/вставить",
                     callback_data="pe:exchange",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="⬅️ В меню",
+                    callback_data="menu:root",
                 )
             ],
             [
@@ -144,12 +143,8 @@ def editor_keyboard(
                 ),
             ],
             [
-                InlineKeyboardButton(
-                    text="🟢 Positive", callback_data="pe:edit:positive"
-                ),
-                InlineKeyboardButton(
-                    text="🔴 Negative", callback_data="pe:edit:negative"
-                ),
+                InlineKeyboardButton(text="🟢 Positive", callback_data="pe:edit:positive"),
+                InlineKeyboardButton(text="🔴 Negative", callback_data="pe:edit:negative"),
             ],
             [
                 InlineKeyboardButton(text=smart_label, callback_data="pe:smart:start"),
@@ -168,6 +163,12 @@ def editor_keyboard(
                 InlineKeyboardButton(
                     text="📋 Копировать/вставить",
                     callback_data="pe:exchange",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="⬅️ В меню",
+                    callback_data="menu:root",
                 )
             ],
             [

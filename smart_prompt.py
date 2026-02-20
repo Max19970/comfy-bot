@@ -7,7 +7,7 @@ import logging
 import random
 import re
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 from config import Config
 
@@ -57,95 +57,363 @@ _CONTROL_MARKERS = (
 # Stopwords filtered out when extracting anchor tags from NL descriptions.
 _ANCHOR_STOPWORDS = {
     # English
-    "a", "an", "and", "or", "the", "this", "that", "these", "those",
-    "with", "without", "from", "into", "onto", "over", "under", "through",
-    "for", "of", "to", "in", "on", "at", "by", "is", "are", "was", "were",
-    "be", "been", "being", "become", "becoming", "becomes",
-    "get", "gets", "getting", "got", "make", "makes", "making", "made",
-    "as", "while", "during", "after", "before", "very", "more", "less",
-    "some", "any", "each", "every", "all", "both", "few", "many", "much",
-    "no", "not", "but", "so", "if", "then", "than", "too", "also",
-    "it", "its", "he", "she", "his", "her", "they", "their", "we", "our",
-    "my", "your", "who", "what", "where", "when", "how", "which",
-    "has", "have", "had", "do", "does", "did", "will", "would", "can",
-    "could", "should", "may", "might", "shall", "must",
+    "a",
+    "an",
+    "and",
+    "or",
+    "the",
+    "this",
+    "that",
+    "these",
+    "those",
+    "with",
+    "without",
+    "from",
+    "into",
+    "onto",
+    "over",
+    "under",
+    "through",
+    "for",
+    "of",
+    "to",
+    "in",
+    "on",
+    "at",
+    "by",
+    "is",
+    "are",
+    "was",
+    "were",
+    "be",
+    "been",
+    "being",
+    "become",
+    "becoming",
+    "becomes",
+    "get",
+    "gets",
+    "getting",
+    "got",
+    "make",
+    "makes",
+    "making",
+    "made",
+    "as",
+    "while",
+    "during",
+    "after",
+    "before",
+    "very",
+    "more",
+    "less",
+    "some",
+    "any",
+    "each",
+    "every",
+    "all",
+    "both",
+    "few",
+    "many",
+    "much",
+    "no",
+    "not",
+    "but",
+    "so",
+    "if",
+    "then",
+    "than",
+    "too",
+    "also",
+    "it",
+    "its",
+    "he",
+    "she",
+    "his",
+    "her",
+    "they",
+    "their",
+    "we",
+    "our",
+    "my",
+    "your",
+    "who",
+    "what",
+    "where",
+    "when",
+    "how",
+    "which",
+    "has",
+    "have",
+    "had",
+    "do",
+    "does",
+    "did",
+    "will",
+    "would",
+    "can",
+    "could",
+    "should",
+    "may",
+    "might",
+    "shall",
+    "must",
     # Russian
-    "и", "или", "на", "в", "во", "с", "со", "к", "по", "за", "для",
-    "без", "под", "над", "из", "у", "при", "не", "ни", "это", "тот",
-    "эта", "эти", "быть", "стал", "стала", "становится",
-    "он", "она", "оно", "они", "его", "её", "их", "мой", "моя", "наш",
-    "ваш", "который", "которая", "которые", "что", "как", "где", "когда",
-    "очень", "более", "менее", "тоже", "также", "но", "а", "же",
+    "и",
+    "или",
+    "на",
+    "в",
+    "во",
+    "с",
+    "со",
+    "к",
+    "по",
+    "за",
+    "для",
+    "без",
+    "под",
+    "над",
+    "из",
+    "у",
+    "при",
+    "не",
+    "ни",
+    "это",
+    "тот",
+    "эта",
+    "эти",
+    "быть",
+    "стал",
+    "стала",
+    "становится",
+    "он",
+    "она",
+    "оно",
+    "они",
+    "его",
+    "её",
+    "их",
+    "мой",
+    "моя",
+    "наш",
+    "ваш",
+    "который",
+    "которая",
+    "которые",
+    "что",
+    "как",
+    "где",
+    "когда",
+    "очень",
+    "более",
+    "менее",
+    "тоже",
+    "также",
+    "но",
+    "а",
+    "же",
 }
 
 # Lightweight Russian→English map for common visual/art description words.
 # Lets TIPO understand Russian input without adding translation dependencies.
 _RU_EN_VISUAL: dict[str, str] = {
     # Subjects
-    "девушка": "girl", "девочка": "girl", "женщина": "woman",
-    "парень": "boy", "мальчик": "boy", "мужчина": "man",
-    "кот": "cat", "кошка": "cat", "котенок": "kitten", "котёнок": "kitten",
-    "собака": "dog", "щенок": "puppy", "пёс": "dog", "пес": "dog",
-    "лошадь": "horse", "конь": "horse", "птица": "bird",
-    "дракон": "dragon", "волк": "wolf", "лиса": "fox", "лис": "fox",
-    "кролик": "rabbit", "заяц": "rabbit", "медведь": "bear",
-    "рыцарь": "knight", "воин": "warrior", "маг": "mage", "ведьма": "witch",
-    "принцесса": "princess", "принц": "prince", "король": "king", "королева": "queen",
-    "робот": "robot", "ангел": "angel", "демон": "demon",
+    "девушка": "girl",
+    "девочка": "girl",
+    "женщина": "woman",
+    "парень": "boy",
+    "мальчик": "boy",
+    "мужчина": "man",
+    "кот": "cat",
+    "кошка": "cat",
+    "котенок": "kitten",
+    "котёнок": "kitten",
+    "собака": "dog",
+    "щенок": "puppy",
+    "пёс": "dog",
+    "пес": "dog",
+    "лошадь": "horse",
+    "конь": "horse",
+    "птица": "bird",
+    "дракон": "dragon",
+    "волк": "wolf",
+    "лиса": "fox",
+    "лис": "fox",
+    "кролик": "rabbit",
+    "заяц": "rabbit",
+    "медведь": "bear",
+    "рыцарь": "knight",
+    "воин": "warrior",
+    "маг": "mage",
+    "ведьма": "witch",
+    "принцесса": "princess",
+    "принц": "prince",
+    "король": "king",
+    "королева": "queen",
+    "робот": "robot",
+    "ангел": "angel",
+    "демон": "demon",
     # Body / appearance
-    "волосы": "hair", "глаза": "eyes", "лицо": "face", "улыбка": "smile",
-    "длинные": "long", "короткие": "short", "большие": "large", "маленькие": "small",
+    "волосы": "hair",
+    "глаза": "eyes",
+    "лицо": "face",
+    "улыбка": "smile",
+    "длинные": "long",
+    "короткие": "short",
+    "большие": "large",
+    "маленькие": "small",
     # Colors
-    "красный": "red", "красная": "red", "красное": "red", "красные": "red",
-    "синий": "blue", "синяя": "blue", "синее": "blue", "синие": "blue",
-    "голубой": "light blue", "голубая": "light blue", "голубые": "light blue",
-    "зелёный": "green", "зеленый": "green", "зелёная": "green", "зеленая": "green",
-    "жёлтый": "yellow", "желтый": "yellow", "жёлтая": "yellow", "желтая": "yellow",
-    "оранжевый": "orange", "оранжевая": "orange",
-    "фиолетовый": "purple", "фиолетовая": "purple",
-    "розовый": "pink", "розовая": "pink", "розовые": "pink",
-    "белый": "white", "белая": "white", "белое": "white", "белые": "white",
-    "чёрный": "black", "черный": "black", "чёрная": "black", "черная": "black",
-    "серый": "grey", "серая": "grey", "золотой": "golden", "золотая": "golden",
-    "серебряный": "silver", "серебряная": "silver",
+    "красный": "red",
+    "красная": "red",
+    "красное": "red",
+    "красные": "red",
+    "синий": "blue",
+    "синяя": "blue",
+    "синее": "blue",
+    "синие": "blue",
+    "голубой": "light blue",
+    "голубая": "light blue",
+    "голубые": "light blue",
+    "зелёный": "green",
+    "зеленый": "green",
+    "зелёная": "green",
+    "зеленая": "green",
+    "жёлтый": "yellow",
+    "желтый": "yellow",
+    "жёлтая": "yellow",
+    "желтая": "yellow",
+    "оранжевый": "orange",
+    "оранжевая": "orange",
+    "фиолетовый": "purple",
+    "фиолетовая": "purple",
+    "розовый": "pink",
+    "розовая": "pink",
+    "розовые": "pink",
+    "белый": "white",
+    "белая": "white",
+    "белое": "white",
+    "белые": "white",
+    "чёрный": "black",
+    "черный": "black",
+    "чёрная": "black",
+    "черная": "black",
+    "серый": "grey",
+    "серая": "grey",
+    "золотой": "golden",
+    "золотая": "golden",
+    "серебряный": "silver",
+    "серебряная": "silver",
     # Clothing / accessories
-    "платье": "dress", "юбка": "skirt", "шляпа": "hat", "шляпе": "hat",
-    "корона": "crown", "плащ": "cape", "доспехи": "armor", "броня": "armor",
-    "очки": "glasses", "маска": "mask", "перчатки": "gloves", "сапоги": "boots",
-    "униформа": "uniform", "костюм": "suit", "рубашка": "shirt",
-    "шарф": "scarf", "капюшон": "hood", "крылья": "wings", "хвост": "tail",
+    "платье": "dress",
+    "юбка": "skirt",
+    "шляпа": "hat",
+    "шляпе": "hat",
+    "корона": "crown",
+    "плащ": "cape",
+    "доспехи": "armor",
+    "броня": "armor",
+    "очки": "glasses",
+    "маска": "mask",
+    "перчатки": "gloves",
+    "сапоги": "boots",
+    "униформа": "uniform",
+    "костюм": "suit",
+    "рубашка": "shirt",
+    "шарф": "scarf",
+    "капюшон": "hood",
+    "крылья": "wings",
+    "хвост": "tail",
     # Scenes / environment
-    "город": "city", "лес": "forest", "море": "sea", "океан": "ocean",
-    "гора": "mountain", "горы": "mountains", "река": "river", "озеро": "lake",
-    "небо": "sky", "облака": "clouds", "звёзды": "stars", "звезды": "stars",
-    "луна": "moon", "солнце": "sun", "закат": "sunset", "рассвет": "sunrise",
-    "ночь": "night", "ночью": "night", "день": "day", "днём": "day",
-    "дождь": "rain", "снег": "snow", "туман": "fog", "гроза": "storm",
-    "поле": "field", "сад": "garden", "цветы": "flowers", "цветок": "flower",
-    "дерево": "tree", "деревья": "trees", "трава": "grass",
-    "замок": "castle", "дворец": "palace", "храм": "temple", "башня": "tower",
-    "улица": "street", "мост": "bridge", "дом": "house", "комната": "room",
-    "окно": "window", "подоконник": "windowsill", "подоконнике": "windowsill",
-    "пляж": "beach", "пустыня": "desert", "джунгли": "jungle",
-    "космос": "space", "планета": "planet",
+    "город": "city",
+    "лес": "forest",
+    "море": "sea",
+    "океан": "ocean",
+    "гора": "mountain",
+    "горы": "mountains",
+    "река": "river",
+    "озеро": "lake",
+    "небо": "sky",
+    "облака": "clouds",
+    "звёзды": "stars",
+    "звезды": "stars",
+    "луна": "moon",
+    "солнце": "sun",
+    "закат": "sunset",
+    "рассвет": "sunrise",
+    "ночь": "night",
+    "ночью": "night",
+    "день": "day",
+    "днём": "day",
+    "дождь": "rain",
+    "снег": "snow",
+    "туман": "fog",
+    "гроза": "storm",
+    "поле": "field",
+    "сад": "garden",
+    "цветы": "flowers",
+    "цветок": "flower",
+    "дерево": "tree",
+    "деревья": "trees",
+    "трава": "grass",
+    "замок": "castle",
+    "дворец": "palace",
+    "храм": "temple",
+    "башня": "tower",
+    "улица": "street",
+    "мост": "bridge",
+    "дом": "house",
+    "комната": "room",
+    "окно": "window",
+    "подоконник": "windowsill",
+    "подоконнике": "windowsill",
+    "пляж": "beach",
+    "пустыня": "desert",
+    "джунгли": "jungle",
+    "космос": "space",
+    "планета": "planet",
     # Actions / poses
-    "сидит": "sitting", "стоит": "standing", "лежит": "lying down",
-    "бежит": "running", "идёт": "walking", "идет": "walking",
-    "летит": "flying", "плывёт": "swimming", "плывет": "swimming",
-    "держит": "holding", "смотрит": "looking", "читает": "reading",
-    "играет": "playing", "танцует": "dancing", "спит": "sleeping",
+    "сидит": "sitting",
+    "стоит": "standing",
+    "лежит": "lying down",
+    "бежит": "running",
+    "идёт": "walking",
+    "идет": "walking",
+    "летит": "flying",
+    "плывёт": "swimming",
+    "плывет": "swimming",
+    "держит": "holding",
+    "смотрит": "looking",
+    "читает": "reading",
+    "играет": "playing",
+    "танцует": "dancing",
+    "спит": "sleeping",
     # Mood / style
-    "красивый": "beautiful", "красивая": "beautiful",
-    "милый": "cute", "милая": "cute", "грустный": "sad", "грустная": "sad",
-    "счастливый": "happy", "счастливая": "happy",
-    "тёмный": "dark", "темный": "dark", "тёмная": "dark", "темная": "dark",
-    "светлый": "bright", "светлая": "bright",
-    "магический": "magical", "магическая": "magical",
-    "мрачный": "gloomy", "мрачная": "gloomy",
-    "эпический": "epic", "эпичный": "epic",
-    "фэнтези": "fantasy", "фентези": "fantasy",
-    "киберпанк": "cyberpunk", "стимпанк": "steampunk",
-    "реалистичный": "realistic", "реалистичная": "realistic",
+    "красивый": "beautiful",
+    "красивая": "beautiful",
+    "милый": "cute",
+    "милая": "cute",
+    "грустный": "sad",
+    "грустная": "sad",
+    "счастливый": "happy",
+    "счастливая": "happy",
+    "тёмный": "dark",
+    "темный": "dark",
+    "тёмная": "dark",
+    "темная": "dark",
+    "светлый": "bright",
+    "светлая": "bright",
+    "магический": "magical",
+    "магическая": "magical",
+    "мрачный": "gloomy",
+    "мрачная": "gloomy",
+    "эпический": "epic",
+    "эпичный": "epic",
+    "фэнтези": "fantasy",
+    "фентези": "fantasy",
+    "киберпанк": "cyberpunk",
+    "стимпанк": "steampunk",
+    "реалистичный": "realistic",
+    "реалистичная": "realistic",
     "аниме": "anime",
 }
 
@@ -346,10 +614,7 @@ class SmartPromptService:
 
         missing = self._missing_dependencies()
         if missing:
-            return (
-                "Отсутствуют зависимости для TIPO. Установите: "
-                f"pip install {' '.join(missing)}"
-            )
+            return f"Отсутствуют зависимости для TIPO. Установите: pip install {' '.join(missing)}"
 
         if self._backend_error:
             return self._backend_error
@@ -388,9 +653,7 @@ class SmartPromptService:
         model = self._kgen_models.text_model
         tokenizer = self._kgen_models.tokenizer
         if model is None or tokenizer is None:
-            raise SmartPromptError(
-                f"TIPO model {self.model} loaded without tokenizer/model"
-            )
+            raise SmartPromptError(f"TIPO model {self.model} loaded without tokenizer/model")
         return model, tokenizer
 
     def _patch_min_p_compat(self) -> None:
@@ -415,19 +678,17 @@ class SmartPromptService:
         try:
             torch = importlib.import_module("torch")
             transformers_module = importlib.import_module("transformers")
-            GenerationConfig = getattr(transformers_module, "GenerationConfig")
+            GenerationConfig = transformers_module.GenerationConfig
             kgen_models = importlib.import_module("kgen.models")
             tipo_executor = importlib.import_module("kgen.executor.tipo")
             kgen_formatter = importlib.import_module("kgen.formatter")
             kgen_metainfo = importlib.import_module("kgen.metainfo")
-            seperate_tags = getattr(kgen_formatter, "seperate_tags")
-            apply_format_fn = getattr(kgen_formatter, "apply_format")
-            tipo_default_format = getattr(kgen_metainfo, "TIPO_DEFAULT_FORMAT")
-        except Exception as exc:
+            seperate_tags = kgen_formatter.seperate_tags
+            apply_format_fn = kgen_formatter.apply_format
+            tipo_default_format = kgen_metainfo.TIPO_DEFAULT_FORMAT
+        except (ImportError, AttributeError) as exc:
             missing = self._missing_dependencies()
-            deps_hint = (
-                f" Установите: pip install {' '.join(missing)}" if missing else ""
-            )
+            deps_hint = f" Установите: pip install {' '.join(missing)}" if missing else ""
             self._backend_error = "Не удалось загрузить зависимости TIPO." + deps_hint
             raise SmartPromptError(self._backend_error) from exc
 
@@ -453,12 +714,13 @@ class SmartPromptService:
             self._backend_ready = True
             return
 
-        self._kgen_models.text_model = None
-        self._kgen_models.tokenizer = None
+        kgen_models_any = cast(Any, self._kgen_models)
+        kgen_models_any.text_model = None
+        kgen_models_any.tokenizer = None
 
         try:
             model, tokenizer = self._load_tipo_model(device=runtime_device)
-        except Exception as exc:
+        except (OSError, RuntimeError, ValueError) as exc:
             allow_cpu_fallback = self.device == "auto" and runtime_device != "cpu"
             if allow_cpu_fallback:
                 logger.warning(
@@ -469,21 +731,18 @@ class SmartPromptService:
                 runtime_device = "cpu"
                 try:
                     model, tokenizer = self._load_tipo_model(device=runtime_device)
-                except Exception as cpu_exc:
+                except (OSError, RuntimeError, ValueError) as cpu_exc:
                     self._backend_error = (
-                        "Не удалось загрузить TIPO модель "
-                        f"{self.model} (CUDA и CPU): {cpu_exc}"
+                        f"Не удалось загрузить TIPO модель {self.model} (CUDA и CPU): {cpu_exc}"
                     )
                     raise SmartPromptError(self._backend_error) from cpu_exc
             else:
-                self._backend_error = (
-                    f"Не удалось загрузить TIPO модель {self.model}: {exc}"
-                )
+                self._backend_error = f"Не удалось загрузить TIPO модель {self.model}: {exc}"
                 raise SmartPromptError(self._backend_error) from exc
 
-        self._kgen_models.text_model = model
-        self._kgen_models.tokenizer = tokenizer
-        self._kgen_models.current_model_name = self.model.split("/")[-1]
+        kgen_models_any.text_model = model
+        kgen_models_any.tokenizer = tokenizer
+        kgen_models_any.current_model_name = self.model.split("/")[-1]
 
         self._loaded_model_key = f"{self.model}@{runtime_device}"
         self._runtime_device = runtime_device
@@ -554,9 +813,7 @@ class SmartPromptService:
 
         # 1. Determine quality tags based on checkpoint
         quality_preset = self.detect_quality_preset(checkpoint)
-        quality_tags = list(
-            _QUALITY_PRESETS.get(quality_preset, _QUALITY_PRESETS["default"])
-        )
+        quality_tags = list(_QUALITY_PRESETS.get(quality_preset, _QUALITY_PRESETS["default"]))
 
         # 2. Extract anchor keywords from the NL description.
         #    This is the critical step: without concrete general tags,
@@ -574,17 +831,15 @@ class SmartPromptService:
         nl_prompt = description
         want_nl = self.output_format != "tag_only"
 
-        meta, operations, general, parsed_nl = (
-            self._tipo_executor.parse_tipo_request(
-                tag_map,
-                nl_prompt,
-                expand_tags=True,
-                expand_prompt=want_nl,
-                generate_extra_nl_prompt=False,
-                tag_first=True,
-                tag_length_target=self.tag_length,
-                nl_length_target=self.nl_length,
-            )
+        meta, operations, general, parsed_nl = self._tipo_executor.parse_tipo_request(
+            tag_map,
+            nl_prompt,
+            expand_tags=True,
+            expand_prompt=want_nl,
+            generate_extra_nl_prompt=False,
+            tag_first=True,
+            tag_length_target=self.tag_length,
+            nl_length_target=self.nl_length,
         )
         meta["aspect_ratio"] = "1.0"
 
@@ -612,7 +867,7 @@ class SmartPromptService:
                 parsed_nl,
                 **runner_kwargs,
             )
-        except Exception as exc:
+        except (RuntimeError, ValueError, TypeError) as exc:
             raise SmartPromptError(f"Ошибка TIPO: {exc}") from exc
 
         # 7. Ensure quality tags are present in result_map
@@ -683,9 +938,7 @@ class SmartPromptService:
 
     def _build_positive_prompt(self, result_map: dict[str, Any]) -> str:
         """Build positive prompt using kgen's apply_format with templates."""
-        format_key = _FORMAT_KEYS.get(
-            self.output_format, _FORMAT_KEYS["both_tag_first"]
-        )
+        format_key = _FORMAT_KEYS.get(self.output_format, _FORMAT_KEYS["both_tag_first"])
         template = self._tipo_default_format[format_key]
 
         prompt = self._apply_format(result_map, template)
@@ -702,9 +955,11 @@ class SmartPromptService:
                 if not p_stripped:
                     continue
                 # If this looks like a sentence (the NL part), keep it
-                if "." in p_stripped and len(p_stripped) > 40:
-                    filtered.append(p_stripped)
-                elif p_stripped.casefold() not in banned:
+                if (
+                    "." in p_stripped
+                    and len(p_stripped) > 40
+                    or p_stripped.casefold() not in banned
+                ):
                     filtered.append(p_stripped)
             prompt = ", ".join(filtered)
 

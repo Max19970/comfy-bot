@@ -15,15 +15,18 @@ import json
 import logging
 import math
 import uuid
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from io import BytesIO
-from typing import Any, Awaitable, Callable
+from typing import Any
 from urllib.parse import urlencode, urlsplit, urlunsplit
 
 import aiohttp
 from PIL import Image, ImageOps
 
 from config import Config
+from core.models import GenerationParams
+from core.queue_utils import queue_item_prompt_id
 
 logger = logging.getLogger(__name__)
 
@@ -80,47 +83,12 @@ def _compose_reference_image(
 
 
 @dataclass
-class GenerationParams:
-    """All parameters needed to build a ComfyUI workflow."""
-
-    positive: str = ""
-    negative: str = ""
-    checkpoint: str = ""
-    # List of (lora_name, strength) tuples — supports chaining multiple LoRAs
-    loras: list = field(default_factory=list)  # list[tuple[str, float]]
-    upscale_model: str = ""  # empty string = no upscale
-    width: int = 512
-    height: int = 512
-    steps: int = 20
-    cfg: float = 7.0
-    sampler: str = "euler"
-    scheduler: str = "normal"
-    denoise: float = 1.0
-    seed: int = -1  # -1 = random
-    batch_size: int = 1
-    reference_strength: float = 0.8
-    # List of dicts with shape: {"id": str, "file_id": str}
-    reference_images: list = field(default_factory=list)
-    # --- Optional workflow enhancements ---
-    enable_hires_fix: bool = False  # two-pass generation via latent upscale
-    hires_scale: float = 1.5  # latent upscale multiplier (1.25–2.0)
-    hires_denoise: float = 0.5  # denoise for second KSampler pass
-    enable_freeu: bool = False  # FreeU V2 model patching
-    enable_pag: bool = False  # Perturbed-Attention Guidance
-    pag_scale: float = 3.0  # PAG strength (1.0–5.0)
-    # --- Tiled Diffusion (arbitrary-size generation) ---
-    enable_tiled_diffusion: bool = False
-    tile_size: int = 256  # HyperTile tile size
-    tile_overlap: int = 64  # VAE tiled overlap
-    vae_tile_size: int = 512  # VAE tiled encode/decode tile size
-
-
-@dataclass
 class ComfyUIInfo:
     """Cached information about available resources on the ComfyUI server."""
 
     checkpoints: list[str] = field(default_factory=list)
     loras: list[str] = field(default_factory=list)
+    embeddings: list[str] = field(default_factory=list)
     upscale_models: list[str] = field(default_factory=list)
     vaes: list[str] = field(default_factory=list)
     controlnets: list[str] = field(default_factory=list)
@@ -179,11 +147,7 @@ class ComfyUIClient:
             return first
         # New format: first element is "COMBO" (or another type string),
         # second element is a dict with "options"
-        if (
-            isinstance(first, str)
-            and len(input_val) > 1
-            and isinstance(input_val[1], dict)
-        ):
+        if isinstance(first, str) and len(input_val) > 1 and isinstance(input_val[1], dict):
             return input_val[1].get("options", [])
         return []
 
@@ -247,10 +211,34 @@ class ComfyUIClient:
         defaults: dict[str, Any] = {}
         for field_name, field_spec in required.items():
             default_value = self._default_from_input_spec(field_spec)
-            defaults[field_name] = (
-                None if default_value is _NO_DEFAULT else default_value
-            )
+            defaults[field_name] = None if default_value is _NO_DEFAULT else default_value
         return defaults
+
+    @staticmethod
+    def _extract_embedding_options_from_object_info(data: dict[str, Any]) -> list[str]:
+        options: set[str] = set()
+        for node in data.values():
+            if not isinstance(node, dict):
+                continue
+            inputs = node.get("input")
+            if not isinstance(inputs, dict):
+                continue
+            required = inputs.get("required")
+            if not isinstance(required, dict):
+                continue
+
+            for field_name, field_spec in required.items():
+                key = str(field_name).strip().lower()
+                if "embedding" not in key:
+                    continue
+                if not isinstance(field_spec, list):
+                    continue
+                combo = ComfyUIClient._extract_combo_options(field_spec)
+                for item in combo:
+                    name = str(item).strip()
+                    if name:
+                        options.add(name)
+        return sorted(options)
 
     def supports_ipadapter(self) -> bool:
         if not self.info.ipadapter_supported:
@@ -263,12 +251,9 @@ class ComfyUIClient:
         required = self._required_input_specs(apply_node)
         has_model = self._select_field_name(required, ("model",)) is not None
         has_image = self._select_field_name(required, ("image", "images")) is not None
-        has_clip = (
-            self._select_field_name(required, ("clip_vision", "clipvision")) is not None
-        )
+        has_clip = self._select_field_name(required, ("clip_vision", "clipvision")) is not None
         has_ipadapter = (
-            self._select_field_name(required, ("ipadapter", "ipadapter_model"))
-            is not None
+            self._select_field_name(required, ("ipadapter", "ipadapter_model")) is not None
         )
 
         return has_model and has_image and has_clip and has_ipadapter
@@ -283,12 +268,10 @@ class ComfyUIClient:
         session = await self._get_session()
         url = f"{self.base_url}/object_info"
         try:
-            async with session.get(
-                url, timeout=aiohttp.ClientTimeout(total=30)
-            ) as resp:
+            async with session.get(url, timeout=aiohttp.ClientTimeout(total=30)) as resp:
                 resp.raise_for_status()
                 data: dict[str, Any] = await resp.json()
-        except Exception:
+        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
             logger.exception("Failed to fetch /object_info")
             raise
 
@@ -299,13 +282,10 @@ class ComfyUIClient:
             raw = node.get("input", {}).get("required", {}).get(field_name, [])
             return self._extract_combo_options(raw)
 
-        self.info.checkpoints = sorted(
-            _get_input("CheckpointLoaderSimple", "ckpt_name")
-        )
+        self.info.checkpoints = sorted(_get_input("CheckpointLoaderSimple", "ckpt_name"))
         self.info.loras = sorted(_get_input("LoraLoader", "lora_name"))
-        self.info.upscale_models = sorted(
-            _get_input("UpscaleModelLoader", "model_name")
-        )
+        self.info.embeddings = self._extract_embedding_options_from_object_info(data)
+        self.info.upscale_models = sorted(_get_input("UpscaleModelLoader", "model_name"))
         self.info.vaes = sorted(_get_input("VAELoader", "vae_name"))
         self.info.controlnets = sorted(
             _get_input("ControlNetLoader", "control_net_name")
@@ -313,9 +293,7 @@ class ComfyUIClient:
         )
         self.info.samplers = sorted(_get_input("KSampler", "sampler_name"))
         self.info.schedulers = sorted(_get_input("KSampler", "scheduler"))
-        self.info.clip_vision_models = sorted(
-            _get_input("CLIPVisionLoader", "clip_name")
-        )
+        self.info.clip_vision_models = sorted(_get_input("CLIPVisionLoader", "clip_name"))
         self.info.ipadapter_models = sorted(
             _get_input("IPAdapterModelLoader", "ipadapter_file")
             or _get_input("IPAdapterModelLoader", "model_name")
@@ -331,12 +309,13 @@ class ComfyUIClient:
         self.info.tiled_diffusion_supported = "HyperTile" in data
 
         logger.info(
-            "ComfyUI info refreshed: %d checkpoints, %d loras, %d upscalers, "
+            "ComfyUI info refreshed: %d checkpoints, %d loras, %d embeddings, %d upscalers, "
             "%d vae, %d controlnet, %d samplers, %d schedulers, "
             "%d clip-vision, %d ipadapter-models, ipadapter=%s, "
             "freeu=%s, pag=%s, tiled_diffusion=%s",
             len(self.info.checkpoints),
             len(self.info.loras),
+            len(self.info.embeddings),
             len(self.info.upscale_models),
             len(self.info.vaes),
             len(self.info.controlnets),
@@ -389,6 +368,11 @@ class ComfyUIClient:
         clip_out = [ckpt_id, 1]
         vae_out = [ckpt_id, 2]
 
+        # Optional custom VAE override.
+        if params.vae_name:
+            vae_loader_id = _node("VAELoader", {"vae_name": params.vae_name})
+            vae_out = [vae_loader_id, 0]
+
         # 2. LoRA chain (0 or more)
         for lora_name, lora_strength in params.loras:
             lora_id = _node(
@@ -404,11 +388,20 @@ class ComfyUIClient:
             model_out = [lora_id, 0]
             clip_out = [lora_id, 1]
 
+        positive_text = params.positive
+        negative_text = params.negative
+        if params.embedding_name:
+            token = f"embedding:{params.embedding_name}"
+            if negative_text.strip():
+                negative_text = f"{negative_text}, {token}"
+            else:
+                negative_text = token
+
         # 3. CLIP Text Encode (positive)
         pos_id = _node(
             "CLIPTextEncode",
             {
-                "text": params.positive,
+                "text": positive_text,
                 "clip": clip_out,
             },
         )
@@ -417,10 +410,94 @@ class ComfyUIClient:
         neg_id = _node(
             "CLIPTextEncode",
             {
-                "text": params.negative,
+                "text": negative_text,
                 "clip": clip_out,
             },
         )
+        positive_ref: list[Any] = [pos_id, 0]
+        negative_ref: list[Any] = [neg_id, 0]
+
+        # Optional ControlNet conditioning from reference image.
+        if params.controlnet_name and reference_image_name:
+            control_loader_inputs = self._required_input_defaults("ControlNetLoader")
+            control_name_field = self._select_field_name(
+                control_loader_inputs,
+                ("control_net_name", "controlnet_name"),
+            )
+            if control_name_field:
+                control_loader_inputs[control_name_field] = params.controlnet_name
+                unresolved_control_loader = [
+                    name for name, value in control_loader_inputs.items() if value is None
+                ]
+                if unresolved_control_loader:
+                    raise RuntimeError(
+                        "ControlNetLoader has unresolved required fields: "
+                        + ", ".join(unresolved_control_loader)
+                    )
+
+                control_loader_id = _node("ControlNetLoader", control_loader_inputs)
+                control_image_id = _node("LoadImage", {"image": reference_image_name})
+
+                apply_class = ""
+                if "ControlNetApplyAdvanced" in self._object_info:
+                    apply_class = "ControlNetApplyAdvanced"
+                elif "ControlNetApply" in self._object_info:
+                    apply_class = "ControlNetApply"
+
+                if apply_class:
+                    control_apply_inputs = self._required_input_defaults(apply_class)
+                    pos_field = self._select_field_name(
+                        control_apply_inputs,
+                        ("positive", "conditioning"),
+                    )
+                    neg_field = self._select_field_name(
+                        control_apply_inputs,
+                        ("negative",),
+                    )
+                    controlnet_field = self._select_field_name(
+                        control_apply_inputs,
+                        ("control_net", "controlnet"),
+                    )
+                    image_field = self._select_field_name(
+                        control_apply_inputs,
+                        ("image", "hint", "control_image"),
+                    )
+                    strength_field = self._select_field_name(
+                        control_apply_inputs,
+                        ("strength",),
+                    )
+
+                    if pos_field and controlnet_field and image_field:
+                        control_apply_inputs[pos_field] = positive_ref
+                        if neg_field:
+                            control_apply_inputs[neg_field] = negative_ref
+                        control_apply_inputs[controlnet_field] = [control_loader_id, 0]
+                        control_apply_inputs[image_field] = [control_image_id, 0]
+                        if strength_field:
+                            control_apply_inputs[strength_field] = params.controlnet_strength
+
+                        for field_name, field_value in (
+                            ("start_percent", 0.0),
+                            ("end_percent", 1.0),
+                            ("start", 0.0),
+                            ("end", 1.0),
+                        ):
+                            if field_name in control_apply_inputs:
+                                control_apply_inputs[field_name] = field_value
+
+                        unresolved_control_apply = [
+                            name for name, value in control_apply_inputs.items() if value is None
+                        ]
+                        if unresolved_control_apply:
+                            raise RuntimeError(
+                                f"{apply_class} has unresolved required fields: "
+                                + ", ".join(unresolved_control_apply)
+                            )
+
+                        control_apply_id = _node(apply_class, control_apply_inputs)
+                        positive_ref = [control_apply_id, 0]
+                        if neg_field:
+                            negative_ref = [control_apply_id, 1]
 
         # 5. Optional IP-Adapter model conditioning
         if reference_mode == "ipadapter" and reference_image_name:
@@ -445,9 +522,7 @@ class ComfyUIClient:
                     + ", ".join(unresolved_clip_loader)
                 )
 
-            ip_model_loader_inputs = self._required_input_defaults(
-                "IPAdapterModelLoader"
-            )
+            ip_model_loader_inputs = self._required_input_defaults("IPAdapterModelLoader")
             ip_model_field = self._select_field_name(
                 ip_model_loader_inputs,
                 ("ipadapter_file", "model_name", "ipadapter_name"),
@@ -479,12 +554,7 @@ class ComfyUIClient:
                 apply_inputs,
                 ("ipadapter", "ipadapter_model"),
             )
-            if (
-                not model_field
-                or not image_field
-                or not clip_field
-                or not ipadapter_field
-            ):
+            if not model_field or not image_field or not clip_field or not ipadapter_field:
                 raise RuntimeError("IP-Adapter apply node has unsupported input schema")
 
             apply_inputs[model_field] = model_out
@@ -508,13 +578,10 @@ class ComfyUIClient:
                 if field_name in apply_inputs:
                     apply_inputs[field_name] = field_value
 
-            unresolved_apply = [
-                name for name, value in apply_inputs.items() if value is None
-            ]
+            unresolved_apply = [name for name, value in apply_inputs.items() if value is None]
             if unresolved_apply:
                 raise RuntimeError(
-                    f"{apply_class} has unresolved required fields: "
-                    + ", ".join(unresolved_apply)
+                    f"{apply_class} has unresolved required fields: " + ", ".join(unresolved_apply)
                 )
 
             ip_apply_id = _node(apply_class, apply_inputs)
@@ -609,8 +676,8 @@ class ComfyUIClient:
             "KSampler",
             {
                 "model": model_out,
-                "positive": [pos_id, 0],
-                "negative": [neg_id, 0],
+                "positive": positive_ref,
+                "negative": negative_ref,
                 "latent_image": [latent_id, 0],
                 "seed": seed,
                 "steps": params.steps,
@@ -637,8 +704,8 @@ class ComfyUIClient:
                 "KSampler",
                 {
                     "model": model_out,
-                    "positive": [pos_id, 0],
-                    "negative": [neg_id, 0],
+                    "positive": positive_ref,
+                    "negative": negative_ref,
                     "latent_image": [hires_latent_id, 0],
                     "seed": seed,
                     "steps": params.steps,
@@ -742,9 +809,7 @@ class ComfyUIClient:
         payload = {"prompt": workflow, "client_id": client_id}
 
         url = f"{self.base_url}/prompt"
-        async with session.post(
-            url, json=payload, timeout=aiohttp.ClientTimeout(total=30)
-        ) as resp:
+        async with session.post(url, json=payload, timeout=aiohttp.ClientTimeout(total=30)) as resp:
             resp.raise_for_status()
             data = await resp.json()
 
@@ -766,7 +831,7 @@ class ComfyUIClient:
             ) as resp:
                 if resp.status != 200:
                     logger.warning("Failed to interrupt: %s", resp.status)
-        except Exception:
+        except (aiohttp.ClientError, asyncio.TimeoutError):
             logger.warning("Failed to interrupt prompt %s", prompt_id, exc_info=True)
 
         # 2. Remove from queue (if pending)
@@ -778,10 +843,8 @@ class ComfyUIClient:
             ) as resp:
                 if resp.status != 200:
                     logger.warning("Failed to delete from queue: %s", resp.status)
-        except Exception:
-            logger.warning(
-                "Failed to delete prompt %s from queue", prompt_id, exc_info=True
-            )
+        except (aiohttp.ClientError, asyncio.TimeoutError):
+            logger.warning("Failed to delete prompt %s from queue", prompt_id, exc_info=True)
 
     @staticmethod
     def _ws_url(base_url: str, client_id: str) -> str:
@@ -808,7 +871,11 @@ class ComfyUIClient:
         labels = {
             "CheckpointLoaderSimple": "подготовка модели",
             "LoraLoader": "применение LoRA",
+            "VAELoader": "загрузка VAE",
             "CLIPTextEncode": "кодирование промпта",
+            "ControlNetLoader": "загрузка ControlNet",
+            "ControlNetApply": "применение ControlNet",
+            "ControlNetApplyAdvanced": "применение ControlNet",
             "CLIPVisionLoader": "загрузка CLIP Vision",
             "IPAdapterModelLoader": "загрузка IP-Adapter",
             "IPAdapterApply": "применение IP-Adapter",
@@ -901,7 +968,7 @@ class ComfyUIClient:
                     if message.type == aiohttp.WSMsgType.TEXT:
                         try:
                             payload = json.loads(message.data)
-                        except Exception:
+                        except json.JSONDecodeError:
                             continue
 
                         if not isinstance(payload, dict):
@@ -961,9 +1028,7 @@ class ComfyUIClient:
                         if event_type == "execution_cached":
                             cached_nodes = data.get("nodes", [])
                             cached_count = (
-                                len(cached_nodes)
-                                if isinstance(cached_nodes, list)
-                                else 0
+                                len(cached_nodes) if isinstance(cached_nodes, list) else 0
                             )
                             if cached_count > 0:
                                 await report_progress(
@@ -1047,9 +1112,7 @@ class ComfyUIClient:
                         aiohttp.WSMsgType.CLOSE,
                         aiohttp.WSMsgType.CLOSED,
                     ):
-                        logger.debug(
-                            "ComfyUI websocket closed for prompt %s", prompt_id
-                        )
+                        logger.debug("ComfyUI websocket closed for prompt %s", prompt_id)
                         return False
                     elif message.type == aiohttp.WSMsgType.ERROR:
                         logger.debug("ComfyUI websocket error for prompt %s", prompt_id)
@@ -1059,7 +1122,7 @@ class ComfyUIClient:
             raise
         except RuntimeError:
             raise
-        except Exception:
+        except (aiohttp.ClientError, asyncio.TimeoutError, json.JSONDecodeError):
             logger.debug(
                 "Realtime websocket progress failed for prompt %s",
                 prompt_id,
@@ -1173,7 +1236,7 @@ class ComfyUIClient:
                             queue_pending = raw_pending
                         if isinstance(raw_running, list):
                             queue_running = raw_running
-                    except Exception:
+                    except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
                         logger.debug(
                             "Could not query queue status for prompt %s",
                             prompt_id,
@@ -1200,9 +1263,7 @@ class ComfyUIClient:
                             "⚙️ Выполняю workflow...",
                         )
 
-                async with session.get(
-                    url, timeout=aiohttp.ClientTimeout(total=10)
-                ) as resp:
+                async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
                     if resp.status == 200:
                         data = await resp.json()
                         if prompt_id in data:
@@ -1211,9 +1272,7 @@ class ComfyUIClient:
                             messages = status.get("messages", [])
 
                             if progress_cb:
-                                sampler_progress = (
-                                    self._extract_latest_sampler_progress(messages)
-                                )
+                                sampler_progress = self._extract_latest_sampler_progress(messages)
                                 if sampler_progress:
                                     current_step, total_steps = sampler_progress
                                     await report_progress(
@@ -1245,12 +1304,8 @@ class ComfyUIClient:
                                     and len(msg) >= 1
                                     and msg[0] == "execution_error"
                                 ):
-                                    error_info = (
-                                        msg[1] if len(msg) > 1 else "Unknown error"
-                                    )
-                                    raise RuntimeError(
-                                        f"ComfyUI execution error: {error_info}"
-                                    )
+                                    error_info = msg[1] if len(msg) > 1 else "Unknown error"
+                                    raise RuntimeError(f"ComfyUI execution error: {error_info}")
             except aiohttp.ClientError:
                 logger.debug("Poll failed, retrying...")
             except RuntimeError:
@@ -1263,18 +1318,7 @@ class ComfyUIClient:
 
     @staticmethod
     def _queue_item_prompt_id(item: Any) -> str:
-        if (
-            isinstance(item, (list, tuple))
-            and len(item) >= 2
-            and isinstance(item[1], str)
-        ):
-            return item[1]
-        if isinstance(item, dict):
-            for key in ("prompt_id", "id"):
-                value = item.get(key)
-                if isinstance(value, str):
-                    return value
-        return ""
+        return queue_item_prompt_id(item)
 
     @classmethod
     def _queue_contains_prompt(cls, queue_items: Any, prompt_id: str) -> bool:
@@ -1348,7 +1392,7 @@ class ComfyUIClient:
                     ) as resp:
                         resp.raise_for_status()
                         images.append(await resp.read())
-                except Exception:
+                except (aiohttp.ClientError, asyncio.TimeoutError, OSError):
                     logger.exception("Failed to download image %s", filename)
 
         return images
@@ -1459,7 +1503,12 @@ class ComfyUIClient:
                 height=params.height,
             )
             reference_image_name = await self.upload_input_image(composed)
-            reference_mode = self.resolve_reference_mode(True)
+            if params.controlnet_name:
+                # For ControlNet we keep latent source as txt2img by default.
+                # If IP-Adapter is available, it can be combined explicitly.
+                reference_mode = "ipadapter" if self.supports_ipadapter() else "none"
+            else:
+                reference_mode = self.resolve_reference_mode(True)
 
         try:
             workflow = self.build_workflow(
@@ -1467,7 +1516,7 @@ class ComfyUIClient:
                 reference_image_name=reference_image_name,
                 reference_mode=reference_mode,
             )
-        except Exception as exc:
+        except (RuntimeError, ValueError, TypeError) as exc:
             if reference_mode == "ipadapter":
                 logger.warning(
                     "IP-Adapter workflow build failed (%s). Falling back to img2img.",
@@ -1496,7 +1545,7 @@ class ComfyUIClient:
                 timeout=aiohttp.ClientTimeout(total=5),
             ) as resp:
                 return resp.status == 200
-        except Exception:
+        except (aiohttp.ClientError, asyncio.TimeoutError):
             return False
 
     async def get_queue_status(self) -> dict[str, Any]:

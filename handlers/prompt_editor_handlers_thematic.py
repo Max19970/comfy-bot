@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Awaitable, Callable
+from typing import cast
 
 from aiogram import F, Router
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
 from aiogram.types import (
     CallbackQuery,
@@ -12,8 +14,8 @@ from aiogram.types import (
     Message,
 )
 
-from comfyui_client import GenerationParams
 from core.html_utils import h, truncate
+from core.models import GenerationParams
 from core.runtime import PromptRequest
 from core.states import PromptEditorStates
 from core.ui import custom_btn
@@ -58,7 +60,7 @@ def register_prompt_editor_thematic_handlers(
                     req.ui_chat_id = edited.chat.id
                     req.ui_message_id = edited.message_id
                     return
-            except Exception:
+            except TelegramBadRequest:
                 pass
 
         sent = await message.answer(text, reply_markup=reply_markup)
@@ -133,7 +135,7 @@ def register_prompt_editor_thematic_handlers(
                 ],
             ]
         )
-        await cb.message.edit_text(
+        await cast(Message, cb.message).edit_text(
             "\u2699\ufe0f <b>\u0414\u043e\u043f\u043e\u043b\u043d\u0438\u0442\u0435\u043b\u044c\u043d\u044b\u0435 \u043d\u0430\u0441\u0442\u0440\u043e\u0439\u043a\u0438</b>\n"
             "\n"
             "\u0417\u0434\u0435\u0441\u044c \u0441\u043e\u0431\u0440\u0430\u043d\u044b \u0432\u0441\u0435 \u043f\u0430\u0440\u0430\u043c\u0435\u0442\u0440\u044b \u0433\u0435\u043d\u0435\u0440\u0430\u0446\u0438\u0438, "
@@ -196,7 +198,7 @@ def register_prompt_editor_thematic_handlers(
                 ],
             ]
         )
-        await cb.message.edit_text(
+        await cast(Message, cb.message).edit_text(
             "\U0001f4d0 <b>\u0421\u044d\u043c\u043f\u043b\u0438\u043d\u0433</b>\n"
             "\n"
             "\u041d\u0430\u0441\u0442\u0440\u043e\u0439\u043a\u0438 \u043f\u0440\u043e\u0446\u0435\u0441\u0441\u0430 \u0433\u0435\u043d\u0435\u0440\u0430\u0446\u0438\u0438 \u0438\u0437\u043e\u0431\u0440\u0430\u0436\u0435\u043d\u0438\u044f.\n"
@@ -253,13 +255,47 @@ def register_prompt_editor_thematic_handlers(
                 ],
                 [
                     InlineKeyboardButton(
+                        text=(
+                            "🧬 VAE: auto"
+                            if not params.vae_name
+                            else f"🧬 VAE: {truncate(params.vae_name, 14)}"
+                        ),
+                        callback_data="pe:edit:vae",
+                    ),
+                ],
+                [
+                    InlineKeyboardButton(
+                        text=(
+                            "🧷 ControlNet: off"
+                            if not params.controlnet_name
+                            else f"🧷 {truncate(params.controlnet_name, 14)}"
+                        ),
+                        callback_data="pe:edit:controlnet",
+                    ),
+                    InlineKeyboardButton(
+                        text=f"Str {params.controlnet_strength}",
+                        callback_data="pe:edit:controlnet_strength",
+                    ),
+                ],
+                [
+                    InlineKeyboardButton(
+                        text=(
+                            "🔤 Embedding: off"
+                            if not params.embedding_name
+                            else f"🔤 {truncate(params.embedding_name, 20)}"
+                        ),
+                        callback_data="pe:edit:embedding",
+                    ),
+                ],
+                [
+                    InlineKeyboardButton(
                         text="\u2b05\ufe0f \u041d\u0430\u0437\u0430\u0434",
                         callback_data="pe:back",
                     )
                 ],
             ]
         )
-        await cb.message.edit_text(
+        await cast(Message, cb.message).edit_text(
             "\U0001f5bc <b>\u0418\u0437\u043e\u0431\u0440\u0430\u0436\u0435\u043d\u0438\u0435</b>\n"
             "\n"
             "\u041f\u0430\u0440\u0430\u043c\u0435\u0442\u0440\u044b \u0432\u044b\u0445\u043e\u0434\u043d\u043e\u0433\u043e \u0438\u0437\u043e\u0431\u0440\u0430\u0436\u0435\u043d\u0438\u044f.\n"
@@ -271,11 +307,18 @@ def register_prompt_editor_thematic_handlers(
             "\u2022 <b>Ref</b> \u2014 \u0440\u0435\u0444\u0435\u0440\u0435\u043d\u0441\u043d\u044b\u0435 \u0438\u0437\u043e\u0431\u0440\u0430\u0436\u0435\u043d\u0438\u044f (IP-Adapter). "
             "\u041c\u043e\u0434\u0435\u043b\u044c \u043f\u0435\u0440\u0435\u043d\u0438\u043c\u0430\u0435\u0442 \u0441\u0442\u0438\u043b\u044c/\u043a\u043e\u043c\u043f\u043e\u0437\u0438\u0446\u0438\u044e\n"
             "\u2022 <b>Ref Strength</b> \u2014 \u0441\u0438\u043b\u0430 \u0432\u043b\u0438\u044f\u043d\u0438\u044f \u0440\u0435\u0444\u0435\u0440\u0435\u043d\u0441\u0430 (0.0\u20141.0)\n"
+            "\u2022 <b>VAE</b> \u2014 переопределение VAE декодера\n"
+            "\u2022 <b>ControlNet</b> \u2014 структурный контроль по референсу\n"
+            "\u2022 <b>Embedding</b> \u2014 quick negative token (embedding:name)\n"
             "\n"
             f"<b>\u0420\u0430\u0437\u043c\u0435\u0440:</b> <code>{params.width}\u00d7{params.height}</code>  "
             f"<b>Batch:</b> <code>{params.batch_size}</code>\n"
             f"<b>Ref:</b> {ref_count}/{deps.max_reference_images}  "
-            f"<b>Ref str:</b> <code>{params.reference_strength}</code>",
+            f"<b>Ref str:</b> <code>{params.reference_strength}</code>\n"
+            f"<b>VAE:</b> <code>{h(params.vae_name) if params.vae_name else 'auto'}</code>  "
+            f"<b>ControlNet:</b> <code>{h(params.controlnet_name) if params.controlnet_name else 'off'}</code>\n"
+            f"<b>CN str:</b> <code>{params.controlnet_strength}</code>  "
+            f"<b>Embedding:</b> <code>{h(params.embedding_name) if params.embedding_name else 'off'}</code>",
             reply_markup=kb,
         )
         await cb.answer()
@@ -351,9 +394,7 @@ def register_prompt_editor_thematic_handlers(
         if params.enable_pag:
             enh_lines.append(f"\U0001f3af PAG — scale {params.pag_scale}")
         if params.upscale_model:
-            enh_lines.append(
-                f"\U0001f50d Upscaler \u2014 {h(truncate(params.upscale_model, 30))}"
-            )
+            enh_lines.append(f"\U0001f50d Upscaler \u2014 {h(truncate(params.upscale_model, 30))}")
         if params.enable_tiled_diffusion:
             enh_lines.append(
                 f"\U0001f9e9 HyperTile \u2014 tile {params.tile_size}, "
@@ -366,7 +407,7 @@ def register_prompt_editor_thematic_handlers(
             else "<i>\u041d\u0435\u0442 \u0430\u043a\u0442\u0438\u0432\u043d\u044b\u0445 \u0443\u043b\u0443\u0447\u0448\u0435\u043d\u0438\u0439</i>"
         )
 
-        await cb.message.edit_text(
+        await cast(Message, cb.message).edit_text(
             "\u2728 <b>\u0423\u043b\u0443\u0447\u0448\u0435\u043d\u0438\u044f</b>\n"
             "\n"
             "\u0414\u043e\u043f\u043e\u043b\u043d\u0438\u0442\u0435\u043b\u044c\u043d\u044b\u0435 \u043c\u043e\u0434\u0443\u043b\u0438, \u043a\u043e\u0442\u043e\u0440\u044b\u0435 \u0443\u043b\u0443\u0447\u0448\u0430\u044e\u0442 \u043a\u0430\u0447\u0435\u0441\u0442\u0432\u043e "
@@ -446,7 +487,7 @@ def register_prompt_editor_thematic_handlers(
         if not payload:
             return
         _, req = payload
-        await cb.message.edit_text(
+        await cast(Message, cb.message).edit_text(
             _hires_submenu_text(req.params),
             reply_markup=_hires_submenu_kb(req.params),
         )
@@ -459,7 +500,7 @@ def register_prompt_editor_thematic_handlers(
             return
         _, req = payload
         req.params.enable_hires_fix = not req.params.enable_hires_fix
-        await cb.message.edit_text(
+        await cast(Message, cb.message).edit_text(
             _hires_submenu_text(req.params),
             reply_markup=_hires_submenu_kb(req.params),
         )
@@ -488,7 +529,7 @@ def register_prompt_editor_thematic_handlers(
                 ],
             ]
         )
-        await cb.message.edit_text(
+        await cast(Message, cb.message).edit_text(
             "Hi-res Fix scale (\u043c\u043d\u043e\u0436\u0438\u0442\u0435\u043b\u044c, 1.0\u20143.0):",
             reply_markup=kb,
         )
@@ -500,17 +541,17 @@ def register_prompt_editor_thematic_handlers(
         if not payload:
             return
         uid, req = payload
-        value = cb.data.split(":")[1]
+        value = (cb.data or "").split(":")[1]
         if value == "custom":
             await state.set_state(PromptEditorStates.entering_custom_hires_scale)
-            await cb.message.edit_text(
+            await cast(Message, cb.message).edit_text(
                 "Hi-res scale (1.0\u20143.0):",
                 reply_markup=deps.back_keyboard("pe:enh:hires"),
             )
             await cb.answer()
             return
         req.params.hires_scale = float(value)
-        await cb.message.edit_text(
+        await cast(Message, cb.message).edit_text(
             _hires_submenu_text(req.params),
             reply_markup=_hires_submenu_kb(req.params),
         )
@@ -524,8 +565,9 @@ def register_prompt_editor_thematic_handlers(
         uid, req = payload
         try:
             value = float((msg.text or "").strip())
-            assert 1.0 <= value <= 3.0
-        except Exception:
+            if not 1.0 <= value <= 3.0:
+                raise ValueError
+        except ValueError:
             await msg.answer("\u0427\u0438\u0441\u043b\u043e 1.0\u20143.0:")
             return
         req.params.hires_scale = value
@@ -560,7 +602,7 @@ def register_prompt_editor_thematic_handlers(
                 ],
             ]
         )
-        await cb.message.edit_text(
+        await cast(Message, cb.message).edit_text(
             "Hi-res Fix denoise (0.0\u20141.0, \u043c\u0435\u043d\u044c\u0448\u0435 = \u0431\u043b\u0438\u0436\u0435 \u043a \u043e\u0440\u0438\u0433\u0438\u043d\u0430\u043b\u0443):",
             reply_markup=kb,
         )
@@ -572,17 +614,17 @@ def register_prompt_editor_thematic_handlers(
         if not payload:
             return
         uid, req = payload
-        value = cb.data.split(":")[1]
+        value = (cb.data or "").split(":")[1]
         if value == "custom":
             await state.set_state(PromptEditorStates.entering_custom_hires_denoise)
-            await cb.message.edit_text(
+            await cast(Message, cb.message).edit_text(
                 "Hi-res denoise (0.0\u20141.0):",
                 reply_markup=deps.back_keyboard("pe:enh:hires"),
             )
             await cb.answer()
             return
         req.params.hires_denoise = float(value)
-        await cb.message.edit_text(
+        await cast(Message, cb.message).edit_text(
             _hires_submenu_text(req.params),
             reply_markup=_hires_submenu_kb(req.params),
         )
@@ -596,8 +638,9 @@ def register_prompt_editor_thematic_handlers(
         uid, req = payload
         try:
             value = float((msg.text or "").strip())
-            assert 0.0 <= value <= 1.0
-        except Exception:
+            if not 0.0 <= value <= 1.0:
+                raise ValueError
+        except ValueError:
             await msg.answer("\u0427\u0438\u0441\u043b\u043e 0.0\u20141.0:")
             return
         req.params.hires_denoise = value
@@ -630,7 +673,9 @@ def register_prompt_editor_thematic_handlers(
         )
 
         if not deps.is_freeu_supported():
-            toggle_text = "\u26a0\ufe0f \u041d\u0435\u0434\u043e\u0441\u0442\u0443\u043f\u043d\u043e"
+            toggle_text = (
+                "\u26a0\ufe0f \u041d\u0435\u0434\u043e\u0441\u0442\u0443\u043f\u043d\u043e"
+            )
 
         kb = InlineKeyboardMarkup(
             inline_keyboard=[
@@ -648,7 +693,7 @@ def register_prompt_editor_thematic_handlers(
                 ],
             ]
         )
-        await cb.message.edit_text(
+        await cast(Message, cb.message).edit_text(
             "\u26a1 <b>FreeU V2</b>\n"
             "\n"
             "\u0411\u0435\u0441\u043f\u043b\u0430\u0442\u043d\u043e\u0435 \u0443\u043b\u0443\u0447\u0448\u0435\u043d\u0438\u0435 \u043a\u0430\u0447\u0435\u0441\u0442\u0432\u0430 \u0431\u0435\u0437 \u0434\u043e\u043f\u043e\u043b\u043d\u0438\u0442\u0435\u043b\u044c\u043d\u043e\u0439 "
@@ -710,7 +755,7 @@ def register_prompt_editor_thematic_handlers(
                 ],
             ]
         )
-        await cb.message.edit_text(
+        await cast(Message, cb.message).edit_text(
             "\u26a1 <b>FreeU V2</b>\n"
             "\n"
             "\u041f\u0430\u0442\u0447\u0438\u0442 \u043c\u043e\u0434\u0435\u043b\u044c \u0434\u043b\u044f \u0443\u043b\u0443\u0447\u0448\u0435\u043d\u0438\u044f \u0434\u0435\u0442\u0430\u043b\u0435\u0439.\n"
@@ -757,9 +802,7 @@ def register_prompt_editor_thematic_handlers(
 
     def _pag_submenu_text(params: GenerationParams) -> str:
         status = (
-            "\u2705 \u0412\u041a\u041b"
-            if params.enable_pag
-            else "\u274c \u0412\u042b\u041a\u041b"
+            "\u2705 \u0412\u041a\u041b" if params.enable_pag else "\u274c \u0412\u042b\u041a\u041b"
         )
         return (
             "\U0001f3af <b>PAG (Perturbed-Attention Guidance)</b>\n"
@@ -795,7 +838,7 @@ def register_prompt_editor_thematic_handlers(
                     ]
                 ]
             )
-            await cb.message.edit_text(
+            await cast(Message, cb.message).edit_text(
                 "\U0001f3af <b>PAG</b>\n\n"
                 "\u26a0\ufe0f PerturbedAttentionGuidance \u043d\u043e\u0434\u0430 \u043d\u0435 \u043d\u0430\u0439\u0434\u0435\u043d\u0430 \u043d\u0430 \u0441\u0435\u0440\u0432\u0435\u0440\u0435.",
                 reply_markup=kb,
@@ -803,7 +846,7 @@ def register_prompt_editor_thematic_handlers(
             await cb.answer()
             return
 
-        await cb.message.edit_text(
+        await cast(Message, cb.message).edit_text(
             _pag_submenu_text(req.params),
             reply_markup=_pag_submenu_kb(req.params),
         )
@@ -827,7 +870,7 @@ def register_prompt_editor_thematic_handlers(
             if req.params.enable_pag
             else "\u0432\u044b\u043a\u043b\u044e\u0447\u0435\u043d"
         )
-        await cb.message.edit_text(
+        await cast(Message, cb.message).edit_text(
             _pag_submenu_text(req.params),
             reply_markup=_pag_submenu_kb(req.params),
         )
@@ -855,7 +898,7 @@ def register_prompt_editor_thematic_handlers(
                 ],
             ]
         )
-        await cb.message.edit_text(
+        await cast(Message, cb.message).edit_text(
             "PAG Scale (0.5\u201410.0):",
             reply_markup=kb,
         )
@@ -867,17 +910,17 @@ def register_prompt_editor_thematic_handlers(
         if not payload:
             return
         uid, req = payload
-        value = cb.data.split(":")[1]
+        value = (cb.data or "").split(":")[1]
         if value == "custom":
             await state.set_state(PromptEditorStates.entering_custom_pag_scale)
-            await cb.message.edit_text(
+            await cast(Message, cb.message).edit_text(
                 "PAG Scale (0.5\u201410.0):",
                 reply_markup=deps.back_keyboard("pe:enh:pag"),
             )
             await cb.answer()
             return
         req.params.pag_scale = float(value)
-        await cb.message.edit_text(
+        await cast(Message, cb.message).edit_text(
             _pag_submenu_text(req.params),
             reply_markup=_pag_submenu_kb(req.params),
         )
@@ -891,8 +934,9 @@ def register_prompt_editor_thematic_handlers(
         uid, req = payload
         try:
             value = float((msg.text or "").strip())
-            assert 0.5 <= value <= 10.0
-        except Exception:
+            if not 0.5 <= value <= 10.0:
+                raise ValueError
+        except ValueError:
             await msg.answer("\u0427\u0438\u0441\u043b\u043e 0.5\u201410.0:")
             return
         req.params.pag_scale = value
@@ -914,11 +958,7 @@ def register_prompt_editor_thematic_handlers(
             return
         _, req = payload
         model = req.params.upscale_model
-        status = (
-            f"\u2705 {h(truncate(model, 30))}"
-            if model
-            else "\u274c \u0412\u042b\u041a\u041b"
-        )
+        status = f"\u2705 {h(truncate(model, 30))}" if model else "\u274c \u0412\u042b\u041a\u041b"
 
         rows = [
             [
@@ -947,7 +987,7 @@ def register_prompt_editor_thematic_handlers(
         )
 
         kb = InlineKeyboardMarkup(inline_keyboard=rows)
-        await cb.message.edit_text(
+        await cast(Message, cb.message).edit_text(
             "\U0001f50d <b>Upscaler</b>\n"
             "\n"
             "\u0423\u0432\u0435\u043b\u0438\u0447\u0438\u0432\u0430\u0435\u0442 \u0440\u0430\u0437\u0440\u0435\u0448\u0435\u043d\u0438\u0435 \u0433\u043e\u0442\u043e\u0432\u043e\u0439 \u043a\u0430\u0440\u0442\u0438\u043d\u043a\u0438 "
@@ -1064,7 +1104,7 @@ def register_prompt_editor_thematic_handlers(
         if not payload:
             return
         _, req = payload
-        await cb.message.edit_text(
+        await cast(Message, cb.message).edit_text(
             _tiled_submenu_text(req.params),
             reply_markup=_tiled_submenu_kb(req.params),
         )
@@ -1088,7 +1128,7 @@ def register_prompt_editor_thematic_handlers(
             if req.params.enable_tiled_diffusion
             else "\u0432\u044b\u043a\u043b\u044e\u0447\u0435\u043d"
         )
-        await cb.message.edit_text(
+        await cast(Message, cb.message).edit_text(
             _tiled_submenu_text(req.params),
             reply_markup=_tiled_submenu_kb(req.params),
         )
@@ -1115,7 +1155,7 @@ def register_prompt_editor_thematic_handlers(
                 ],
             ]
         )
-        await cb.message.edit_text(
+        await cast(Message, cb.message).edit_text(
             "\U0001f9e9 <b>Tile Size</b>\n\n"
             "\u0420\u0430\u0437\u043c\u0435\u0440 \u0442\u0430\u0439\u043b\u0430 \u0434\u043b\u044f HyperTile. "
             "\u041c\u0435\u043d\u044c\u0448\u0435 = \u0431\u044b\u0441\u0442\u0440\u0435\u0435, "
@@ -1131,17 +1171,17 @@ def register_prompt_editor_thematic_handlers(
         if not payload:
             return
         _, req = payload
-        value = cb.data.split(":")[1]
+        value = (cb.data or "").split(":")[1]
         if value == "custom":
             await state.set_state(PromptEditorStates.entering_custom_tile_size)
-            await cb.message.edit_text(
+            await cast(Message, cb.message).edit_text(
                 "Tile Size (64\u20131024):",
                 reply_markup=deps.back_keyboard("pe:enh:tiled"),
             )
             await cb.answer()
             return
         req.params.tile_size = int(value)
-        await cb.message.edit_text(
+        await cast(Message, cb.message).edit_text(
             _tiled_submenu_text(req.params),
             reply_markup=_tiled_submenu_kb(req.params),
         )
@@ -1155,8 +1195,9 @@ def register_prompt_editor_thematic_handlers(
         _, req = payload
         try:
             value = int((msg.text or "").strip())
-            assert 64 <= value <= 1024
-        except Exception:
+            if not 64 <= value <= 1024:
+                raise ValueError
+        except ValueError:
             await msg.answer(
                 "\u0426\u0435\u043b\u043e\u0435 \u0447\u0438\u0441\u043b\u043e 64\u20131024:"
             )
@@ -1192,7 +1233,7 @@ def register_prompt_editor_thematic_handlers(
                 ],
             ]
         )
-        await cb.message.edit_text(
+        await cast(Message, cb.message).edit_text(
             "\U0001f5bc <b>VAE Tile Size</b>\n\n"
             "\u0420\u0430\u0437\u043c\u0435\u0440 \u0442\u0430\u0439\u043b\u0430 \u0434\u043b\u044f VAE "
             "encode/decode.\n\n"
@@ -1207,17 +1248,17 @@ def register_prompt_editor_thematic_handlers(
         if not payload:
             return
         _, req = payload
-        value = cb.data.split(":")[1]
+        value = (cb.data or "").split(":")[1]
         if value == "custom":
             await state.set_state(PromptEditorStates.entering_custom_vae_tile_size)
-            await cb.message.edit_text(
+            await cast(Message, cb.message).edit_text(
                 "VAE Tile Size (128\u20134096):",
                 reply_markup=deps.back_keyboard("pe:enh:tiled"),
             )
             await cb.answer()
             return
         req.params.vae_tile_size = int(value)
-        await cb.message.edit_text(
+        await cast(Message, cb.message).edit_text(
             _tiled_submenu_text(req.params),
             reply_markup=_tiled_submenu_kb(req.params),
         )
@@ -1231,8 +1272,9 @@ def register_prompt_editor_thematic_handlers(
         _, req = payload
         try:
             value = int((msg.text or "").strip())
-            assert 128 <= value <= 4096
-        except Exception:
+            if not 128 <= value <= 4096:
+                raise ValueError
+        except ValueError:
             await msg.answer(
                 "\u0426\u0435\u043b\u043e\u0435 \u0447\u0438\u0441\u043b\u043e 128\u20134096:"
             )
@@ -1268,7 +1310,7 @@ def register_prompt_editor_thematic_handlers(
                 ],
             ]
         )
-        await cb.message.edit_text(
+        await cast(Message, cb.message).edit_text(
             "\U0001f300 <b>Overlap</b>\n\n"
             "\u041f\u0435\u0440\u0435\u043a\u0440\u044b\u0442\u0438\u0435 \u043c\u0435\u0436\u0434\u0443 \u0442\u0430\u0439\u043b\u0430\u043c\u0438 VAE. "
             "\u0411\u043e\u043b\u044c\u0448\u0435 = \u043c\u0435\u043d\u044c\u0448\u0435 \u0448\u0432\u043e\u0432, "
@@ -1284,17 +1326,17 @@ def register_prompt_editor_thematic_handlers(
         if not payload:
             return
         _, req = payload
-        value = cb.data.split(":")[1]
+        value = (cb.data or "").split(":")[1]
         if value == "custom":
             await state.set_state(PromptEditorStates.entering_custom_tile_overlap)
-            await cb.message.edit_text(
+            await cast(Message, cb.message).edit_text(
                 "Tile Overlap (0\u20132048):",
                 reply_markup=deps.back_keyboard("pe:enh:tiled"),
             )
             await cb.answer()
             return
         req.params.tile_overlap = int(value)
-        await cb.message.edit_text(
+        await cast(Message, cb.message).edit_text(
             _tiled_submenu_text(req.params),
             reply_markup=_tiled_submenu_kb(req.params),
         )
@@ -1308,8 +1350,9 @@ def register_prompt_editor_thematic_handlers(
         _, req = payload
         try:
             value = int((msg.text or "").strip())
-            assert 0 <= value <= 2048
-        except Exception:
+            if not 0 <= value <= 2048:
+                raise ValueError
+        except ValueError:
             await msg.answer(
                 "\u0426\u0435\u043b\u043e\u0435 \u0447\u0438\u0441\u043b\u043e 0\u20132048:"
             )

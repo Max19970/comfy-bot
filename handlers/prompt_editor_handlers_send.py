@@ -5,10 +5,13 @@ import logging
 import random
 import time
 import uuid
+from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass
-from typing import Awaitable, Callable, cast
+from typing import cast
 
+import aiohttp
 from aiogram import F, Router
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
 from aiogram.types import (
     CallbackQuery,
@@ -17,10 +20,12 @@ from aiogram.types import (
     Message,
 )
 
-from comfyui_client import ComfyUIClient, GenerationParams
+from comfyui_client import ComfyUIClient
 from core.html_utils import h
 from core.image_utils import image_dimensions
-from core.runtime import PreviewArtifact, PromptRequest, RuntimeStore
+from core.models import GenerationParams
+from core.runtime import ActiveGeneration, PreviewArtifact, PromptRequest, RuntimeStore
+from core.ui_copy import START_TEXT, main_menu_keyboard
 
 
 @dataclass
@@ -32,9 +37,9 @@ class PromptEditorSendHandlersDeps:
         [CallbackQuery], Awaitable[tuple[int, PromptRequest] | None]
     ]
     show_prompt_editor: Callable[..., Awaitable[None]]
-    deliver_generated_images: Callable[..., Awaitable[None]]
+    deliver_generated_images: Callable[..., Awaitable[list[Message]]]
     generation_result_keyboard: Callable[[], InlineKeyboardMarkup]
-    preview_image_keyboard: Callable[[str], InlineKeyboardMarkup]
+    preview_image_keyboard: Callable[[str, str | None], InlineKeyboardMarkup]
 
 
 def register_prompt_editor_send_handlers(
@@ -56,19 +61,6 @@ def register_prompt_editor_send_handlers(
     def _has_pending_input(msg: Message) -> bool:
         uid = msg.from_user.id if msg.from_user else 0
         return uid > 0 and uid in deps.runtime.pending_image_inputs
-
-    def _prune_preview_artifacts(uid: int, *, max_items: int = 40) -> None:
-        owned = [
-            item
-            for item in deps.runtime.preview_artifacts.values()
-            if item.owner_uid == uid
-        ]
-        if len(owned) <= max_items:
-            return
-        owned.sort(key=lambda item: item.created_at)
-        to_remove = owned[: len(owned) - max_items]
-        for item in to_remove:
-            deps.runtime.preview_artifacts.pop(item.artifact_id, None)
 
     async def _move_main_panel_to_bottom(
         uid: int,
@@ -103,7 +95,7 @@ def register_prompt_editor_send_handlers(
                     chat_id=prev_chat_id,
                     message_id=prev_message_id,
                 )
-            except Exception:
+            except TelegramBadRequest:
                 pass
 
     def _artifact_menu_keyboard(artifact: PreviewArtifact) -> InlineKeyboardMarkup:
@@ -202,6 +194,12 @@ def register_prompt_editor_send_handlers(
                         callback_data=f"img:back:{artifact.artifact_id}",
                     )
                 ],
+                [
+                    InlineKeyboardButton(
+                        text="⬅️ В меню",
+                        callback_data="menu:root",
+                    )
+                ],
             ]
         )
 
@@ -238,11 +236,11 @@ def register_prompt_editor_send_handlers(
         try:
             await message.edit_caption(caption=caption, reply_markup=reply_markup)
             return
-        except Exception:
+        except TelegramBadRequest:
             pass
         try:
             await message.edit_text(caption, reply_markup=reply_markup)
-        except Exception:
+        except TelegramBadRequest:
             await message.answer(caption, reply_markup=reply_markup)
 
     def _simple_value_keyboard(
@@ -314,11 +312,7 @@ def register_prompt_editor_send_handlers(
                     callback_data=f"img:page:{menu}:{artifact_id}:{page - 1}",
                 )
             )
-        nav.append(
-            InlineKeyboardButton(
-                text=f"· {page + 1}/{total_pages} ·", callback_data="noop"
-            )
-        )
+        nav.append(InlineKeyboardButton(text=f"· {page + 1}/{total_pages} ·", callback_data="noop"))
         if page < total_pages - 1:
             nav.append(
                 InlineKeyboardButton(
@@ -352,6 +346,35 @@ def register_prompt_editor_send_handlers(
             return ("PAG scale", 0.5, 10.0)
         raise ValueError("unknown field")
 
+    def _apply_field_value(
+        artifact: PreviewArtifact,
+        *,
+        field: str,
+        value: float | int,
+    ) -> bool:
+        if field == "steps":
+            artifact.params.steps = int(value)
+            artifact.enable_sampler_pass = True
+            return True
+        if field == "cfg":
+            artifact.params.cfg = float(value)
+            artifact.enable_sampler_pass = True
+            return True
+        if field == "denoise":
+            artifact.params.denoise = float(value)
+            artifact.enable_sampler_pass = True
+            return True
+        if field == "hires_scale":
+            artifact.params.hires_scale = float(value)
+            return True
+        if field == "hires_denoise":
+            artifact.params.hires_denoise = float(value)
+            return True
+        if field == "pag_scale":
+            artifact.params.pag_scale = float(value)
+            return True
+        return False
+
     @router.callback_query(F.data.startswith("send:"))
     async def send_images(cb: CallbackQuery, state: FSMContext):
         message = _callback_message(cb)
@@ -384,7 +407,16 @@ def register_prompt_editor_send_handlers(
 
         if mode == "cancel":
             await state.clear()
-            await message.edit_text("❌ Действие отменено.")
+            try:
+                await message.edit_text(
+                    START_TEXT,
+                    reply_markup=main_menu_keyboard(),
+                )
+            except TelegramBadRequest:
+                await message.answer(
+                    START_TEXT,
+                    reply_markup=main_menu_keyboard(),
+                )
             await cb.answer()
             return
 
@@ -409,9 +441,14 @@ def register_prompt_editor_send_handlers(
             await cb.answer("⚠️ Картинка не найдена или недоступна.", show_alert=True)
             return
 
+        image_bytes = deps.runtime.artifact_bytes(artifact)
+        if not image_bytes:
+            await cb.answer("⚠️ Исходные данные картинки не найдены.", show_alert=True)
+            return
+
         await deps.deliver_generated_images(
             message,
-            [artifact.image_bytes],
+            [image_bytes],
             used_seed=artifact.used_seed,
             mode="file",
         )
@@ -436,9 +473,41 @@ def register_prompt_editor_send_handlers(
                 f"🖼 Шаг {artifact.generation_step} | Seed: {artifact.used_seed}\n"
                 "Выберите действие для этой картинки."
             ),
-            reply_markup=deps.preview_image_keyboard(artifact.artifact_id),
+            reply_markup=deps.preview_image_keyboard(
+                artifact.artifact_id,
+                artifact.parent_artifact_id,
+            ),
         )
         await cb.answer()
+
+    @router.callback_query(F.data.startswith("img:goto_parent:"))
+    async def image_goto_parent(cb: CallbackQuery):
+        message = _callback_message(cb)
+        if message is None:
+            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
+            return
+        uid = cb.from_user.id
+        data_value = cb.data or ""
+        parts = data_value.split(":", 2)
+        if len(parts) != 3:
+            await cb.answer("⚠️ Некорректный запрос.", show_alert=True)
+            return
+        artifact = _user_artifact(uid, parts[2])
+        if not artifact or not artifact.parent_artifact_id:
+            await cb.answer("⚠️ Исходник не найден.", show_alert=True)
+            return
+        parent = _user_artifact(uid, artifact.parent_artifact_id)
+        if not parent or parent.preview_message_id is None or parent.preview_chat_id is None:
+            await cb.answer("⚠️ Ссылка на исходник недоступна.", show_alert=True)
+            return
+        if parent.preview_chat_id != message.chat.id:
+            await cb.answer("⚠️ Исходник в другом чате.", show_alert=True)
+            return
+        await message.answer(
+            "↩️ Исходная картинка",
+            reply_to_message_id=parent.preview_message_id,
+        )
+        await cb.answer("Готово")
 
     @router.callback_query(F.data.startswith("img:open:"))
     async def image_open_enhancements(cb: CallbackQuery):
@@ -551,9 +620,7 @@ def register_prompt_editor_send_handlers(
                 key="denoise",
                 values=["0.2", "0.3", "0.4", "0.5", "0.6", "0.7", "0.8"],
             )
-            await _edit_preview_message(
-                cb, caption="Выберите Denoise:", reply_markup=kb
-            )
+            await _edit_preview_message(cb, caption="Выберите Denoise:", reply_markup=kb)
             await cb.answer()
             return
         if menu_key == "hrs":
@@ -562,9 +629,7 @@ def register_prompt_editor_send_handlers(
                 key="hires_scale",
                 values=["1.25", "1.5", "1.75", "2.0"],
             )
-            await _edit_preview_message(
-                cb, caption="Выберите Hi-res scale:", reply_markup=kb
-            )
+            await _edit_preview_message(cb, caption="Выберите Hi-res scale:", reply_markup=kb)
             await cb.answer()
             return
         if menu_key == "hrd":
@@ -573,9 +638,7 @@ def register_prompt_editor_send_handlers(
                 key="hires_denoise",
                 values=["0.3", "0.4", "0.5", "0.6", "0.7"],
             )
-            await _edit_preview_message(
-                cb, caption="Выберите Hi-res denoise:", reply_markup=kb
-            )
+            await _edit_preview_message(cb, caption="Выберите Hi-res denoise:", reply_markup=kb)
             await cb.answer()
             return
         if menu_key == "pags":
@@ -584,9 +647,7 @@ def register_prompt_editor_send_handlers(
                 key="pag_scale",
                 values=["1.0", "2.0", "3.0", "4.0", "5.0"],
             )
-            await _edit_preview_message(
-                cb, caption="Выберите PAG scale:", reply_markup=kb
-            )
+            await _edit_preview_message(cb, caption="Выберите PAG scale:", reply_markup=kb)
             await cb.answer()
             return
         if menu_key == "sampler":
@@ -597,9 +658,7 @@ def register_prompt_editor_send_handlers(
                 items=samplers,
                 page=0,
             )
-            await _edit_preview_message(
-                cb, caption="Выберите sampler:", reply_markup=kb
-            )
+            await _edit_preview_message(cb, caption="Выберите sampler:", reply_markup=kb)
             await cb.answer()
             return
         if menu_key == "scheduler":
@@ -610,9 +669,7 @@ def register_prompt_editor_send_handlers(
                 items=schedulers,
                 page=0,
             )
-            await _edit_preview_message(
-                cb, caption="Выберите scheduler:", reply_markup=kb
-            )
+            await _edit_preview_message(cb, caption="Выберите scheduler:", reply_markup=kb)
             await cb.answer()
             return
         if menu_key == "up":
@@ -623,9 +680,7 @@ def register_prompt_editor_send_handlers(
                 items=upscalers,
                 page=0,
             )
-            await _edit_preview_message(
-                cb, caption="Выберите upscaler:", reply_markup=kb
-            )
+            await _edit_preview_message(cb, caption="Выберите upscaler:", reply_markup=kb)
             await cb.answer()
             return
 
@@ -736,25 +791,15 @@ def register_prompt_editor_send_handlers(
             return
 
         try:
+            parsed_value: float | int
             if field == "steps":
-                artifact.params.steps = int(raw_value)
-                artifact.enable_sampler_pass = True
-            elif field == "cfg":
-                artifact.params.cfg = float(raw_value)
-                artifact.enable_sampler_pass = True
-            elif field == "denoise":
-                artifact.params.denoise = float(raw_value)
-                artifact.enable_sampler_pass = True
-            elif field == "hires_scale":
-                artifact.params.hires_scale = float(raw_value)
-            elif field == "hires_denoise":
-                artifact.params.hires_denoise = float(raw_value)
-            elif field == "pag_scale":
-                artifact.params.pag_scale = float(raw_value)
+                parsed_value = int(raw_value)
             else:
+                parsed_value = float(raw_value)
+            if not _apply_field_value(artifact, field=field, value=parsed_value):
                 await cb.answer("⚠️ Неизвестный параметр.", show_alert=True)
                 return
-        except Exception:
+        except ValueError:
             await cb.answer("⚠️ Не удалось применить значение.", show_alert=True)
             return
 
@@ -788,7 +833,7 @@ def register_prompt_editor_send_handlers(
 
         try:
             label, min_val, max_val = _custom_field_meta(field)
-        except Exception:
+        except ValueError:
             await cb.answer("⚠️ Неизвестный параметр.", show_alert=True)
             return
 
@@ -797,8 +842,7 @@ def register_prompt_editor_send_handlers(
             "field": field,
         }
         await message.answer(
-            f"✏️ Введите {label} ({min_val}..{max_val}).\n"
-            "Можно использовать точку или запятую."
+            f"✏️ Введите {label} ({min_val}..{max_val}).\nМожно использовать точку или запятую."
         )
         await cb.answer()
 
@@ -860,38 +904,25 @@ def register_prompt_editor_send_handlers(
 
         try:
             label, min_val, max_val = _custom_field_meta(field)
-        except Exception:
+        except ValueError:
             deps.runtime.pending_image_inputs.pop(uid, None)
             await msg.answer("⚠️ Неизвестный параметр.")
             return
 
         value_raw = raw.replace(",", ".")
         try:
+            value: float | int
             if field == "steps":
                 value = int(float(value_raw))
             else:
                 value = float(value_raw)
             if value < min_val or value > max_val:
                 raise ValueError("out of range")
-        except Exception:
+        except ValueError:
             await msg.answer(f"⚠️ Введите {label} в диапазоне {min_val}..{max_val}.")
             return
 
-        if field == "steps":
-            artifact.params.steps = int(value)
-            artifact.enable_sampler_pass = True
-        elif field == "cfg":
-            artifact.params.cfg = float(value)
-            artifact.enable_sampler_pass = True
-        elif field == "denoise":
-            artifact.params.denoise = float(value)
-            artifact.enable_sampler_pass = True
-        elif field == "hires_scale":
-            artifact.params.hires_scale = float(value)
-        elif field == "hires_denoise":
-            artifact.params.hires_denoise = float(value)
-        elif field == "pag_scale":
-            artifact.params.pag_scale = float(value)
+        _apply_field_value(artifact, field=field, value=value)
 
         deps.runtime.pending_image_inputs.pop(uid, None)
         await msg.answer(
@@ -916,6 +947,7 @@ def register_prompt_editor_send_handlers(
         if not artifact:
             await cb.answer("⚠️ Картинка не найдена.", show_alert=True)
             return
+        artifact_item = artifact
 
         if not artifact.enable_sampler_pass and not artifact.params.upscale_model:
             await cb.answer(
@@ -926,42 +958,73 @@ def register_prompt_editor_send_handlers(
 
         status_msg = await message.answer("⏳ Запускаю улучшение...")
         await cb.answer("🚀 Улучшение запущено")
+        generation_id = f"enh_{uuid.uuid4().hex}"
+        enhancement_cancel_kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="❌ Отменить улучшение",
+                        callback_data=f"pe:gen:cancel:{generation_id}",
+                    )
+                ]
+            ]
+        )
+        try:
+            await status_msg.edit_reply_markup(reply_markup=enhancement_cancel_kb)
+        except TelegramBadRequest:
+            pass
 
         async def _progress(current: int, total: int, text: str) -> None:
             line = f"⏳ {h(text)}"
             if total > 0:
                 line = f"⏳ {h(text)} ({current}/{total})"
             try:
-                await status_msg.edit_text(line)
-            except Exception:
-                deps.logger.debug(
-                    "Image enhancement progress update failed", exc_info=True
-                )
+                await status_msg.edit_text(line, reply_markup=enhancement_cancel_kb)
+            except TelegramBadRequest:
+                deps.logger.debug("Image enhancement progress update failed", exc_info=True)
 
         async def _run() -> None:
             try:
-                run_params = GenerationParams(**asdict(artifact.params))
+                source_bytes = deps.runtime.artifact_bytes(artifact_item)
+                if not source_bytes:
+                    await status_msg.edit_text(
+                        "❌ Не найдены данные исходной картинки.",
+                        reply_markup=None,
+                    )
+                    return
+
+                run_params = GenerationParams(**asdict(artifact_item.params))
                 run_params.batch_size = 1
                 run_params.reference_images = []
                 run_params.reference_strength = 0.8
                 if run_params.seed < 0:
                     run_params.seed = random.randint(0, 2**63 - 1)
 
-                if artifact.enable_sampler_pass:
+                async def _prompt_id_cb(prompt_id: str) -> None:
+                    active = deps.runtime.active_generations.get(generation_id)
+                    if active is not None:
+                        active.prompt_id = prompt_id
+                        deps.runtime.persist()
+
+                if artifact_item.enable_sampler_pass:
                     images = await deps.client.generate_from_image(
                         run_params,
-                        image_bytes=artifact.image_bytes,
+                        image_bytes=source_bytes,
                         progress_cb=_progress,
+                        prompt_id_cb=_prompt_id_cb,
                     )
                 else:
                     images = await deps.client.upscale_image_only(
-                        image_bytes=artifact.image_bytes,
+                        image_bytes=source_bytes,
                         upscale_model=run_params.upscale_model,
                         progress_cb=_progress,
+                        prompt_id_cb=_prompt_id_cb,
                     )
 
                 if not images:
-                    await status_msg.edit_text("❌ ComfyUI не вернул изображение.")
+                    await status_msg.edit_text(
+                        "❌ ComfyUI не вернул изображение.", reply_markup=None
+                    )
                     return
 
                 result_image = images[0]
@@ -970,50 +1033,80 @@ def register_prompt_editor_send_handlers(
                     next_w, next_h = image_dimensions(result_image)
                     next_params.width = next_w
                     next_params.height = next_h
-                except Exception:
+                except (OSError, ValueError):
                     pass
 
                 next_artifact_id = uuid.uuid4().hex
                 next_artifact = PreviewArtifact(
                     artifact_id=next_artifact_id,
-                    owner_uid=artifact.owner_uid,
+                    owner_uid=artifact_item.owner_uid,
                     image_bytes=result_image,
                     params=next_params,
                     used_seed=int(run_params.seed),
-                    parent_artifact_id=artifact.artifact_id,
-                    generation_step=artifact.generation_step + 1,
-                    enable_sampler_pass=artifact.enable_sampler_pass,
+                    parent_artifact_id=artifact_item.artifact_id,
+                    generation_step=artifact_item.generation_step + 1,
+                    enable_sampler_pass=artifact_item.enable_sampler_pass,
                 )
-                deps.runtime.preview_artifacts[next_artifact_id] = next_artifact
-                _prune_preview_artifacts(artifact.owner_uid)
+                deps.runtime.register_preview_artifact(next_artifact)
+                deps.runtime.prune_preview_artifacts(artifact_item.owner_uid)
 
-                deps.runtime.last_params[artifact.owner_uid] = GenerationParams(
+                deps.runtime.last_params[artifact_item.owner_uid] = GenerationParams(
                     **asdict(next_params)
                 )
-                deps.runtime.last_seeds[artifact.owner_uid] = int(run_params.seed)
+                deps.runtime.last_seeds[artifact_item.owner_uid] = int(run_params.seed)
                 deps.runtime.persist()
 
-                await deps.deliver_generated_images(
+                sent_previews = await deps.deliver_generated_images(
                     status_msg,
                     [result_image],
                     used_seed=run_params.seed,
                     mode="photo",
-                    preview_keyboards=[deps.preview_image_keyboard(next_artifact_id)],
+                    preview_keyboards=[
+                        deps.preview_image_keyboard(
+                            next_artifact_id,
+                            artifact_item.artifact_id,
+                        )
+                    ],
                 )
+                if sent_previews:
+                    next_artifact.preview_chat_id = sent_previews[0].chat.id
+                    next_artifact.preview_message_id = sent_previews[0].message_id
                 await _move_main_panel_to_bottom(
-                    artifact.owner_uid,
+                    artifact_item.owner_uid,
                     status_msg,
                     "✅ Улучшение завершено. Отправил новую превью.\n"
                     "Для каждой превью доступны: отправка PNG и меню улучшений.",
                 )
-            except Exception as exc:
+            except asyncio.CancelledError:
+                await status_msg.edit_text("❌ Улучшение отменено.", reply_markup=None)
+            except (
+                aiohttp.ClientError,
+                asyncio.TimeoutError,
+                OSError,
+                RuntimeError,
+                ValueError,
+            ) as exc:
                 deps.logger.exception("Image enhancement failed")
                 await status_msg.edit_text(
-                    f"❌ Ошибка улучшения: <code>{h(exc)}</code>"
+                    f"❌ Ошибка улучшения: <code>{h(exc)}</code>",
+                    reply_markup=None,
                 )
             finally:
                 deps.runtime.active_image_jobs.pop(temp_job_id, None)
+                deps.runtime.active_generations.pop(generation_id, None)
+                deps.runtime.persist()
 
         temp_job_id = f"job_{time.time_ns()}"
         task = asyncio.create_task(_run())
         deps.runtime.active_image_jobs[temp_job_id] = task
+        deps.runtime.active_generations[generation_id] = ActiveGeneration(
+            owner_uid=uid,
+            generation_id=generation_id,
+            task=task,
+            kind="enhancement",
+            title="Улучшение",
+            status_msg=status_msg,
+            status_chat_id=status_msg.chat.id,
+            status_message_id=status_msg.message_id,
+        )
+        deps.runtime.persist()

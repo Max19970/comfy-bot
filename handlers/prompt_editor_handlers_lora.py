@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Awaitable, Callable, cast
+from typing import cast
 
 from aiogram import F, Router
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
 from aiogram.types import (
     CallbackQuery,
@@ -44,6 +46,11 @@ def register_prompt_editor_lora_handlers(
     router: Router,
     deps: PromptEditorLoraHandlersDeps,
 ) -> None:
+    def _callback_message(cb: CallbackQuery) -> Message | None:
+        if cb.message is None or not hasattr(cb.message, "edit_text"):
+            return None
+        return cast(Message, cb.message)
+
     async def offer_lora_trigger_prompt(
         message: Message,
         state: FSMContext,
@@ -65,9 +72,7 @@ def register_prompt_editor_lora_handlers(
             return
 
         words_to_offer = [
-            word
-            for word in words
-            if word.casefold() not in req.params.positive.casefold()
+            word for word in words if word.casefold() not in req.params.positive.casefold()
         ]
         if not words_to_offer:
             await deps.show_lora_menu(
@@ -131,7 +136,7 @@ def register_prompt_editor_lora_handlers(
                         "message_id": edited.message_id,
                     }
                     return
-            except Exception:
+            except TelegramBadRequest:
                 pass
 
         if edit:
@@ -145,7 +150,7 @@ def register_prompt_editor_lora_handlers(
                         "message_id": edited.message_id,
                     }
                     return
-            except Exception:
+            except TelegramBadRequest:
                 pass
 
         sent = await message.answer(text, reply_markup=kb)
@@ -198,13 +203,22 @@ def register_prompt_editor_lora_handlers(
 
     @router.callback_query(F.data.startswith("pe_lora_pick:"))
     async def pe_lora_pick(cb: CallbackQuery, state: FSMContext):
+        message = _callback_message(cb)
+        if message is None:
+            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
+            return
         payload = await deps.require_prompt_request_for_callback(cb)
         if not payload:
             return
 
         _, req = payload
 
-        idx = int(cb.data.split(":", 1)[1])
+        data_value = cb.data or ""
+        parts = data_value.split(":", 1)
+        if len(parts) != 2:
+            await cb.answer("❌ Неверный формат выбора LoRA.", show_alert=True)
+            return
+        idx = int(parts[1])
         data = await state.get_data()
         items = data.get("pe_lora_pick_names")
         if not isinstance(items, list) or not items:
@@ -217,9 +231,7 @@ def register_prompt_editor_lora_handlers(
         await state.update_data(pe_pending_lora=chosen)
         await state.set_state(PromptEditorStates.choosing_lora_strength)
 
-        status, ckpt_base, lora_base = deps.lora_compatibility(
-            req.params.checkpoint, chosen
-        )
+        status, ckpt_base, lora_base = deps.lora_compatibility(req.params.checkpoint, chosen)
         compatibility_line = ""
         if status == "compatible" and ckpt_base and lora_base:
             compatibility_line = (
@@ -237,9 +249,7 @@ def register_prompt_editor_lora_handlers(
         trigger_words = deps.lora_trained_words(chosen)
         trigger_line = ""
         if trigger_words:
-            trigger_line = (
-                f"🔑 Триггер-слова: <code>{h(', '.join(trigger_words[:8]))}</code>"
-            )
+            trigger_line = f"🔑 Триггер-слова: <code>{h(', '.join(trigger_words[:8]))}</code>"
 
         kb = InlineKeyboardMarkup(
             inline_keyboard=[
@@ -270,20 +280,29 @@ def register_prompt_editor_lora_handlers(
             text_lines.append(trigger_line)
         text_lines.append("Выберите strength:")
 
-        await cb.message.edit_text("\n".join(text_lines), reply_markup=kb)
+        await message.edit_text("\n".join(text_lines), reply_markup=kb)
         await cb.answer()
 
     @router.callback_query(F.data.startswith("pe_lstr:"))
     async def pe_lora_strength(cb: CallbackQuery, state: FSMContext):
+        message = _callback_message(cb)
+        if message is None:
+            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
+            return
         payload = await deps.require_prompt_request_for_callback(cb)
         if not payload:
             return
 
         uid, req = payload
-        value = cb.data.split(":")[1]
+        data_value = cb.data or ""
+        parts = data_value.split(":")
+        if len(parts) < 2:
+            await cb.answer("❌ Неверный формат силы LoRA.", show_alert=True)
+            return
+        value = parts[1]
         if value == "custom":
             await state.set_state(PromptEditorStates.entering_custom_lora_strength)
-            await cb.message.edit_text(
+            await message.edit_text(
                 "Введите LoRA strength (0.0 - 2.0):",
                 reply_markup=deps.back_keyboard(),
             )
@@ -299,7 +318,7 @@ def register_prompt_editor_lora_handlers(
         req.params.loras.append((lora_name, float(value)))
         await state.update_data(pe_pending_lora=None)
         await offer_lora_trigger_prompt(
-            cast(Message, cb.message),
+            message,
             state,
             uid,
             req,
@@ -352,7 +371,9 @@ def register_prompt_editor_lora_handlers(
             return
 
         uid, req = payload
-        action = cb.data.split(":")[-1]
+        data_value = cb.data or ""
+        parts = data_value.split(":")
+        action = parts[-1] if parts else ""
 
         data = await state.get_data()
         words_raw = data.get("pe_pending_trigger_words")
@@ -361,9 +382,7 @@ def register_prompt_editor_lora_handlers(
 
         notice = "✅ LoRA добавлена."
         if action == "add" and words:
-            req.params.positive = deps.merge_prompt_with_words(
-                req.params.positive, words
-            )
+            req.params.positive = deps.merge_prompt_with_words(req.params.positive, words)
             notice = f"✅ Триггер-слова для {lora_name or 'LoRA'} добавлены в Positive prompt."
         elif words:
             notice = f"ℹ️ Триггер-слова для {lora_name or 'LoRA'} не добавлены."
@@ -391,6 +410,10 @@ def register_prompt_editor_lora_handlers(
 
     @router.callback_query(F.data == "pe:lora:clear")
     async def pe_lora_clear(cb: CallbackQuery, state: FSMContext):
+        message = _callback_message(cb)
+        if message is None:
+            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
+            return
         payload = await deps.require_prompt_request_for_callback(cb)
         if not payload:
             return
@@ -422,7 +445,7 @@ def register_prompt_editor_lora_handlers(
                 ]
             ]
         )
-        await cb.message.edit_text(
+        await message.edit_text(
             f"⚠️ Удалить {count} LoRA из цепочки?",
             reply_markup=kb,
         )

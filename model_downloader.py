@@ -7,14 +7,16 @@ import json
 import logging
 import os
 import re
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Awaitable, Callable
+from typing import Any
 from urllib.parse import urlsplit
 
 import aiohttp
 
 from config import Config
+from core.formatting import human_size, short_number
 
 logger = logging.getLogger(__name__)
 
@@ -108,14 +110,84 @@ class SearchResult:
 
 
 def _human_size(size_bytes: int) -> str:
-    if size_bytes <= 0:
-        return "unknown"
-    value = float(size_bytes)
-    for unit in ("B", "KB", "MB", "GB"):
-        if value < 1024:
-            return f"{value:.1f} {unit}"
-        value /= 1024
-    return f"{value:.1f} TB"
+    return human_size(size_bytes)
+
+
+def _query_tokens(query: str) -> list[str]:
+    tokens = [token for token in re.split(r"[^\w]+", query.lower()) if token]
+    cleaned = [token for token in tokens if len(token) >= 2]
+    return cleaned if cleaned else tokens
+
+
+def _result_search_text(result: SearchResult) -> str:
+    parts: list[str] = [
+        result.name,
+        result.description,
+        result.filename,
+        result.model_id,
+        result.version_name,
+        result.base_model,
+        result.creator,
+        " ".join(result.trained_words),
+        " ".join(result.tags),
+    ]
+    return " ".join(part for part in parts if part).lower()
+
+
+def _normalize_token(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", value.lower())
+
+
+def _matches_author_filters(result: SearchResult, author_filters: list[str]) -> bool:
+    if not author_filters:
+        return True
+    creator = result.creator.strip().lstrip("@")
+    if not creator:
+        return False
+    creator_l = creator.lower()
+    creator_n = _normalize_token(creator)
+    for raw in author_filters:
+        needle = raw.strip().lstrip("@").lower()
+        if not needle:
+            continue
+        if needle in creator_l:
+            return True
+        if _normalize_token(needle) and _normalize_token(needle) in creator_n:
+            return True
+    return False
+
+
+def _matches_base_models(result: SearchResult, base_models: list[str] | None) -> bool:
+    if not base_models:
+        return True
+    base = (result.base_model or "").strip()
+    if not base:
+        return False
+    base_l = base.lower()
+    base_n = _normalize_token(base)
+    for candidate in base_models:
+        token = str(candidate or "").strip().lower()
+        if not token:
+            continue
+        if token in base_l:
+            return True
+        token_n = _normalize_token(token)
+        if token_n and token_n in base_n:
+            return True
+    return False
+
+
+def _matches_query_text(result: SearchResult, query: str) -> bool:
+    q = query.strip().lower()
+    if not q:
+        return True
+    haystack = _result_search_text(result)
+    if q in haystack:
+        return True
+    tokens = _query_tokens(q)
+    if not tokens:
+        return True
+    return all(token in haystack for token in tokens)
 
 
 def apply_version_option(
@@ -175,11 +247,7 @@ def _civitai_to_internal_type(model_type: str) -> str:
 
 
 def _short_number(value: int) -> str:
-    if value < 1000:
-        return str(value)
-    if value < 1_000_000:
-        return f"{value / 1000:.1f}K"
-    return f"{value / 1_000_000:.1f}M"
+    return short_number(value)
 
 
 def _strip_html(raw: str) -> str:
@@ -220,7 +288,7 @@ class ModelDownloader:
         if not os.path.exists(path):
             return {}
         try:
-            with open(path, "r", encoding="utf-8") as fh:
+            with open(path, encoding="utf-8") as fh:
                 payload = json.load(fh)
             if isinstance(payload, dict) and isinstance(payload.get("models"), dict):
                 payload = payload["models"]
@@ -232,7 +300,7 @@ class ModelDownloader:
                 if isinstance(value, dict):
                     normalized[str(key)] = value
             return normalized
-        except Exception:
+        except (OSError, json.JSONDecodeError, TypeError, ValueError):
             logger.exception("Failed to load model metadata index: %s", path)
             return {}
 
@@ -399,7 +467,7 @@ class ModelDownloader:
                 return ""
             # /{org}/{repo}[/(tree|blob)/...]
             return f"{parts[0]}/{parts[1]}"
-        except Exception:
+        except ValueError:
             return ""
 
     # ===================================================================
@@ -415,18 +483,16 @@ class ModelDownloader:
             return True
         return any(name.endswith(ext) for ext in exts)
 
-    def _pick_civitai_file(
-        self, files: list[dict[str, Any]], model_type: str
-    ) -> dict | None:
+    def _pick_civitai_file(self, files: list[dict[str, Any]], model_type: str) -> dict | None:
         if not files:
             return None
 
         matching = [
-            item
-            for item in files
-            if self._file_matches_type(item.get("name", ""), model_type)
+            item for item in files if self._file_matches_type(item.get("name", ""), model_type)
         ]
-        candidates = matching or files
+        if not matching:
+            return None
+        candidates = matching
 
         def _score(item: dict[str, Any]) -> tuple[int, int, float]:
             metadata = item.get("metadata") or {}
@@ -481,9 +547,7 @@ class ModelDownloader:
         *,
         model_type: str,
     ) -> SearchVersionOption | None:
-        chosen_file = self._pick_civitai_file(
-            version.get("files", []) or [], model_type
-        )
+        chosen_file = self._pick_civitai_file(version.get("files", []) or [], model_type)
         if not chosen_file:
             return None
 
@@ -593,6 +657,8 @@ class ModelDownloader:
         period: str = "AllTime",
         base_models: list[str] | None = None,
         include_nsfw: bool = False,
+        authors: list[str] | None = None,
+        strict_type: bool = True,
     ) -> list[SearchResult]:
         """Search CivitAI for models with rich metadata."""
         session = await self._get_session()
@@ -607,43 +673,125 @@ class ModelDownloader:
             params["nsfw"] = "false"
 
         civitai_type = CIVITAI_TYPE_MAP.get(model_type, "")
-        if civitai_type:
+        if strict_type and civitai_type:
             params["types"] = civitai_type
         if base_models:
             params["baseModels"] = base_models
+        author_filters = [
+            item.strip().lstrip("@").lower() for item in (authors or []) if item.strip().lstrip("@")
+        ]
+        if author_filters:
+            params["username"] = author_filters[0]
 
         headers: dict[str, str] = {}
         if self.cfg.civitai_api_key:
             headers["Authorization"] = f"Bearer {self.cfg.civitai_api_key}"
 
-        try:
+        async def _fetch_page(
+            request_params: dict[str, Any],
+        ) -> tuple[list[dict[str, Any]], str | None]:
             async with session.get(
                 "https://civitai.com/api/v1/models",
-                params=params,
+                params=request_params,
                 headers=headers,
                 timeout=aiohttp.ClientTimeout(total=20),
             ) as resp:
                 resp.raise_for_status()
                 data = await resp.json()
-        except Exception:
+            metadata = data.get("metadata") if isinstance(data, dict) else {}
+            items = data.get("items", [])
+            next_cursor_raw: Any = None
+            if isinstance(metadata, dict):
+                next_cursor_raw = metadata.get("nextCursor")
+            next_cursor = (
+                str(next_cursor_raw).strip() if next_cursor_raw not in {None, ""} else None
+            )
+            return (items if isinstance(items, list) else []), next_cursor
+
+        def _collect_results(
+            items_payload: list[dict[str, Any]],
+            *,
+            results: list[SearchResult],
+            seen_ids: set[str],
+        ) -> None:
+            for item in items_payload:
+                result = self._build_civitai_result(item, model_type=model_type)
+                if not result:
+                    continue
+
+                # If user asks specific type, avoid obviously mismatched assets.
+                civitai_item_type = _civitai_to_internal_type(str(item.get("type") or ""))
+                if strict_type and civitai_item_type and civitai_item_type != model_type:
+                    # Keep upscaler queries permissive because there is no dedicated API type
+                    # and authors can misclassify models.
+                    if model_type != "upscaler":
+                        continue
+                if not _matches_author_filters(result, author_filters):
+                    continue
+                if not _matches_base_models(result, base_models):
+                    continue
+                if not _matches_query_text(result, query):
+                    continue
+                unique_id = f"{result.model_id}:{result.version_id}:{result.download_url}"
+                if unique_id in seen_ids:
+                    continue
+                seen_ids.add(unique_id)
+                results.append(result)
+
+        async def _search_pages(
+            base_params: dict[str, Any],
+            *,
+            max_pages: int,
+        ) -> list[SearchResult]:
+            results: list[SearchResult] = []
+            seen_ids: set[str] = set()
+            cursor: str | None = None
+            for _ in range(max(1, max_pages)):
+                request_params = dict(base_params)
+                if cursor:
+                    request_params["cursor"] = cursor
+                try:
+                    items, next_cursor = await _fetch_page(request_params)
+                except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
+                    logger.exception("CivitAI search page failed")
+                    break
+                _collect_results(items, results=results, seen_ids=seen_ids)
+                if len(results) >= max(1, limit):
+                    return results
+                if not next_cursor:
+                    break
+                cursor = next_cursor
+            return results
+
+        try:
+            results = await _search_pages(dict(params), max_pages=8)
+        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
             logger.exception("CivitAI search failed")
             raise
 
-        results: list[SearchResult] = []
-        for item in data.get("items", []):
-            result = self._build_civitai_result(item, model_type=model_type)
-            if not result:
-                continue
+        if results:
+            return results
 
-            # If user asks specific type, avoid obviously mismatched assets.
-            civitai_item_type = _civitai_to_internal_type(str(item.get("type") or ""))
-            if civitai_item_type and civitai_item_type != model_type:
-                # Keep upscaler queries permissive because there is no dedicated API type
-                # and authors can misclassify models.
-                if model_type != "upscaler":
-                    continue
-            results.append(result)
-        return results
+        # Fallback: some CivitAI searches miss obvious matches with strict query,
+        # especially when combined with author/base filters. Retry without `query`
+        # and apply robust local text matching.
+        if query.strip() and (author_filters or base_models or not strict_type):
+            relaxed_params = dict(params)
+            relaxed_params.pop("query", None)
+            relaxed_params["limit"] = max(20, min(limit * 8, 100))
+            relaxed_results = await _search_pages(relaxed_params, max_pages=10)
+            if relaxed_results:
+                return relaxed_results
+
+            # Last-resort: remove API-side author/base filters completely and
+            # rely on local robust matching.
+            broad_params = dict(relaxed_params)
+            broad_params.pop("baseModels", None)
+            broad_params.pop("username", None)
+            broad_params["limit"] = max(30, min(limit * 10, 100))
+            return await _search_pages(broad_params, max_pages=12)
+
+        return []
 
     async def fetch_civitai_model(
         self,
@@ -666,7 +814,7 @@ class ModelDownloader:
             ) as resp:
                 resp.raise_for_status()
                 item = await resp.json()
-        except Exception:
+        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
             logger.exception("CivitAI model fetch failed: %s", model_id)
             raise
 
@@ -694,12 +842,10 @@ class ModelDownloader:
                     return []
                 data = await resp.json()
                 return data if isinstance(data, list) else []
-        except Exception:
+        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
             return []
 
-    def _pick_hf_file(
-        self, files: list[dict[str, Any]], model_type: str
-    ) -> dict[str, Any] | None:
+    def _pick_hf_file(self, files: list[dict[str, Any]], model_type: str) -> dict[str, Any] | None:
         if not files:
             return None
 
@@ -709,6 +855,7 @@ class ModelDownloader:
             if str(item.get("type") or "") == "file"
             and self._file_matches_type(str(item.get("path") or ""), model_type)
         ]
+        candidates = [item for item in candidates if self._hf_file_is_compatible(item, model_type)]
         if not candidates:
             return None
 
@@ -744,6 +891,104 @@ class ModelDownloader:
             return hint_score, safetensor_score, size_score
 
         return sorted(candidates, key=_score, reverse=True)[0]
+
+    def _hf_file_is_compatible(self, item: dict[str, Any], model_type: str) -> bool:
+        path = str(item.get("path") or "").strip().lower()
+        if not path:
+            return False
+        name = os.path.basename(path)
+
+        if name.endswith((".json", ".txt", ".yaml", ".yml")):
+            return False
+        if any(token in path for token in ("/tokenizer", "/scheduler", "/feature_extractor")):
+            return False
+
+        size = int(item.get("size") or 0)
+        lfs = item.get("lfs")
+        if isinstance(lfs, dict):
+            size = int(lfs.get("size") or size)
+
+        if model_type == "checkpoint":
+            # Avoid diffusers internals and sharded artifacts that are not single-file checkpoints.
+            blocked_tokens = (
+                "diffusion_pytorch_model",
+                "pytorch_model",
+                "unet",
+                "text_encoder",
+                "vae/",
+                "/vae",
+                "prior",
+                "clip",
+            )
+            if any(token in path for token in blocked_tokens):
+                return False
+            if "-0000" in name and "-of-" in name:
+                return False
+            # Checkpoints are usually large.
+            if size > 0 and size < 700 * 1024 * 1024:
+                return False
+
+        if model_type == "lora":
+            if size > 0 and size > 2 * 1024 * 1024 * 1024:
+                return False
+
+        if model_type == "embedding":
+            if size > 0 and size > 256 * 1024 * 1024:
+                return False
+
+        return True
+
+    def list_local_models(self, model_type: str) -> list[str]:
+        subfolder = MODEL_SUBFOLDER.get(model_type)
+        if not subfolder:
+            return []
+        folder = os.path.join(self.cfg.comfyui_models_path, subfolder)
+        if not os.path.isdir(folder):
+            return []
+
+        entries: list[str] = []
+        for item in os.listdir(folder):
+            path = os.path.join(folder, item)
+            if not os.path.isfile(path):
+                continue
+            if not self._file_matches_type(item, model_type):
+                continue
+            entries.append(item)
+        return sorted(entries, key=str.casefold)
+
+    async def delete_local_model(self, model_type: str, filename: str) -> str:
+        safe_name = os.path.basename(str(filename or "")).strip()
+        if not safe_name:
+            raise ValueError("Empty filename")
+
+        subfolder = MODEL_SUBFOLDER.get(model_type)
+        if not subfolder:
+            raise ValueError(f"Unsupported model type: {model_type}")
+
+        if not self._file_matches_type(safe_name, model_type):
+            raise ValueError(f"File extension does not match type: {safe_name}")
+
+        target_dir = os.path.join(self.cfg.comfyui_models_path, subfolder)
+        target_path = os.path.join(target_dir, safe_name)
+        real_target = os.path.realpath(target_path)
+        real_dir = os.path.realpath(target_dir)
+        try:
+            common = os.path.commonpath([real_target, real_dir])
+        except ValueError:
+            common = ""
+        if common != real_dir:
+            raise ValueError("Unsafe filename")
+
+        if not os.path.exists(target_path):
+            raise FileNotFoundError(target_path)
+        os.remove(target_path)
+
+        key = self._metadata_key(safe_name)
+        async with self._metadata_lock:
+            self._metadata.pop(key, None)
+            await self._save_metadata()
+
+        return target_path
 
     def _build_hf_result(
         self,
@@ -797,9 +1042,7 @@ class ModelDownloader:
             favorite_count=int(model.get("likes") or 0),
             tags=tags_list[:20],
             preview_url="",
-            file_format="SafeTensor"
-            if filename.lower().endswith(".safetensors")
-            else "",
+            file_format="SafeTensor" if filename.lower().endswith(".safetensors") else "",
             file_fp="",
             nsfw=False,
             available_versions=[],
@@ -826,21 +1069,33 @@ class ModelDownloader:
         if self.cfg.huggingface_token:
             headers["Authorization"] = f"Bearer {self.cfg.huggingface_token}"
 
-        try:
+        async def _fetch_models(fetch_params: dict[str, Any]) -> list[dict[str, Any]]:
             async with session.get(
                 "https://huggingface.co/api/models",
-                params=params,
+                params=fetch_params,
                 headers=headers,
                 timeout=aiohttp.ClientTimeout(total=20),
             ) as resp:
                 resp.raise_for_status()
-                models = await resp.json()
-        except Exception:
+                payload = await resp.json()
+            return payload if isinstance(payload, list) else []
+
+        try:
+            models = await _fetch_models(dict(params))
+            if model_type == "checkpoint" and not models:
+                relaxed = dict(params)
+                relaxed.pop("pipeline_tag", None)
+                models = await _fetch_models(relaxed)
+            if not models and " " in query.strip():
+                tokens = [token for token in re.split(r"\s+", query.strip()) if len(token) >= 3]
+                if tokens:
+                    token_params = dict(params)
+                    token_params["search"] = max(tokens, key=len)
+                    token_params.pop("pipeline_tag", None)
+                    models = await _fetch_models(token_params)
+        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
             logger.exception("HuggingFace search failed")
             raise
-
-        if not isinstance(models, list):
-            return []
 
         results: list[SearchResult] = []
         for model in models[:limit]:
@@ -853,9 +1108,10 @@ class ModelDownloader:
             if not chosen:
                 continue
 
-            results.append(
-                self._build_hf_result(model, model_type=model_type, chosen_file=chosen)
-            )
+            result = self._build_hf_result(model, model_type=model_type, chosen_file=chosen)
+            if not _matches_query_text(result, query):
+                continue
+            results.append(result)
         return results
 
     async def fetch_huggingface_repo(
@@ -879,7 +1135,7 @@ class ModelDownloader:
             ) as resp:
                 resp.raise_for_status()
                 model = await resp.json()
-        except Exception:
+        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
             logger.exception("HuggingFace repo fetch failed: %s", repo_id)
             raise
 
@@ -985,10 +1241,7 @@ class ModelDownloader:
                         if progress_cb and total > 0:
                             pct = (downloaded * 100) // total
                             bytes_delta = downloaded - last_report_bytes
-                            if (
-                                pct >= last_report_pct + 5
-                                or bytes_delta >= 10 * 1024 * 1024
-                            ):
+                            if pct >= last_report_pct + 5 or bytes_delta >= 10 * 1024 * 1024:
                                 last_report_pct = pct
                                 last_report_bytes = downloaded
                                 await progress_cb(
@@ -1003,15 +1256,13 @@ class ModelDownloader:
                 safe_filename=safe_name,
                 target_path=target_path,
             )
-        except Exception:
+        except (aiohttp.ClientError, asyncio.TimeoutError, OSError):
             if os.path.exists(tmp_path):
                 os.remove(tmp_path)
             raise
 
         if progress_cb:
-            await progress_cb(
-                total, total, f"✅ Скачано: {safe_name} ({_human_size(total)})"
-            )
+            await progress_cb(total, total, f"✅ Скачано: {safe_name} ({_human_size(total)})")
 
         logger.info("Downloaded %s to %s", result.filename, target_path)
         return target_path
@@ -1028,9 +1279,7 @@ class ModelDownloader:
     ) -> list[SearchResult]:
         civitai_model_id = self._extract_civitai_model_id(query)
         if civitai_model_id:
-            return await self.fetch_civitai_model(
-                civitai_model_id, model_type=model_type
-            )
+            return await self.fetch_civitai_model(civitai_model_id, model_type=model_type)
 
         hf_repo_id = self._extract_hf_repo_id(query)
         if hf_repo_id:
@@ -1049,6 +1298,8 @@ class ModelDownloader:
         period: str = "AllTime",
         base_models: list[str] | None = None,
         include_nsfw: bool = False,
+        civitai_author: str = "",
+        civitai_authors: list[str] | None = None,
     ) -> list[SearchResult]:
         """
         Search across sources.
@@ -1064,8 +1315,16 @@ class ModelDownloader:
             direct_results = await self._search_direct_url(query, model_type=model_type)
             if direct_results:
                 return direct_results
-        except Exception as exc:
+        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError, RuntimeError) as exc:
             logger.warning("Direct URL search failed: %s", exc)
+
+        author_filters = [
+            item.strip().lstrip("@").lower()
+            for item in (civitai_authors or [])
+            if item.strip().lstrip("@")
+        ]
+        if not author_filters and civitai_author.strip():
+            author_filters = [civitai_author.strip().lstrip("@").lower()]
 
         tasks = []
         if source in ("civitai", "all"):
@@ -1078,6 +1337,7 @@ class ModelDownloader:
                     period=period,
                     base_models=base_models,
                     include_nsfw=include_nsfw,
+                    authors=author_filters,
                 )
             )
         if source in ("huggingface", "all"):
@@ -1088,8 +1348,34 @@ class ModelDownloader:
             try:
                 batch = await coro
                 results.extend(batch)
-            except Exception as exc:
+            except (aiohttp.ClientError, asyncio.TimeoutError, ValueError, RuntimeError) as exc:
                 logger.warning("Search source error: %s", exc)
+
+        if not results:
+            relaxed_tasks = []
+            if source in ("civitai", "all"):
+                relaxed_tasks.append(
+                    self.search_civitai(
+                        query,
+                        model_type,
+                        limit,
+                        sort="Most Downloaded",
+                        period="AllTime",
+                        base_models=None,
+                        include_nsfw=include_nsfw,
+                        authors=[],
+                        strict_type=False,
+                    )
+                )
+            if source in ("huggingface", "all"):
+                relaxed_tasks.append(self.search_huggingface(query, model_type, limit))
+
+            for coro in asyncio.as_completed(relaxed_tasks):
+                try:
+                    batch = await coro
+                    results.extend(batch)
+                except (aiohttp.ClientError, asyncio.TimeoutError, ValueError, RuntimeError) as exc:
+                    logger.warning("Relaxed search source error: %s", exc)
 
         # Rank primarily by downloads, secondarily by rating.
         results.sort(

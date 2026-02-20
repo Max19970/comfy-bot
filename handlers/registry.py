@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from aiogram import Bot, Router
+from aiogram import Router
 
 from comfyui_client import ComfyUIClient
 from config import Config
@@ -17,14 +17,13 @@ from .prompt_editor import register_prompt_editor_handlers
 def register_handlers(
     router: Router,
     *,
-    bot: Bot,
     cfg: Config,
     client: ComfyUIClient,
     downloader: ModelDownloader,
     runtime: RuntimeStore,
     smart_prompt: SmartPromptService,
 ) -> None:
-    register_common_handlers(router, cfg, client, runtime)
+    register_common_handlers(router, cfg, client, downloader, runtime)
     prompt_editor = register_prompt_editor_handlers(
         router,
         cfg,
@@ -34,4 +33,4 @@ def register_handlers(
         smart_prompt,
     )
     register_preset_handlers(router, runtime, prompt_editor)
-    register_download_handlers(router, bot, client, downloader, runtime)
+    register_download_handlers(router, client, downloader, runtime)

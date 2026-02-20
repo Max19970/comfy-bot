@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Awaitable, Callable
+from typing import cast
 
 from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
@@ -37,10 +38,19 @@ def register_prompt_editor_reference_handlers(
     router: Router,
     deps: PromptEditorReferenceHandlersDeps,
 ) -> None:
+    def _callback_message(cb: CallbackQuery) -> Message | None:
+        if cb.message is None or not hasattr(cb.message, "edit_text"):
+            return None
+        return cast(Message, cb.message)
+
     @router.callback_query(F.data == "pe:edit:refs")
     async def pe_edit_refs(cb: CallbackQuery, state: FSMContext):
+        message = _callback_message(cb)
+        if message is None:
+            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
+            return
         uid = deps.callback_user_id(cb)
-        await deps.show_reference_menu(cb.message, state, uid, edit=True)
+        await deps.show_reference_menu(message, state, uid, edit=True)
         await cb.answer()
 
     @router.message(PromptEditorStates.editing, F.photo)
@@ -94,9 +104,7 @@ def register_prompt_editor_reference_handlers(
             )
             return
 
-        req.params.reference_images.append(
-            deps.make_reference_image(msg.document.file_id)
-        )
+        req.params.reference_images.append(deps.make_reference_image(msg.document.file_id))
         await deps.cleanup_user_message(msg)
         await deps.show_reference_menu(
             msg,
@@ -111,6 +119,10 @@ def register_prompt_editor_reference_handlers(
 
     @router.callback_query(F.data == "pe:refs:view")
     async def pe_refs_view(cb: CallbackQuery):
+        message = _callback_message(cb)
+        if message is None:
+            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
+            return
         payload = await deps.require_prompt_request_for_callback(cb)
         if not payload:
             return
@@ -122,7 +134,7 @@ def register_prompt_editor_reference_handlers(
             return
 
         await cb.answer()
-        await cb.message.answer(
+        await message.answer(
             "👁 <b>Превью референсов</b>\nНажмите кнопку под картинкой для удаления."
         )
 
@@ -143,13 +155,13 @@ def register_prompt_editor_reference_handlers(
                 ]
             )
             try:
-                await cb.message.answer_photo(
+                await message.answer_photo(
                     photo=file_id,
                     caption=f"Референс #{index}",
                     reply_markup=kb,
                 )
             except TelegramBadRequest:
-                await cb.message.answer_document(
+                await message.answer_document(
                     document=file_id,
                     caption=f"Референс #{index}",
                     reply_markup=kb,
@@ -157,6 +169,10 @@ def register_prompt_editor_reference_handlers(
 
     @router.callback_query(F.data == "pe:refs:remove_last")
     async def pe_refs_remove_last(cb: CallbackQuery, state: FSMContext):
+        message = _callback_message(cb)
+        if message is None:
+            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
+            return
         payload = await deps.require_prompt_request_for_callback(cb)
         if not payload:
             return
@@ -167,11 +183,15 @@ def register_prompt_editor_reference_handlers(
             req.params.reference_images.pop()
             notice = "Последняя картинка удалена."
 
-        await deps.show_reference_menu(cb.message, state, uid, edit=True, notice=notice)
+        await deps.show_reference_menu(message, state, uid, edit=True, notice=notice)
         await cb.answer()
 
     @router.callback_query(F.data == "pe:refs:clear")
     async def pe_refs_clear(cb: CallbackQuery, state: FSMContext):
+        message = _callback_message(cb)
+        if message is None:
+            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
+            return
         payload = await deps.require_prompt_request_for_callback(cb)
         if not payload:
             return
@@ -180,7 +200,7 @@ def register_prompt_editor_reference_handlers(
         count = len(req.params.reference_images)
         if count == 0:
             await deps.show_reference_menu(
-                cb.message,
+                message,
                 state,
                 uid,
                 edit=True,
@@ -203,7 +223,7 @@ def register_prompt_editor_reference_handlers(
                 ]
             ]
         )
-        await cb.message.edit_text(
+        await message.edit_text(
             f"⚠️ Удалить все {count} референсов?",
             reply_markup=kb,
         )
@@ -211,6 +231,10 @@ def register_prompt_editor_reference_handlers(
 
     @router.callback_query(F.data == "pe:refs:clear:yes")
     async def pe_refs_clear_yes(cb: CallbackQuery, state: FSMContext):
+        message = _callback_message(cb)
+        if message is None:
+            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
+            return
         payload = await deps.require_prompt_request_for_callback(cb)
         if not payload:
             return
@@ -218,7 +242,7 @@ def register_prompt_editor_reference_handlers(
         uid, req = payload
         req.params.reference_images = []
         await deps.show_reference_menu(
-            cb.message,
+            message,
             state,
             uid,
             edit=True,
@@ -228,13 +252,17 @@ def register_prompt_editor_reference_handlers(
 
     @router.callback_query(F.data == "pe:refs:clear:no")
     async def pe_refs_clear_no(cb: CallbackQuery, state: FSMContext):
+        message = _callback_message(cb)
+        if message is None:
+            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
+            return
         payload = await deps.require_prompt_request_for_callback(cb)
         if not payload:
             return
 
         uid, _ = payload
         await deps.show_reference_menu(
-            cb.message,
+            message,
             state,
             uid,
             edit=True,
@@ -244,12 +272,21 @@ def register_prompt_editor_reference_handlers(
 
     @router.callback_query(F.data.startswith("pe:refs:del:"))
     async def pe_refs_del(cb: CallbackQuery):
+        message = _callback_message(cb)
+        if message is None:
+            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
+            return
         payload = await deps.require_prompt_request_for_callback(cb)
         if not payload:
             return
 
         _, req = payload
-        ref_id = cb.data.split(":", 3)[3]
+        data_value = cb.data or ""
+        parts = data_value.split(":", 3)
+        if len(parts) < 4:
+            await cb.answer("Некорректный идентификатор референса.", show_alert=True)
+            return
+        ref_id = parts[3]
         before = len(req.params.reference_images)
         req.params.reference_images = [
             item for item in req.params.reference_images if item.get("id") != ref_id
@@ -261,11 +298,11 @@ def register_prompt_editor_reference_handlers(
             return
 
         try:
-            await cb.message.delete()
-        except Exception:
+            await message.delete()
+        except TelegramBadRequest:
             try:
-                await cb.message.edit_reply_markup(reply_markup=None)
-            except Exception:
+                await message.edit_reply_markup(reply_markup=None)
+            except TelegramBadRequest:
                 pass
 
         await cb.answer(f"Удалено. Осталось: {after}")

@@ -30,25 +30,50 @@ def generation_result_keyboard() -> InlineKeyboardMarkup:
                     callback_data="send:cancel",
                 ),
             ],
-        ]
-    )
-
-
-def preview_image_keyboard(artifact_id: str) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="📄 Отправить PNG",
-                    callback_data=f"img:png:{artifact_id}",
-                ),
-                InlineKeyboardButton(
-                    text="✨ Улучшить",
-                    callback_data=f"img:open:{artifact_id}",
-                ),
-            ]
+                    text="⬅️ В меню",
+                    callback_data="menu:root",
+                )
+            ],
         ]
     )
+
+
+def preview_image_keyboard(
+    artifact_id: str,
+    parent_artifact_id: str | None = None,
+) -> InlineKeyboardMarkup:
+    rows = [
+        [
+            InlineKeyboardButton(
+                text="📄 PNG без сжатия",
+                callback_data=f"img:png:{artifact_id}",
+            ),
+            InlineKeyboardButton(
+                text="✨ Улучшить",
+                callback_data=f"img:open:{artifact_id}",
+            ),
+        ],
+    ]
+    if parent_artifact_id:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text="↩️ К исходнику",
+                    callback_data=f"img:goto_parent:{artifact_id}",
+                )
+            ]
+        )
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text="⬅️ В меню",
+                callback_data="menu:root",
+            )
+        ]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 async def deliver_generated_images(
@@ -58,7 +83,8 @@ async def deliver_generated_images(
     used_seed: int | str,
     mode: str,
     preview_keyboards: list[InlineKeyboardMarkup] | None = None,
-) -> None:
+) -> list[Message]:
+    preview_messages: list[Message] = []
     for index, img_bytes in enumerate(images):
         caption = f"🖼 {index + 1}/{len(images)} | Seed: {used_seed}"
         preview_kb = None
@@ -67,20 +93,23 @@ async def deliver_generated_images(
         if mode in ("photo", "both"):
             try:
                 compressed = compress_for_photo(img_bytes)
-                await message.answer_photo(
+                sent = await message.answer_photo(
                     photo=BufferedInputFile(compressed, f"comfy_{index + 1}.jpg"),
                     caption=caption,
                     reply_markup=preview_kb,
                 )
+                preview_messages.append(sent)
             except TelegramBadRequest:
-                await message.answer_document(
+                sent = await message.answer_document(
                     document=BufferedInputFile(img_bytes, f"comfy_{index + 1}.png"),
                     caption=f"{caption} (fallback)",
                     reply_markup=preview_kb,
                 )
+                preview_messages.append(sent)
 
         if mode in ("file", "both"):
             await message.answer_document(
                 document=BufferedInputFile(img_bytes, f"comfy_{index + 1}.png"),
                 caption=f"{caption} (PNG)",
             )
+    return preview_messages

@@ -4,7 +4,7 @@ import math
 
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-from comfyui_client import GenerationParams
+from core.models import GenerationParams
 
 from .html_utils import h, truncate
 
@@ -38,27 +38,19 @@ def paginated_keyboard(
     rows: list[list[InlineKeyboardButton]] = []
     for i, item in enumerate(items[start : start + PAGE_SIZE]):
         short = item if len(item) <= 40 else item[:37] + "..."
-        rows.append(
-            [InlineKeyboardButton(text=short, callback_data=f"{prefix}:{start + i}")]
-        )
+        rows.append([InlineKeyboardButton(text=short, callback_data=f"{prefix}:{start + i}")])
 
     nav: list[InlineKeyboardButton] = []
     if page > 0:
         nav.append(
-            InlineKeyboardButton(
-                text="\u25c0\ufe0f", callback_data=f"{prefix}_page:{page - 1}"
-            )
+            InlineKeyboardButton(text="\u25c0\ufe0f", callback_data=f"{prefix}_page:{page - 1}")
         )
     nav.append(
-        InlineKeyboardButton(
-            text=f"\u00b7 {page + 1}/{total_pages} \u00b7", callback_data="noop"
-        )
+        InlineKeyboardButton(text=f"\u00b7 {page + 1}/{total_pages} \u00b7", callback_data="noop")
     )
     if page < total_pages - 1:
         nav.append(
-            InlineKeyboardButton(
-                text="\u25b6\ufe0f", callback_data=f"{prefix}_page:{page + 1}"
-            )
+            InlineKeyboardButton(text="\u25b6\ufe0f", callback_data=f"{prefix}_page:{page + 1}")
         )
 
     rows.append(nav)
@@ -90,12 +82,8 @@ def params_summary(params: GenerationParams) -> str:
 def params_summary_simple(params: GenerationParams) -> str:
     """Compact summary for beginner mode: only key info."""
     ckpt_short = h(truncate(params.checkpoint, 35)) if params.checkpoint else "\u2014"
-    pos_preview = (
-        h(truncate(params.positive, 60)) if params.positive.strip() else "<i>\u2014</i>"
-    )
-    neg_preview = (
-        h(truncate(params.negative, 60)) if params.negative.strip() else "<i>\u2014</i>"
-    )
+    pos_preview = h(truncate(params.positive, 60)) if params.positive.strip() else "<i>\u2014</i>"
+    neg_preview = h(truncate(params.negative, 60)) if params.negative.strip() else "<i>\u2014</i>"
 
     enh_parts: list[str] = []
     if params.enable_hires_fix:
@@ -108,6 +96,12 @@ def params_summary_simple(params: GenerationParams) -> str:
         enh_parts.append("Tiled")
     if params.upscale_model:
         enh_parts.append("Upscale")
+    if params.vae_name:
+        enh_parts.append("VAE")
+    if params.controlnet_name:
+        enh_parts.append("ControlNet")
+    if params.embedding_name:
+        enh_parts.append("Embedding")
     enh_line = ""
     if enh_parts:
         enh_line = f"\n\u2728 <b>Улучшения:</b> {', '.join(enh_parts)}"
@@ -129,17 +123,14 @@ def params_summary_simple(params: GenerationParams) -> str:
 
 def params_summary_full(params: GenerationParams) -> str:
     """Full HTML summary for pro mode."""
-    seed_str = (
-        f"<code>{params.seed}</code>" if params.seed >= 0 else "\U0001f3b2 random"
-    )
+    seed_str = f"<code>{params.seed}</code>" if params.seed >= 0 else "\U0001f3b2 random"
     ckpt_short = h(truncate(params.checkpoint, 35)) if params.checkpoint else "\u2014"
-    pos_preview = (
-        h(truncate(params.positive, 60)) if params.positive.strip() else "<i>\u2014</i>"
-    )
-    neg_preview = (
-        h(truncate(params.negative, 60)) if params.negative.strip() else "<i>\u2014</i>"
-    )
+    pos_preview = h(truncate(params.positive, 60)) if params.positive.strip() else "<i>\u2014</i>"
+    neg_preview = h(truncate(params.negative, 60)) if params.negative.strip() else "<i>\u2014</i>"
     upscaler = h(params.upscale_model) if params.upscale_model else "\u2014"
+    vae = h(params.vae_name) if params.vae_name else "\u2014"
+    controlnet = h(params.controlnet_name) if params.controlnet_name else "\u2014"
+    embedding = h(params.embedding_name) if params.embedding_name else "\u2014"
     ref_count = len(params.reference_images)
 
     enhancements: list[str] = []
@@ -163,9 +154,7 @@ def params_summary_full(params: GenerationParams) -> str:
         if parts:
             enhancement_line += f"\n{parts}"
         if time_warnings:
-            enhancement_line += (
-                f"\n\u26a0\ufe0f <i>+время: {', '.join(time_warnings)}</i>"
-            )
+            enhancement_line += f"\n\u26a0\ufe0f <i>+время: {', '.join(time_warnings)}</i>"
 
     return (
         f"\U0001f3a8 <b>{ckpt_short}</b> | {params.width}\u00d7{params.height} | Steps {params.steps}\n"
@@ -182,7 +171,9 @@ def params_summary_full(params: GenerationParams) -> str:
         f"<b>Batch:</b> <code>{params.batch_size}</code>\n"
         f"\U0001f5bc <b>Ref:</b> {ref_count}/{MAX_REFERENCE_IMAGES} "
         f"(str <code>{params.reference_strength}</code>)  "
-        f"<b>Upscale:</b> {upscaler}"
+        f"<b>Upscale:</b> {upscaler}\n"
+        f"🧬 <b>VAE:</b> {vae}  <b>ControlNet:</b> {controlnet}\n"
+        f"🔤 <b>Embedding:</b> {embedding}"
         f"{enhancement_line}"
     )
 

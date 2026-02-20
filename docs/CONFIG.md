@@ -52,7 +52,7 @@ Smart Prompt теперь использует локальную модель T
 | Переменная | По умолчанию | Описание |
 |---|---|---|
 | `SMART_PROMPT_PROVIDER` | `tipo` | Режим работы: `tipo` или `disabled`. |
-| `SMART_PROMPT_MODEL` | `KBlueLeaf/TIPO-200M` | HuggingFace model id для TIPO. |
+| `SMART_PROMPT_MODEL` | `KBlueLeaf/TIPO-500M-ft` | HuggingFace model id для TIPO. |
 | `SMART_PROMPT_TIMEOUT` | `120` | Таймаут обработки в секундах. |
 | `SMART_PROMPT_TEMPERATURE` | `0.35` | Температура семплирования TIPO. |
 | `SMART_PROMPT_TOP_P` | `0.95` | Параметр nucleus sampling. |
@@ -69,7 +69,7 @@ Smart Prompt теперь использует локальную модель T
 
 ```env
 SMART_PROMPT_PROVIDER=tipo
-SMART_PROMPT_MODEL=KBlueLeaf/TIPO-200M
+SMART_PROMPT_MODEL=KBlueLeaf/TIPO-500M-ft
 SMART_PROMPT_DEVICE=auto
 ```
 
@@ -77,7 +77,7 @@ SMART_PROMPT_DEVICE=auto
 
 ```env
 SMART_PROMPT_PROVIDER=tipo
-SMART_PROMPT_MODEL=KBlueLeaf/TIPO-200M
+SMART_PROMPT_MODEL=KBlueLeaf/TIPO-500M-ft
 SMART_PROMPT_DEVICE=cuda
 SMART_PROMPT_TEMPERATURE=0.35
 SMART_PROMPT_TOP_P=0.95

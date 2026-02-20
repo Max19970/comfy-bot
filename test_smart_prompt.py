@@ -42,7 +42,7 @@ class _TestConfig:
 sys.modules.setdefault("config", type(sys)("config"))
 sys.modules["config"].Config = _TestConfig  # type: ignore[attr-defined]
 
-from smart_prompt import SmartPromptService, SmartPromptError  # noqa: E402
+from smart_prompt import SmartPromptError, SmartPromptService  # noqa: E402
 
 # ---------------------------------------------------------------------------
 CONTROL_MARKERS = ("<|", "|>", "<0x", "target:", "target :")

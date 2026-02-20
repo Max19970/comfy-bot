@@ -21,6 +21,8 @@ import logging
 import sys
 
 from aiogram import Bot, Dispatcher
+from aiogram.exceptions import TelegramAPIError
+from aiogram.types import BotCommand
 
 from app_context import AppContext, create_app_context
 from comfyui_client import ComfyUIClient
@@ -36,6 +38,24 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+async def configure_bot_commands(bot: Bot) -> None:
+    commands = [
+        BotCommand(command="start", description="Главное меню"),
+        BotCommand(command="help", description="Помощь"),
+        BotCommand(command="generate", description="Новая генерация"),
+        BotCommand(command="repeat", description="Повтор последней"),
+        BotCommand(command="presets", description="Мои пресеты"),
+        BotCommand(command="download", description="Скачать модель"),
+        BotCommand(command="models", description="Список моделей"),
+        BotCommand(command="queue", description="Очередь ComfyUI"),
+        BotCommand(command="jobs", description="Активные задачи"),
+        BotCommand(command="settings", description="Настройки"),
+        BotCommand(command="training", description="Обучение"),
+        BotCommand(command="cancel", description="Отменить операцию"),
+    ]
+    await bot.set_my_commands(commands)
+
+
 def create_bot(
     cfg: Config,
 ) -> tuple[Bot, Dispatcher, ComfyUIClient, ModelDownloader, SmartPromptService]:
@@ -47,7 +67,6 @@ def create_app(cfg: Config) -> AppContext:
     app = create_app_context(cfg)
     register_handlers(
         app.router,
-        bot=app.bot,
         cfg=cfg,
         client=app.client,
         downloader=app.downloader,
@@ -64,6 +83,11 @@ async def main() -> None:
         sys.exit(1)
 
     app = create_app(cfg)
+
+    try:
+        await configure_bot_commands(app.bot)
+    except TelegramAPIError:
+        logger.warning("Failed to configure Telegram commands", exc_info=True)
 
     if await app.client.check_connection():
         logger.info("ComfyUI is reachable at %s", cfg.comfyui_url)

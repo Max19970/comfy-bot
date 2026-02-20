@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from io import BytesIO
-from typing import Awaitable, Callable
+from typing import cast
 
 from aiogram import F, Router
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
 from aiogram.types import (
     BufferedInputFile,
@@ -14,8 +16,8 @@ from aiogram.types import (
     Message,
 )
 
-from comfyui_client import GenerationParams
 from core.html_utils import h, truncate
+from core.models import GenerationParams
 from core.prompt_exchange import (
     PROMPT_EXCHANGE_PREFIX,
     PromptExchangeError,
@@ -109,6 +111,11 @@ def register_prompt_editor_exchange_handlers(
     router: Router,
     deps: PromptEditorExchangeHandlersDeps,
 ) -> None:
+    def _callback_message(cb: CallbackQuery) -> Message | None:
+        if cb.message is None or not hasattr(cb.message, "edit_text"):
+            return None
+        return cast(Message, cb.message)
+
     async def _apply_import_from_text(
         message: Message,
         state: FSMContext,
@@ -141,6 +148,10 @@ def register_prompt_editor_exchange_handlers(
 
     @router.callback_query(F.data == "pe:exchange")
     async def pe_exchange_menu(cb: CallbackQuery):
+        message = _callback_message(cb)
+        if message is None:
+            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
+            return
         payload = await deps.require_prompt_request_for_callback(cb)
         if not payload:
             return
@@ -157,11 +168,15 @@ def register_prompt_editor_exchange_handlers(
                 _preview_line("🔴 Negative", req.params.negative),
             ]
         )
-        await cb.message.edit_text(text, reply_markup=_exchange_menu_keyboard())
+        await message.edit_text(text, reply_markup=_exchange_menu_keyboard())
         await cb.answer()
 
     @router.callback_query(F.data == "pe:exchange:export")
     async def pe_exchange_export(cb: CallbackQuery):
+        message = _callback_message(cb)
+        if message is None:
+            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
+            return
         payload = await deps.require_prompt_request_for_callback(cb)
         if not payload:
             return
@@ -170,27 +185,26 @@ def register_prompt_editor_exchange_handlers(
         token = export_prompt_token(req.params)
 
         if len(token) > _TOKEN_INLINE_LIMIT:
-            await cb.message.edit_text(
+            await message.edit_text(
                 "📤 <b>Код обмена готов</b>\n"
                 "\n"
                 "Текущий код слишком длинный для безопасного вывода в одном "
                 "сообщении. Отправил его .txt-файлом ниже.",
                 reply_markup=_exchange_result_keyboard(),
             )
-            await cb.message.answer_document(
+            await message.answer_document(
                 BufferedInputFile(
                     (token + "\n").encode("utf-8"),
                     filename="comfybot_prompt_code.txt",
                 ),
                 caption=(
-                    "📎 Код обмена. Скопируйте содержимое файла и "
-                    "вставьте через «📥 Вставить»."
+                    "📎 Код обмена. Скопируйте содержимое файла и вставьте через «📥 Вставить»."
                 ),
             )
             await cb.answer("Код отправлен файлом.")
             return
 
-        await cb.message.edit_text(
+        await message.edit_text(
             "📤 <b>Код обмена готов</b>\n"
             "\n"
             "Скопируйте строку целиком и отправьте её другому пользователю.\n"
@@ -204,12 +218,16 @@ def register_prompt_editor_exchange_handlers(
 
     @router.callback_query(F.data == "pe:exchange:import")
     async def pe_exchange_import_start(cb: CallbackQuery, state: FSMContext):
+        message = _callback_message(cb)
+        if message is None:
+            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
+            return
         payload = await deps.require_prompt_request_for_callback(cb)
         if not payload:
             return
 
         await state.set_state(PromptEditorStates.entering_shared_prompt)
-        await cb.message.edit_text(
+        await message.edit_text(
             "📥 <b>Вставка кода обмена</b>\n"
             "\n"
             "Отправьте код обмена сообщением.\n"
@@ -259,7 +277,7 @@ def register_prompt_editor_exchange_handlers(
             if stream is None:
                 raise RuntimeError("document stream is empty")
             raw_text = buffer.getvalue().decode("utf-8", errors="replace")
-        except Exception:
+        except (TelegramBadRequest, RuntimeError, OSError):
             await msg.answer(
                 "❌ Не удалось прочитать документ. Отправьте код текстом.",
                 reply_markup=_exchange_import_keyboard(),

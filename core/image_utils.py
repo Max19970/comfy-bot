@@ -28,7 +28,7 @@ def compress_for_photo(
     image_bytes: bytes,
     max_size: int = TG_PHOTO_MAX_BYTES,
 ) -> bytes:
-    image = Image.open(BytesIO(image_bytes))
+    image: Image.Image = Image.open(BytesIO(image_bytes))
     target_w, target_h = _fit_dimensions(image.width, image.height)
     needs_resize = target_w != image.width or target_h != image.height
     if not needs_resize and len(image_bytes) <= max_size:

@@ -1,0 +1,293 @@
+from __future__ import annotations
+
+import asyncio
+import uuid
+
+import aiohttp
+from aiogram.exceptions import TelegramBadRequest
+from aiogram.fsm.context import FSMContext
+from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
+
+from comfyui_client import ComfyUIClient
+from config import Config
+from core.html_utils import h
+from core.models import GenerationParams
+from core.runtime import PromptRequest, RuntimeStore
+from core.telegram import callback_user_id, message_user_id
+
+
+def remember_prompt_panel(runtime: RuntimeStore, req: PromptRequest, panel_msg: Message) -> None:
+    if panel_msg.chat is None:
+        return
+    req.ui_chat_id = panel_msg.chat.id
+    req.ui_message_id = panel_msg.message_id
+
+    uid: int | None = None
+    for user_id, active_req in runtime.active_prompt_requests.items():
+        if active_req is req:
+            uid = user_id
+            break
+    if uid is not None:
+        runtime.user_ui_panels[uid] = {
+            "chat_id": panel_msg.chat.id,
+            "message_id": panel_msg.message_id,
+        }
+
+
+async def edit_prompt_panel_by_anchor(
+    runtime: RuntimeStore,
+    req: PromptRequest,
+    source_message: Message,
+    text: str,
+    reply_markup: InlineKeyboardMarkup | None,
+) -> Message | None:
+    if req.ui_chat_id is None or req.ui_message_id is None:
+        return None
+
+    bot = source_message.bot
+    if bot is None:
+        return None
+
+    try:
+        edited = await bot.edit_message_text(
+            text=text,
+            chat_id=req.ui_chat_id,
+            message_id=req.ui_message_id,
+            reply_markup=reply_markup,
+        )
+        if isinstance(edited, Message):
+            remember_prompt_panel(runtime, req, edited)
+            return edited
+    except TelegramBadRequest:
+        return None
+    return None
+
+
+async def show_prompt_panel(
+    runtime: RuntimeStore,
+    message: Message,
+    req: PromptRequest,
+    text: str,
+    reply_markup: InlineKeyboardMarkup | None,
+    *,
+    prefer_edit: bool,
+) -> Message:
+    anchored = await edit_prompt_panel_by_anchor(runtime, req, message, text, reply_markup)
+    if anchored is not None:
+        return anchored
+
+    if prefer_edit:
+        try:
+            edited = await message.edit_text(text, reply_markup=reply_markup)
+            if isinstance(edited, Message):
+                remember_prompt_panel(runtime, req, edited)
+                return edited
+        except TelegramBadRequest:
+            pass
+
+    sent = await message.answer(text, reply_markup=reply_markup)
+    remember_prompt_panel(runtime, req, sent)
+    return sent
+
+
+async def move_prompt_panel_to_bottom(
+    runtime: RuntimeStore,
+    message: Message,
+    req: PromptRequest,
+    text: str,
+    reply_markup: InlineKeyboardMarkup | None,
+) -> Message:
+    prev_chat_id = req.ui_chat_id
+    prev_message_id = req.ui_message_id
+
+    sent = await message.answer(text, reply_markup=reply_markup)
+    remember_prompt_panel(runtime, req, sent)
+
+    if (
+        prev_chat_id is not None
+        and prev_message_id is not None
+        and (prev_chat_id != sent.chat.id or prev_message_id != sent.message_id)
+        and message.bot is not None
+    ):
+        try:
+            await message.bot.delete_message(
+                chat_id=prev_chat_id,
+                message_id=prev_message_id,
+            )
+        except TelegramBadRequest:
+            pass
+
+    return sent
+
+
+async def ensure_models_available(client: ComfyUIClient, message: Message) -> bool:
+    if not client.info.checkpoints:
+        await message.answer("⏳ Загружаю список моделей…")
+        try:
+            await client.refresh_info()
+        except (aiohttp.ClientError, asyncio.TimeoutError, RuntimeError, ValueError) as exc:
+            await message.answer(
+                f"❌ <b>Не удалось подключиться к ComfyUI</b>\n<code>{h(exc)}</code>"
+            )
+            return False
+    if not client.info.checkpoints:
+        await message.answer("❌ На сервере ComfyUI нет ни одного checkpoint.")
+        return False
+    return True
+
+
+def build_default_params(cfg: Config) -> GenerationParams:
+    return GenerationParams(
+        width=cfg.default_width,
+        height=cfg.default_height,
+        steps=cfg.default_steps,
+        cfg=cfg.default_cfg,
+        sampler=cfg.default_sampler,
+        scheduler=cfg.default_scheduler,
+        denoise=cfg.default_denoise,
+    )
+
+
+def build_default_params_for_user(cfg: Config, runtime: RuntimeStore, uid: int) -> GenerationParams:
+    params = build_default_params(cfg)
+    prefs = runtime.user_preferences.get(uid, {})
+
+    width_raw = prefs.get("gen_width", params.width)
+    height_raw = prefs.get("gen_height", params.height)
+    steps_raw = prefs.get("gen_steps", params.steps)
+    cfg_raw = prefs.get("gen_cfg", params.cfg)
+    denoise_raw = prefs.get("gen_denoise", params.denoise)
+    seed_raw = prefs.get("gen_seed", params.seed)
+    batch_raw = prefs.get("gen_batch", params.batch_size)
+    sampler_raw = prefs.get("gen_sampler", params.sampler)
+    scheduler_raw = prefs.get("gen_scheduler", params.scheduler)
+
+    try:
+        params.width = max(64, min(4096, int(width_raw)))
+    except (TypeError, ValueError):
+        pass
+    try:
+        params.height = max(64, min(4096, int(height_raw)))
+    except (TypeError, ValueError):
+        pass
+    try:
+        params.steps = max(1, min(200, int(steps_raw)))
+    except (TypeError, ValueError):
+        pass
+    try:
+        params.cfg = max(0.0, min(30.0, float(cfg_raw)))
+    except (TypeError, ValueError):
+        pass
+    try:
+        params.denoise = max(0.0, min(1.0, float(denoise_raw)))
+    except (TypeError, ValueError):
+        pass
+    try:
+        params.seed = max(-1, int(seed_raw))
+    except (TypeError, ValueError):
+        pass
+    try:
+        params.batch_size = max(1, min(16, int(batch_raw)))
+    except (TypeError, ValueError):
+        pass
+
+    sampler = str(sampler_raw).strip()
+    scheduler = str(scheduler_raw).strip()
+    if sampler:
+        params.sampler = sampler
+    if scheduler:
+        params.scheduler = scheduler
+    return params
+
+
+def normalize_generation_params(
+    params: GenerationParams,
+    client: ComfyUIClient,
+    *,
+    max_reference_images: int,
+) -> GenerationParams:
+    if not params.checkpoint and client.info.checkpoints:
+        params.checkpoint = client.info.checkpoints[0]
+    if client.info.samplers and params.sampler not in client.info.samplers:
+        params.sampler = client.info.samplers[0]
+    if client.info.schedulers and params.scheduler not in client.info.schedulers:
+        params.scheduler = client.info.schedulers[0]
+    if params.upscale_model and params.upscale_model not in client.info.upscale_models:
+        params.upscale_model = ""
+    if params.vae_name and params.vae_name not in client.info.vaes:
+        params.vae_name = ""
+    if params.controlnet_name and params.controlnet_name not in client.info.controlnets:
+        params.controlnet_name = ""
+
+    try:
+        params.controlnet_strength = float(params.controlnet_strength)
+    except (TypeError, ValueError):
+        params.controlnet_strength = 1.0
+    params.controlnet_strength = max(0.0, min(2.0, params.controlnet_strength))
+
+    if (
+        client.info.embeddings
+        and params.embedding_name
+        and params.embedding_name not in client.info.embeddings
+    ):
+        params.embedding_name = ""
+    if client.info.loras:
+        params.loras = [item for item in params.loras if item[0] in client.info.loras]
+    else:
+        params.loras = []
+
+    normalized_refs: list[dict[str, str]] = []
+    for item in params.reference_images:
+        if isinstance(item, dict):
+            file_id = str(item.get("file_id", "")).strip()
+            if not file_id:
+                continue
+            ref_id = str(item.get("id") or uuid.uuid4().hex)
+            normalized_refs.append({"id": ref_id, "file_id": file_id})
+            continue
+
+        if isinstance(item, str):
+            file_id = item.strip()
+            if file_id:
+                normalized_refs.append({"id": uuid.uuid4().hex, "file_id": file_id})
+
+    params.reference_images = normalized_refs[:max_reference_images]
+    try:
+        params.reference_strength = float(params.reference_strength)
+    except (TypeError, ValueError):
+        params.reference_strength = 0.8
+    params.reference_strength = max(0.0, min(2.0, params.reference_strength))
+    return params
+
+
+async def require_prompt_request_for_message(
+    runtime: RuntimeStore,
+    msg: Message,
+    state: FSMContext,
+) -> tuple[int, PromptRequest] | None:
+    uid = message_user_id(msg)
+    req = runtime.active_prompt_requests.get(uid)
+    if req:
+        return uid, req
+    await state.clear()
+    await msg.answer("❌ Активный запрос не найден. Используйте /generate.")
+    return None
+
+
+async def require_prompt_request_for_callback(
+    runtime: RuntimeStore,
+    cb: CallbackQuery,
+) -> tuple[int, PromptRequest] | None:
+    uid = callback_user_id(cb)
+    req = runtime.active_prompt_requests.get(uid)
+    if req:
+        return uid, req
+    await cb.answer("❌ Нет активного запроса.", show_alert=True)
+    return None
+
+
+async def safe_delete_user_message(message: Message) -> None:
+    try:
+        await message.delete()
+    except TelegramBadRequest:
+        return

@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import cast
 
 from aiogram import F, Router
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import (
@@ -12,8 +13,8 @@ from aiogram.types import (
     Message,
 )
 
-from comfyui_client import GenerationParams
 from core.html_utils import h
+from core.models import GenerationParams
 from core.panels import render_user_panel
 from core.runtime import PromptRequest, RuntimeStore
 from core.states import PresetStates, PromptEditorStates
@@ -67,9 +68,7 @@ def register_preset_handlers(
                 ),
                 InlineKeyboardButton(
                     text=(
-                        (
-                            f"⚠️ Удалить «{name if len(name) <= 18 else name[:15] + '...'}»?"
-                        )
+                        (f"⚠️ Удалить «{name if len(name) <= 18 else name[:15] + '...'}»?")
                         if confirm_delete_index == index
                         else "\U0001f5d1"
                     ),
@@ -87,7 +86,61 @@ def register_preset_handlers(
                     )
                 ]
             )
+        else:
+            rows.append(
+                [
+                    InlineKeyboardButton(
+                        text="⬅️ Генерация",
+                        callback_data="menu:generation",
+                    )
+                ]
+            )
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text="🏠 В меню",
+                    callback_data="menu:root",
+                )
+            ]
+        )
         return rows
+
+    async def _show_presets_panel(
+        message: Message,
+        state: FSMContext,
+        *,
+        uid: int,
+        prefer_edit: bool,
+    ) -> None:
+        presets = load_presets(uid)
+        if not presets:
+            await render_user_panel(
+                message,
+                runtime,
+                uid,
+                "📂 Нет пресетов. Создайте через /generate.",
+                reply_markup=InlineKeyboardMarkup(
+                    inline_keyboard=[
+                        [InlineKeyboardButton(text="⬅️ Генерация", callback_data="menu:generation")],
+                        [InlineKeyboardButton(text="🏠 В меню", callback_data="menu:root")],
+                    ]
+                ),
+                prefer_edit=prefer_edit,
+            )
+            return
+
+        names = sorted(presets.keys())
+        await _remember_preset_snapshot(state, names)
+        rows = _preset_rows(uid, names)
+        await state.set_state(PresetStates.browsing)
+        await render_user_panel(
+            message,
+            runtime,
+            uid,
+            "📂 <b>Пресеты</b>\nНажмите для загрузки, 🗑 для удаления:",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
+            prefer_edit=prefer_edit,
+        )
 
     async def _remember_preset_snapshot(state: FSMContext, names: list[str]) -> None:
         await state.update_data(
@@ -192,7 +245,7 @@ def register_preset_handlers(
         save_presets(uid, presets)
         try:
             await msg.delete()
-        except Exception:
+        except TelegramBadRequest:
             pass
         await editor.show_prompt_editor(
             msg,
@@ -240,9 +293,7 @@ def register_preset_handlers(
             uid = callback_user_id(cb)
             if uid not in runtime.active_prompt_requests:
                 await state.clear()
-                await message.edit_text(
-                    "⚠️ Активный запрос не найден. Используйте /generate."
-                )
+                await message.edit_text("⚠️ Активный запрос не найден. Используйте /generate.")
                 await cb.answer()
                 return
 
@@ -289,9 +340,7 @@ def register_preset_handlers(
             await state.clear()
             return
 
-        payload = (
-            params_to_dict(params) if isinstance(params, GenerationParams) else params
-        )
+        payload = params_to_dict(params) if isinstance(params, GenerationParams) else params
         presets = load_presets(uid)
         if name in presets:
             await state.update_data(
@@ -387,29 +436,25 @@ def register_preset_handlers(
 
     @router.message(Command("presets"))
     async def cmd_presets(msg: Message, state: FSMContext):
-        uid = message_user_id(msg)
-        presets = load_presets(uid)
-        if not presets:
-            await render_user_panel(
-                msg,
-                runtime,
-                uid,
-                "📂 Нет пресетов. Создайте через /generate.",
-            )
-            return
-
-        names = sorted(presets.keys())
-        await _remember_preset_snapshot(state, names)
-        rows = _preset_rows(uid, names)
-        await state.set_state(PresetStates.browsing)
-        await render_user_panel(
+        await _show_presets_panel(
             msg,
-            runtime,
-            uid,
-            "📂 <b>Пресеты</b>\nНажмите для загрузки, 🗑 для удаления:",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
-            prefer_edit=False,
+            state,
+            uid=message_user_id(msg),
+            prefer_edit=True,
         )
+
+    @router.callback_query(F.data == "menu:presets")
+    async def menu_presets(cb: CallbackQuery, state: FSMContext):
+        if cb.message is None or not hasattr(cb.message, "edit_text"):
+            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
+            return
+        await _show_presets_panel(
+            cast(Message, cb.message),
+            state,
+            uid=callback_user_id(cb),
+            prefer_edit=True,
+        )
+        await cb.answer()
 
     @router.callback_query(PresetStates.browsing, F.data.startswith("preset_load:"))
     async def preset_load(cb: CallbackQuery, state: FSMContext):

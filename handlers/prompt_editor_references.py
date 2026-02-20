@@ -4,6 +4,7 @@ import logging
 import uuid
 from io import BytesIO
 
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 
@@ -46,7 +47,7 @@ async def collect_reference_images(
             continue
         try:
             images.append(await download_reference_image(message, file_id))
-        except Exception:
+        except (TelegramBadRequest, RuntimeError, OSError):
             logger.exception("Failed to download reference image")
             failed += 1
 
@@ -160,7 +161,7 @@ async def show_reference_menu(
                 }
                 await state.set_state(PromptEditorStates.editing)
                 return
-        except Exception:
+        except TelegramBadRequest:
             pass
 
     if edit:
@@ -175,7 +176,7 @@ async def show_reference_menu(
                 }
                 await state.set_state(PromptEditorStates.editing)
                 return
-        except Exception:
+        except TelegramBadRequest:
             pass
 
     sent = await message.answer(text, reply_markup=kb)

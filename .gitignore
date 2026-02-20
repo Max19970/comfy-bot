@@ -31,3 +31,4 @@ smart_prompt_guides/*.json
 !smart_prompt_guides/.gitkeep
 sessions/*.json
 !sessions/.gitkeep
+sessions/preview_artifacts/

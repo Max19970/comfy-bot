@@ -1,0 +1,26 @@
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.8.6
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.14.1
+    hooks:
+      - id: mypy
+        args: [core, handlers, bot.py, comfyui_client.py, model_downloader.py]
+        additional_dependencies:
+          - aiogram==3.15.0
+          - aiohttp>=3.9.0
+          - Pillow>=10.0.0
+          - python-dotenv==1.0.1
+
+  - repo: local
+    hooks:
+      - id: pytest
+        name: pytest
+        entry: python -m pytest -q
+        language: system
+        pass_filenames: false

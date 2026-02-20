@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+import logging
+
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import InlineKeyboardMarkup, Message
 
 from core.runtime import RuntimeStore
+
+logger = logging.getLogger(__name__)
 
 
 def remember_user_panel(runtime: RuntimeStore, uid: int, panel: Message) -> None:
@@ -38,8 +43,11 @@ async def render_user_panel(
             if isinstance(edited, Message):
                 remember_user_panel(runtime, uid, edited)
                 return edited
-        except Exception:
-            pass
+        except TelegramBadRequest as exc:
+            if "message is not modified" in str(exc).lower():
+                remember_user_panel(runtime, uid, message)
+                return message
+            logger.debug("Failed to edit anchored panel", exc_info=True)
 
     if prefer_edit:
         try:
@@ -47,8 +55,11 @@ async def render_user_panel(
             if isinstance(edited, Message):
                 remember_user_panel(runtime, uid, edited)
                 return edited
-        except Exception:
-            pass
+        except TelegramBadRequest as exc:
+            if "message is not modified" in str(exc).lower():
+                remember_user_panel(runtime, uid, message)
+                return message
+            logger.debug("Failed to edit current panel", exc_info=True)
 
     sent = await message.answer(text, reply_markup=reply_markup)
     remember_user_panel(runtime, uid, sent)

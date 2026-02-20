@@ -89,9 +89,7 @@ class Config:
 
         return cls(
             telegram_token=token,
-            comfyui_url=_strip_trailing_slash(
-                _env("COMFYUI_URL", "http://127.0.0.1:8000")
-            ),
+            comfyui_url=_strip_trailing_slash(_env("COMFYUI_URL", "http://127.0.0.1:8000")),
             allowed_users=_env_csv_ints("ALLOWED_USERS"),
             comfyui_models_path=_env(
                 "COMFYUI_MODELS_PATH",

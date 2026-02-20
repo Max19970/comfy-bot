@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Awaitable, Callable
 from typing import Any, cast
 
 from aiogram import Router
@@ -11,6 +12,7 @@ from aiogram.types import (
     InlineKeyboardMarkup,
     Message,
 )
+from aiogram.types.base import TelegramObject
 
 from comfyui_client import ComfyUIClient
 from config import Config
@@ -343,8 +345,13 @@ def register_common_handlers(
     downloader: ModelDownloader,
     runtime: RuntimeStore,
 ) -> None:
-    @router.message.outer_middleware()  # type: ignore[arg-type,call-arg]
-    async def wl_msg(handler, event: Message, data: dict):
+    async def wl_msg(
+        handler: Callable[[TelegramObject, dict[str, Any]], Awaitable[Any]],
+        event: TelegramObject,
+        data: dict[str, Any],
+    ) -> Any:
+        if not isinstance(event, Message):
+            return await handler(event, data)
         command_text = (event.text or "").strip()
         should_delete_command = command_text.startswith("/")
         if cfg.allowed_users and event.from_user and event.from_user.id not in cfg.allowed_users:
@@ -362,8 +369,13 @@ def register_common_handlers(
                     pass
             runtime.persist()
 
-    @router.callback_query.outer_middleware()  # type: ignore[arg-type,call-arg]
-    async def wl_cb(handler, event: CallbackQuery, data: dict):
+    async def wl_cb(
+        handler: Callable[[TelegramObject, dict[str, Any]], Awaitable[Any]],
+        event: TelegramObject,
+        data: dict[str, Any],
+    ) -> Any:
+        if not isinstance(event, CallbackQuery):
+            return await handler(event, data)
         if cfg.allowed_users and event.from_user and event.from_user.id not in cfg.allowed_users:
             await event.answer(
                 "\u26d4 \u0414\u043e\u0441\u0442\u0443\u043f \u0437\u0430\u043f\u0440\u0435\u0449\u0451\u043d.",
@@ -374,6 +386,9 @@ def register_common_handlers(
             return await handler(event, data)
         finally:
             runtime.persist()
+
+    router.message.outer_middleware(wl_msg)
+    router.callback_query.outer_middleware(wl_cb)
 
     def _callback_message(cb: CallbackQuery) -> Message | None:
         if cb.message is None or not hasattr(cb.message, "edit_text"):

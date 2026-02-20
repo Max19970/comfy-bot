@@ -280,6 +280,14 @@ async def run_generate_operation(
                 f"Батч {batch_index + 1}/{expected_previews}: {text}",
             )
 
+        def _progress_for_batch(
+            batch_index: int,
+        ) -> Callable[[int, int, str], Awaitable[None]]:
+            async def _inner(current: int, total: int, text: str) -> None:
+                await _single_progress(batch_index, current, total, text)
+
+            return _inner
+
         try:
             for batch_index in range(expected_previews):
                 single_params = GenerationParams(**asdict(generation_params))
@@ -289,7 +297,7 @@ async def run_generate_operation(
                 images = await deps.client.generate(
                     single_params,
                     reference_images=reference_images,
-                    progress_cb=lambda c, t, txt, i=batch_index: _single_progress(i, c, t, txt),
+                    progress_cb=_progress_for_batch(batch_index),
                     prompt_id_cb=_prompt_id_cb,
                     image_cb=_deliver_preview_image,
                 )

@@ -104,6 +104,7 @@ class SearchResult:
     file_format: str = ""
     file_fp: str = ""
     nsfw: bool = False
+    search_text: str = ""
 
     # CivitAI can return multiple versions, users can pick later.
     available_versions: list[SearchVersionOption] = field(default_factory=list)
@@ -123,6 +124,7 @@ def _result_search_text(result: SearchResult) -> str:
     parts: list[str] = [
         result.name,
         result.description,
+        result.search_text,
         result.filename,
         result.model_id,
         result.version_name,
@@ -188,6 +190,31 @@ def _matches_query_text(result: SearchResult, query: str) -> bool:
     if not tokens:
         return True
     return all(token in haystack for token in tokens)
+
+
+def _result_unique_key(result: SearchResult) -> str:
+    return f"{result.source}:{result.model_id}:{result.version_id}:{result.download_url}"
+
+
+def _merge_results(
+    base: list[SearchResult],
+    extra: list[SearchResult],
+    *,
+    limit: int,
+) -> list[SearchResult]:
+    if not extra:
+        return base
+    merged = list(base)
+    seen = {_result_unique_key(item) for item in base}
+    for item in extra:
+        key = _result_unique_key(item)
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(item)
+        if len(merged) >= max(1, limit):
+            break
+    return merged
 
 
 def apply_version_option(
@@ -621,6 +648,18 @@ class ModelDownloader:
             if snippet:
                 description = f"{description} | {snippet}"
 
+        search_chunks = [
+            str(item.get("name") or ""),
+            civitai_desc,
+            " ".join(tags),
+            str(creator.get("username") or ""),
+            selected.version_name,
+            selected.filename,
+            selected.base_model,
+            " ".join(selected.trained_words),
+        ]
+        search_text = " ".join(chunk for chunk in search_chunks if chunk).strip()
+
         return SearchResult(
             name=str(item.get("name") or "Unknown"),
             source="civitai",
@@ -644,6 +683,7 @@ class ModelDownloader:
             file_format=selected.file_format,
             file_fp=selected.fp,
             nsfw=bool(item.get("nsfw")),
+            search_text=search_text,
             available_versions=options,
         )
 
@@ -732,7 +772,7 @@ class ModelDownloader:
                     continue
                 if not _matches_query_text(result, query):
                     continue
-                unique_id = f"{result.model_id}:{result.version_id}:{result.download_url}"
+                unique_id = _result_unique_key(result)
                 if unique_id in seen_ids:
                     continue
                 seen_ids.add(unique_id)
@@ -769,19 +809,20 @@ class ModelDownloader:
             logger.exception("CivitAI search failed")
             raise
 
-        if results:
+        if len(results) >= max(1, limit):
             return results
 
         # Fallback: some CivitAI searches miss obvious matches with strict query,
         # especially when combined with author/base filters. Retry without `query`
         # and apply robust local text matching.
-        if query.strip() and (author_filters or base_models or not strict_type):
+        if query.strip():
             relaxed_params = dict(params)
             relaxed_params.pop("query", None)
             relaxed_params["limit"] = max(20, min(limit * 8, 100))
             relaxed_results = await _search_pages(relaxed_params, max_pages=10)
-            if relaxed_results:
-                return relaxed_results
+            results = _merge_results(results, relaxed_results, limit=limit)
+            if len(results) >= max(1, limit):
+                return results
 
             # Last-resort: remove API-side author/base filters completely and
             # rely on local robust matching.
@@ -789,9 +830,10 @@ class ModelDownloader:
             broad_params.pop("baseModels", None)
             broad_params.pop("username", None)
             broad_params["limit"] = max(30, min(limit * 10, 100))
-            return await _search_pages(broad_params, max_pages=12)
+            broad_results = await _search_pages(broad_params, max_pages=12)
+            results = _merge_results(results, broad_results, limit=limit)
 
-        return []
+        return results
 
     async def fetch_civitai_model(
         self,
@@ -1022,6 +1064,18 @@ class ModelDownloader:
             rating=rating,
         )
 
+        card_text_parts = [
+            str(card.get("model_description") or ""),
+            str(card.get("description") or ""),
+            str(card.get("widget") or ""),
+            str(card.get("language") or ""),
+        ]
+        search_text = " ".join(
+            part
+            for part in [repo_id, filename, base_model, " ".join(tags_list), *card_text_parts]
+            if part
+        ).strip()
+
         return SearchResult(
             name=f"{repo_id} / {filename}",
             source="huggingface",
@@ -1045,6 +1099,7 @@ class ModelDownloader:
             file_format="SafeTensor" if filename.lower().endswith(".safetensors") else "",
             file_fp="",
             nsfw=False,
+            search_text=search_text,
             available_versions=[],
         )
 

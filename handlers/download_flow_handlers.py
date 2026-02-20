@@ -59,6 +59,21 @@ def register_download_flow_handlers(deps: DownloadFlowDeps) -> None:
             ]
         )
 
+    def _download_done_keyboard() -> InlineKeyboardMarkup:
+        return InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="⬅️ К результатам",
+                        callback_data="dldone:results",
+                    )
+                ],
+                [InlineKeyboardButton(text="🔎 Новый поиск", callback_data="dldone:new")],
+                [InlineKeyboardButton(text="⬅️ Модели", callback_data="menu:models")],
+                [InlineKeyboardButton(text="🏠 В меню", callback_data="menu:root")],
+            ]
+        )
+
     def _download_defaults_for_user(uid: int, *, inferred_base: str) -> dict[str, Any]:
         prefs = deps.runtime.user_preferences.get(uid, {})
         source = str(prefs.get("dl_default_source", "all")).strip().lower()
@@ -740,7 +755,6 @@ def register_download_flow_handlers(deps: DownloadFlowDeps) -> None:
         )
         status_msg: Message = edited if isinstance(edited, Message) else source_msg
         await cb.answer()
-        await state.clear()
 
         import time as _time
 
@@ -791,7 +805,10 @@ def register_download_flow_handlers(deps: DownloadFlowDeps) -> None:
                         "⚠️ Модель скачана, но не удалось обновить список. Попробуйте /models."
                     )
 
-                await status_msg.edit_text("\n".join(details), reply_markup=_models_back_keyboard())
+                await status_msg.edit_text(
+                    "\n".join(details), reply_markup=_download_done_keyboard()
+                )
+                await state.set_state(DownloadStates.choosing_result)
             except asyncio.CancelledError:
                 await status_msg.edit_text(
                     "❌ Скачивание отменено.",
@@ -818,6 +835,59 @@ def register_download_flow_handlers(deps: DownloadFlowDeps) -> None:
 
         task = asyncio.create_task(_do_download())
         deps.runtime.active_downloads[uid] = task
+
+    @router.callback_query(F.data.startswith("dldone:"))
+    async def dl_done_actions(cb: CallbackQuery, state: FSMContext):
+        action = (cb.data or "").split(":", 1)[1]
+        message = (
+            cb.message if cb.message is not None and hasattr(cb.message, "edit_text") else None
+        )
+
+        if action == "new":
+            if message is None:
+                await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
+                return
+            await state.set_state(DownloadStates.entering_query)
+            await deps.show_query_prompt(cast(Message, message), state, edit=True)
+            await cb.answer()
+            return
+
+        if action == "results":
+            data = await state.get_data()
+            results_data = data.get("dl_results", [])
+            results: list[Any] = []
+            for item in results_data:
+                if isinstance(item, dict):
+                    results.append(deps.hydrate_result(item))
+
+            if not results:
+                await cb.answer(
+                    "История результатов недоступна. Начните новый поиск.", show_alert=True
+                )
+                return
+
+            if message is None:
+                await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
+                return
+
+            page_size = int(data.get("dl_page_size", default_page_size) or default_page_size)
+            page = int(data.get("dl_results_page", 0) or 0)
+            loaded_limit = int(data.get("dl_loaded_limit", page_size * 2) or (page_size * 2))
+            can_continue = len(results) >= loaded_limit and loaded_limit < 200
+            await state.set_state(DownloadStates.choosing_result)
+            await deps.show_results_menu(
+                cast(Message, message),
+                state,
+                results,
+                edit=True,
+                page=page,
+                page_size=page_size,
+                can_continue=can_continue,
+            )
+            await cb.answer()
+            return
+
+        await cb.answer("❌ Неизвестное действие.", show_alert=True)
 
     @router.callback_query(F.data == "dldl:cancel")
     async def dl_cancel_running(cb: CallbackQuery):

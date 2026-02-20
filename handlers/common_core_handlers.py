@@ -1167,14 +1167,38 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
             await cb.answer("⚠️ Некорректный параметр.", show_alert=True)
             return
         key = parts[4]
-        value = parts[5]
+        value = parts[5].strip().lower()
         if key == "source":
+            if value not in {"all", "civitai", "huggingface"}:
+                await cb.answer("⚠️ Некорректный source.", show_alert=True)
+                return
             _set_pref(uid, "dl_default_source", value)
         elif key == "sort":
+            if value not in {"downloads", "rating", "newest"}:
+                await cb.answer("⚠️ Некорректный sort.", show_alert=True)
+                return
             _set_pref(uid, "dl_default_sort", value)
         elif key == "period":
+            if value not in {"all", "month", "week"}:
+                await cb.answer("⚠️ Некорректный period.", show_alert=True)
+                return
             _set_pref(uid, "dl_default_period", value)
         elif key == "base":
+            if value not in {
+                "all",
+                "sd15",
+                "sd2",
+                "sdxl09",
+                "sdxl",
+                "sd3",
+                "sd35",
+                "pony",
+                "flux",
+                "illustrious",
+                "noobai",
+            }:
+                await cb.answer("⚠️ Некорректная базовая модель.", show_alert=True)
+                return
             _set_pref(uid, "dl_default_base", value)
         elif key == "profile":
             if not _apply_download_profile(uid, value):

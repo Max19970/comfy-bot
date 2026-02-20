@@ -297,17 +297,40 @@ def _normalize_user_preferences(raw: Any) -> dict[str, Any]:
             normalized[key] = value.strip()
 
     source = raw.get("dl_default_source")
-    if isinstance(source, str) and source in {"all", "civitai", "huggingface"}:
-        normalized["dl_default_source"] = source
+    if isinstance(source, str):
+        source_norm = source.strip().lower()
+        if source_norm in {"all", "civitai", "huggingface"}:
+            normalized["dl_default_source"] = source_norm
+
     sort_code = raw.get("dl_default_sort")
-    if isinstance(sort_code, str) and sort_code in {"downloads", "rating", "newest"}:
-        normalized["dl_default_sort"] = sort_code
+    if isinstance(sort_code, str):
+        sort_norm = sort_code.strip().lower()
+        if sort_norm in {"downloads", "rating", "newest"}:
+            normalized["dl_default_sort"] = sort_norm
+
     period = raw.get("dl_default_period")
-    if isinstance(period, str) and period in {"all", "month", "week"}:
-        normalized["dl_default_period"] = period
+    if isinstance(period, str):
+        period_norm = period.strip().lower()
+        if period_norm in {"all", "month", "week"}:
+            normalized["dl_default_period"] = period_norm
+
     base = raw.get("dl_default_base")
-    if isinstance(base, str) and base in {"all", "sd15", "sdxl", "pony", "flux"}:
-        normalized["dl_default_base"] = base
+    if isinstance(base, str):
+        base_norm = base.strip().lower()
+        if base_norm in {
+            "all",
+            "sd15",
+            "sd2",
+            "sdxl09",
+            "sdxl",
+            "sd3",
+            "sd35",
+            "pony",
+            "flux",
+            "illustrious",
+            "noobai",
+        }:
+            normalized["dl_default_base"] = base_norm
     if isinstance(raw.get("dl_default_nsfw"), bool):
         normalized["dl_default_nsfw"] = raw.get("dl_default_nsfw")
     author = raw.get("dl_default_author")

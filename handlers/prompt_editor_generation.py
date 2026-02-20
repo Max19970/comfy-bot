@@ -299,7 +299,6 @@ async def run_generate_operation(
                     reference_images=reference_images,
                     progress_cb=_progress_for_batch(batch_index),
                     prompt_id_cb=_prompt_id_cb,
-                    image_cb=_deliver_preview_image,
                 )
                 if images:
                     for image_bytes in images:
@@ -346,11 +345,12 @@ async def run_generate_operation(
         preview_notice = "🖼 Превью отправлялись по мере готовности."
         if preview_send_failures > 0:
             preview_notice = (
-                "⚠️ Часть превью не удалось отправить как фото. " "Можно скачать PNG без сжатия."
+                "⚠️ Часть превью не удалось отправить как фото "
+                f"({sent_previews}/{ready_previews}). Можно скачать PNG без сжатия."
             )
 
         done_text = (
-            f"✅ <b>Готово!</b> {sent_previews} изобр. | Seed: <code>{used_seed}</code>\n"
+            f"✅ <b>Готово!</b> {ready_previews} изобр. | Seed: <code>{used_seed}</code>\n"
             f"\n{preview_notice}\n"
             "Для каждой превью доступны: отправка PNG и меню улучшений."
         )

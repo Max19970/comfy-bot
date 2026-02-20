@@ -174,6 +174,7 @@ async def run_generate_operation(
         last_text = status_intro
         edit_interval = 0.8
         expected_previews = max(1, generation_params.batch_size)
+        base_seed = int(used_seed)
         ready_previews = 0
         sent_previews = 0
         preview_send_failures = 0
@@ -258,17 +259,43 @@ async def run_generate_operation(
                 preview_send_failures += 1
                 deps.logger.exception("Failed to deliver generated preview")
 
-        try:
-            images = await deps.client.generate(
-                generation_params,
-                reference_images=reference_images,
-                progress_cb=_progress,
-                prompt_id_cb=_prompt_id_cb,
-                image_cb=_deliver_preview_image,
+        async def _single_progress(
+            batch_index: int,
+            current: int,
+            total: int,
+            text: str,
+        ) -> None:
+            if total > 0:
+                overall_current = batch_index * total + current
+                overall_total = expected_previews * total
+                await _progress(
+                    overall_current,
+                    overall_total,
+                    f"Батч {batch_index + 1}/{expected_previews}: {text}",
+                )
+                return
+            await _progress(
+                0,
+                0,
+                f"Батч {batch_index + 1}/{expected_previews}: {text}",
             )
-            if images:
-                for image_bytes in images:
-                    await _deliver_preview_image(image_bytes)
+
+        try:
+            for batch_index in range(expected_previews):
+                single_params = GenerationParams(**asdict(generation_params))
+                single_params.batch_size = 1
+                single_params.seed = base_seed + batch_index
+
+                images = await deps.client.generate(
+                    single_params,
+                    reference_images=reference_images,
+                    progress_cb=lambda c, t, txt, i=batch_index: _single_progress(i, c, t, txt),
+                    prompt_id_cb=_prompt_id_cb,
+                    image_cb=_deliver_preview_image,
+                )
+                if images:
+                    for image_bytes in images:
+                        await _deliver_preview_image(image_bytes)
         except asyncio.CancelledError:
             try:
                 await status_msg.edit_text(f"{status_intro}\n\n❌ Генерация отменена.")

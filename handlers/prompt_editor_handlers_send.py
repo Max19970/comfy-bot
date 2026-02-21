@@ -27,12 +27,23 @@ from core.interaction import require_callback_message
 from core.models import GenerationParams
 from core.prompt_enhancements import (
     numeric_control_range_text,
-    numeric_enhancement_control,
 )
 from core.runtime import ActiveGeneration, PreviewArtifact, PromptRequest, RuntimeStore
 from core.ui_copy import START_TEXT, main_menu_keyboard
 from core.ui_kit import build_keyboard
 from core.ui_kit.buttons import button
+
+from .prompt_editor_send_menu_utils import (
+    apply_field_value,
+    custom_field_meta,
+    enhancement_preset_values,
+    paginated_pick_keyboard,
+    parse_shrink_size,
+    shrink_value_keyboard,
+    simple_value_keyboard,
+    submenu_back_callback,
+    submenu_for_field,
+)
 
 
 @dataclass
@@ -422,243 +433,6 @@ def register_prompt_editor_send_handlers(
             reply_markup=_artifact_menu_keyboard(artifact, menu),
         )
 
-    def _submenu_back_callback(menu_key: str, artifact_id: str) -> str:
-        if menu_key in {"steps", "cfg", "den", "sampler", "scheduler"}:
-            return f"img:sub:smp:{artifact_id}"
-        if menu_key in {"hrs", "hrd", "pags", "up"}:
-            return f"img:sub:enh:{artifact_id}"
-        if menu_key in {"cmp", "shk"}:
-            return f"img:sub:size:{artifact_id}"
-        return f"img:open:{artifact_id}"
-
-    def _submenu_for_field(field: str) -> str:
-        if field in {"steps", "cfg", "denoise"}:
-            return "smp"
-        if field in {"hires_scale", "hires_denoise", "pag_scale"}:
-            return "enh"
-        if field in {"compression_percent", "shrink_size"}:
-            return "size"
-        return "hub"
-
-    def _simple_value_keyboard(
-        *,
-        artifact_id: str,
-        key: str,
-        values: list[str],
-        back_callback: str,
-    ) -> InlineKeyboardMarkup:
-        rows: list[list[InlineKeyboardButton]] = []
-        row: list[InlineKeyboardButton] = []
-        for value in values:
-            row.append(
-                InlineKeyboardButton(
-                    text=value,
-                    callback_data=f"img:set:{key}:{artifact_id}:{value}",
-                )
-            )
-            if len(row) == 3:
-                rows.append(row)
-                row = []
-        if row:
-            rows.append(row)
-        rows.append(
-            [
-                InlineKeyboardButton(
-                    text="✏️ Ввести свое",
-                    callback_data=f"img:custom:{key}:{artifact_id}",
-                )
-            ]
-        )
-        rows.append(
-            [
-                InlineKeyboardButton(
-                    text="⬅️ Назад",
-                    callback_data=back_callback,
-                )
-            ]
-        )
-        return InlineKeyboardMarkup(inline_keyboard=rows)
-
-    def _paginated_pick_keyboard(
-        *,
-        artifact_id: str,
-        menu: str,
-        items: list[str],
-        page: int,
-        back_callback: str,
-    ) -> InlineKeyboardMarkup:
-        page_size = 8
-        total_pages = max(1, (len(items) + page_size - 1) // page_size)
-        page = max(0, min(page, total_pages - 1))
-        start = page * page_size
-
-        rows: list[list[InlineKeyboardButton]] = []
-        for idx, label in enumerate(items[start : start + page_size], start=start):
-            rows.append(
-                [
-                    InlineKeyboardButton(
-                        text=label if len(label) <= 40 else label[:37] + "...",
-                        callback_data=f"img:pick:{menu}:{artifact_id}:{idx}",
-                    )
-                ]
-            )
-
-        nav: list[InlineKeyboardButton] = []
-        if page > 0:
-            nav.append(
-                InlineKeyboardButton(
-                    text="◀️",
-                    callback_data=f"img:page:{menu}:{artifact_id}:{page - 1}",
-                )
-            )
-        nav.append(InlineKeyboardButton(text=f"· {page + 1}/{total_pages} ·", callback_data="noop"))
-        if page < total_pages - 1:
-            nav.append(
-                InlineKeyboardButton(
-                    text="▶️",
-                    callback_data=f"img:page:{menu}:{artifact_id}:{page + 1}",
-                )
-            )
-        rows.append(nav)
-        rows.append(
-            [
-                InlineKeyboardButton(
-                    text="⬅️ Назад",
-                    callback_data=back_callback,
-                )
-            ]
-        )
-        return InlineKeyboardMarkup(inline_keyboard=rows)
-
-    def _shrink_value_keyboard(*, artifact_id: str, back_callback: str) -> InlineKeyboardMarkup:
-        rows = [
-            [
-                InlineKeyboardButton(
-                    text="1024x1024",
-                    callback_data=f"img:set:shrink_size:{artifact_id}:1024x1024",
-                ),
-                InlineKeyboardButton(
-                    text="1280x720",
-                    callback_data=f"img:set:shrink_size:{artifact_id}:1280x720",
-                ),
-            ],
-            [
-                InlineKeyboardButton(
-                    text="1920x1080",
-                    callback_data=f"img:set:shrink_size:{artifact_id}:1920x1080",
-                ),
-                InlineKeyboardButton(
-                    text="2048x2048",
-                    callback_data=f"img:set:shrink_size:{artifact_id}:2048x2048",
-                ),
-            ],
-            [
-                InlineKeyboardButton(
-                    text="❌ Выключить",
-                    callback_data=f"img:set:shrink_size:{artifact_id}:off",
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="✏️ Ввести XxY",
-                    callback_data=f"img:custom:shrink_size:{artifact_id}",
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="⬅️ Назад",
-                    callback_data=back_callback,
-                )
-            ],
-        ]
-        return InlineKeyboardMarkup(inline_keyboard=rows)
-
-    def _parse_shrink_size(value: str) -> tuple[int, int] | None:
-        raw = value.strip().lower().replace(" ", "").replace("х", "x")
-        if "x" not in raw:
-            return None
-        left, right = raw.split("x", 1)
-        if not left or not right:
-            return None
-        try:
-            width = int(left)
-            height = int(right)
-        except ValueError:
-            return None
-        if not (1 <= width <= 4096 and 1 <= height <= 4096):
-            return None
-        return (width, height)
-
-    def _enhancement_preset_values(field: str) -> list[str]:
-        control = numeric_enhancement_control(field)
-        if control is None:
-            return []
-        return list(control.presets)
-
-    def _custom_field_meta(field: str) -> tuple[str, float | int, float | int]:
-        control = numeric_enhancement_control(field)
-        if control is not None:
-            return (control.label, control.min_value, control.max_value)
-        if field == "steps":
-            return ("Steps", 1, 150)
-        if field == "cfg":
-            return ("CFG", 0.0, 30.0)
-        if field == "denoise":
-            return ("Denoise", 0.0, 1.0)
-        if field == "compression_percent":
-            return ("Сжатие (%)", 1, 100)
-        raise ValueError("unknown field")
-
-    def _apply_field_value(
-        artifact: PreviewArtifact,
-        *,
-        field: str,
-        value: float | int,
-    ) -> bool:
-        if field == "steps":
-            artifact.params.steps = int(value)
-            artifact.enable_sampler_pass = True
-            return True
-        if field == "cfg":
-            artifact.params.cfg = float(value)
-            artifact.enable_sampler_pass = True
-            return True
-        if field == "denoise":
-            artifact.params.denoise = float(value)
-            artifact.enable_sampler_pass = True
-            return True
-        if field == "hires_scale":
-            control = numeric_enhancement_control("hires_scale")
-            if control is None:
-                return False
-            numeric = float(value)
-            if numeric < control.min_value or numeric > control.max_value:
-                return False
-            artifact.params.hires_scale = numeric
-            return True
-        if field == "hires_denoise":
-            control = numeric_enhancement_control("hires_denoise")
-            if control is None:
-                return False
-            numeric = float(value)
-            if numeric < control.min_value or numeric > control.max_value:
-                return False
-            artifact.params.hires_denoise = numeric
-            return True
-        if field == "pag_scale":
-            control = numeric_enhancement_control("pag_scale")
-            if control is None:
-                return False
-            numeric = float(value)
-            if numeric < control.min_value or numeric > control.max_value:
-                return False
-            artifact.params.pag_scale = numeric
-            return True
-        if field == "compression_percent":
-            artifact.compression_percent = int(value)
-            return True
-        return False
-
     @router.callback_query(F.data.startswith("send:"))
     async def send_images(cb: CallbackQuery, state: FSMContext):
         message = await require_callback_message(cb)
@@ -870,10 +644,10 @@ def register_prompt_editor_send_handlers(
             await cb.answer("⚠️ Картинка не найдена.", show_alert=True)
             return
 
-        back_callback = _submenu_back_callback(menu_key, artifact_id)
+        back_callback = submenu_back_callback(menu_key, artifact_id)
 
         if menu_key == "steps":
-            kb = _simple_value_keyboard(
+            kb = simple_value_keyboard(
                 artifact_id=artifact_id,
                 key="steps",
                 values=["10", "15", "20", "25", "30", "40"],
@@ -887,7 +661,7 @@ def register_prompt_editor_send_handlers(
             await cb.answer()
             return
         if menu_key == "cfg":
-            kb = _simple_value_keyboard(
+            kb = simple_value_keyboard(
                 artifact_id=artifact_id,
                 key="cfg",
                 values=["4.0", "5.0", "6.0", "7.0", "8.0", "10.0"],
@@ -897,7 +671,7 @@ def register_prompt_editor_send_handlers(
             await cb.answer()
             return
         if menu_key == "den":
-            kb = _simple_value_keyboard(
+            kb = simple_value_keyboard(
                 artifact_id=artifact_id,
                 key="denoise",
                 values=["0.2", "0.3", "0.4", "0.5", "0.6", "0.7", "0.8"],
@@ -907,8 +681,8 @@ def register_prompt_editor_send_handlers(
             await cb.answer()
             return
         if menu_key == "hrs":
-            hires_scale_values = _enhancement_preset_values("hires_scale")
-            kb = _simple_value_keyboard(
+            hires_scale_values = enhancement_preset_values("hires_scale")
+            kb = simple_value_keyboard(
                 artifact_id=artifact_id,
                 key="hires_scale",
                 values=hires_scale_values,
@@ -924,8 +698,8 @@ def register_prompt_editor_send_handlers(
             await cb.answer()
             return
         if menu_key == "hrd":
-            hires_denoise_values = _enhancement_preset_values("hires_denoise")
-            kb = _simple_value_keyboard(
+            hires_denoise_values = enhancement_preset_values("hires_denoise")
+            kb = simple_value_keyboard(
                 artifact_id=artifact_id,
                 key="hires_denoise",
                 values=hires_denoise_values,
@@ -941,8 +715,8 @@ def register_prompt_editor_send_handlers(
             await cb.answer()
             return
         if menu_key == "pags":
-            pag_scale_values = _enhancement_preset_values("pag_scale")
-            kb = _simple_value_keyboard(
+            pag_scale_values = enhancement_preset_values("pag_scale")
+            kb = simple_value_keyboard(
                 artifact_id=artifact_id,
                 key="pag_scale",
                 values=pag_scale_values,
@@ -957,7 +731,7 @@ def register_prompt_editor_send_handlers(
             return
         if menu_key == "sampler":
             samplers = deps.client.info.samplers or ["euler"]
-            kb = _paginated_pick_keyboard(
+            kb = paginated_pick_keyboard(
                 artifact_id=artifact_id,
                 menu="sampler",
                 items=samplers,
@@ -969,7 +743,7 @@ def register_prompt_editor_send_handlers(
             return
         if menu_key == "scheduler":
             schedulers = deps.client.info.schedulers or ["normal"]
-            kb = _paginated_pick_keyboard(
+            kb = paginated_pick_keyboard(
                 artifact_id=artifact_id,
                 menu="scheduler",
                 items=schedulers,
@@ -981,7 +755,7 @@ def register_prompt_editor_send_handlers(
             return
         if menu_key == "up":
             upscalers = ["(без апскейла)"] + deps.client.info.upscale_models
-            kb = _paginated_pick_keyboard(
+            kb = paginated_pick_keyboard(
                 artifact_id=artifact_id,
                 menu="up",
                 items=upscalers,
@@ -992,7 +766,7 @@ def register_prompt_editor_send_handlers(
             await cb.answer()
             return
         if menu_key == "cmp":
-            kb = _simple_value_keyboard(
+            kb = simple_value_keyboard(
                 artifact_id=artifact_id,
                 key="compression_percent",
                 values=["100", "90", "80", "70", "60", "50"],
@@ -1002,7 +776,7 @@ def register_prompt_editor_send_handlers(
             await cb.answer()
             return
         if menu_key == "shk":
-            kb = _shrink_value_keyboard(
+            kb = shrink_value_keyboard(
                 artifact_id=artifact_id,
                 back_callback=back_callback,
             )
@@ -1048,12 +822,12 @@ def register_prompt_editor_send_handlers(
             await cb.answer("⚠️ Неизвестная страница.", show_alert=True)
             return
 
-        kb = _paginated_pick_keyboard(
+        kb = paginated_pick_keyboard(
             artifact_id=artifact_id,
             menu=menu,
             items=items,
             page=page,
-            back_callback=_submenu_back_callback(menu, artifact_id),
+            back_callback=submenu_back_callback(menu, artifact_id),
         )
         await _edit_preview_message(cb, caption=caption, reply_markup=kb)
         await cb.answer()
@@ -1130,7 +904,7 @@ def register_prompt_editor_send_handlers(
                     await _render_artifact_menu(cb, artifact, menu="size")
                     await cb.answer("✅ Shrink выключен")
                     return
-                parsed = _parse_shrink_size(raw_value)
+                parsed = parse_shrink_size(raw_value)
                 if not parsed:
                     await cb.answer("⚠️ Формат shrink должен быть XxY.", show_alert=True)
                     return
@@ -1142,14 +916,14 @@ def register_prompt_editor_send_handlers(
                 parsed_value = int(raw_value)
             else:
                 parsed_value = float(raw_value)
-            if not _apply_field_value(artifact, field=field, value=parsed_value):
+            if not apply_field_value(artifact, field=field, value=parsed_value):
                 await cb.answer("⚠️ Неизвестный параметр.", show_alert=True)
                 return
         except ValueError:
             await cb.answer("⚠️ Не удалось применить значение.", show_alert=True)
             return
 
-        await _render_artifact_menu(cb, artifact, menu=_submenu_for_field(field))
+        await _render_artifact_menu(cb, artifact, menu=submenu_for_field(field))
         await cb.answer("✅ Параметр обновлен")
 
     @router.callback_query(F.data.startswith("img:custom:"))
@@ -1187,7 +961,7 @@ def register_prompt_editor_send_handlers(
             return
 
         try:
-            label, min_val, max_val = _custom_field_meta(field)
+            label, min_val, max_val = custom_field_meta(field)
         except ValueError:
             await cb.answer("⚠️ Неизвестный параметр.", show_alert=True)
             return
@@ -1195,7 +969,7 @@ def register_prompt_editor_send_handlers(
         deps.runtime.pending_image_inputs[uid] = {
             "artifact_id": artifact_id,
             "field": field,
-            "submenu": _submenu_for_field(field),
+            "submenu": submenu_for_field(field),
         }
         await message.answer(
             f"✏️ Введите {label} ({min_val}..{max_val}).\nМожно использовать точку или запятую."
@@ -1252,7 +1026,7 @@ def register_prompt_editor_send_handlers(
             return
 
         if field == "shrink_size":
-            parsed = _parse_shrink_size(raw)
+            parsed = parse_shrink_size(raw)
             if not parsed:
                 await msg.answer("⚠️ Формат shrink: XxY, например 1280x720.")
                 return
@@ -1264,7 +1038,7 @@ def register_prompt_editor_send_handlers(
             return
 
         try:
-            label, min_val, max_val = _custom_field_meta(field)
+            label, min_val, max_val = custom_field_meta(field)
         except ValueError:
             deps.runtime.pending_image_inputs.pop(uid, None)
             await msg.answer("⚠️ Неизвестный параметр.")
@@ -1283,7 +1057,7 @@ def register_prompt_editor_send_handlers(
             await msg.answer(f"⚠️ Введите {label} в диапазоне {min_val}..{max_val}.")
             return
 
-        _apply_field_value(artifact, field=field, value=value)
+        apply_field_value(artifact, field=field, value=value)
 
         deps.runtime.pending_image_inputs.pop(uid, None)
         await msg.answer(
@@ -1302,18 +1076,6 @@ def register_prompt_editor_send_handlers(
             return
         artifact_id, artifact = artifact_payload
         artifact_item = artifact
-
-        if (
-            not artifact.enable_sampler_pass
-            and not artifact.params.upscale_model
-            and artifact.compression_percent >= 100
-            and not (artifact.shrink_width and artifact.shrink_height)
-        ):
-            await cb.answer(
-                "⚠️ Включите сэмплер, выберите upscaler или задайте сжатие/shrink.",
-                show_alert=True,
-            )
-            return
 
         status_msg = await message.answer("⏳ Запускаю улучшение...")
         await cb.answer("🚀 Улучшение запущено")

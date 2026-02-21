@@ -27,6 +27,16 @@ from core.ui_kit import back_button, build_keyboard
 from core.ui_kit.buttons import button, menu_root_button, noop_button
 from core.user_preferences import read_download_defaults, read_generation_defaults
 
+from .common_core_utils import (
+    get_training_mode,
+    get_training_page,
+    set_pref,
+    set_training_mode,
+    set_training_page,
+    training_advanced,
+    training_pages,
+)
+
 
 @dataclass
 class CommonCoreDeps:
@@ -72,71 +82,6 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
             ]
         )
 
-    def _get_training_mode(uid: int) -> str:
-        raw = deps.runtime.user_preferences.get(uid, {}).get("training_mode", "simple")
-        mode = str(raw).strip().lower()
-        return mode if mode in {"simple", "advanced"} else "simple"
-
-    def _set_training_mode(uid: int, mode: str) -> None:
-        if uid not in deps.runtime.user_preferences:
-            deps.runtime.user_preferences[uid] = {}
-        deps.runtime.user_preferences[uid]["training_mode"] = mode
-
-    def _get_training_page(uid: int) -> int:
-        raw = deps.runtime.user_preferences.get(uid, {}).get("training_page", 0)
-        if isinstance(raw, int):
-            return max(0, raw)
-        return 0
-
-    def _set_training_page(uid: int, page: int) -> None:
-        if uid not in deps.runtime.user_preferences:
-            deps.runtime.user_preferences[uid] = {}
-        deps.runtime.user_preferences[uid]["training_page"] = max(0, page)
-
-    def _training_pages() -> list[tuple[str, str]]:
-        return [
-            (
-                "Что делает бот",
-                "ComfyBot - это интерфейс к ComfyUI.\n"
-                "Вы выбираете параметры и запускаете задачи кнопками.",
-            ),
-            (
-                "Первый запуск",
-                "1) Обновите список моделей.\n"
-                "2) Откройте генерацию.\n"
-                "3) Выберите Checkpoint и заполните Positive.\n"
-                "4) Нажмите Генерировать.",
-            ),
-            (
-                "Главные параметры",
-                "Steps - детализация и время.\n"
-                "CFG - строгость следования prompt.\n"
-                "Seed - повторяемость результата.\n"
-                "Размер - нагрузка на VRAM и скорость.",
-            ),
-            (
-                "Улучшение результата",
-                "Откройте меню улучшений у превью.\n"
-                "Включите нужные режимы (sampler/upscale/hi-res).\n"
-                "Запустите улучшение и при необходимости отмените задачу.",
-            ),
-            (
-                "Диагностика",
-                "Если что-то не работает: проверьте соединение с ComfyUI,\n"
-                "наличие checkpoint, очередь задач и статус ошибок в боте.",
-            ),
-        ]
-
-    def _training_advanced() -> list[str]:
-        return [
-            "Бот не рисует сам: он собирает параметры, ставит задачу в очередь ComfyUI и отслеживает выполнение.",
-            "Минимум для стабильного старта: валидный checkpoint, положительный prompt и доступный ComfyUI URL.",
-            "Steps увеличивает количество итераций денойзинга; CFG управляет силой conditioning; seed фиксирует стохастику.",
-            "Для улучшений: sampler-pass полезен для перерендера, upscaler - для роста размера, hi-res - для детализации.",
-            "Если задача пропала из списка, обновите "
-            "«Мои задачи», проверьте очередь и статус prompt_id в ComfyUI.",
-        ]
-
     def _training_keyboard(*, page: int, total: int, mode: str) -> InlineKeyboardMarkup:
         rows: list[list[InlineKeyboardButton]] = []
         nav: list[InlineKeyboardButton] = []
@@ -163,12 +108,12 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
         return build_keyboard(rows)
 
     async def _show_training(message: Message, uid: int, *, page: int | None = None) -> None:
-        pages = _training_pages()
-        mode = _get_training_mode(uid)
+        pages = training_pages()
+        mode = get_training_mode(deps.runtime, uid)
         total = len(pages)
-        current_page = _get_training_page(uid) if page is None else page
+        current_page = get_training_page(deps.runtime, uid) if page is None else page
         current_page = max(0, min(current_page, total - 1))
-        _set_training_page(uid, current_page)
+        set_training_page(deps.runtime, uid, current_page)
 
         title, simple_text = pages[current_page]
         lines = [
@@ -178,7 +123,7 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
             simple_text,
         ]
         if mode == "advanced":
-            lines.extend(["", "<b>Подробно:</b>", _training_advanced()[current_page]])
+            lines.extend(["", "<b>Подробно:</b>", training_advanced()[current_page]])
 
         await deps.render_user_panel(
             message,
@@ -187,11 +132,6 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
             "\n".join(lines),
             reply_markup=_training_keyboard(page=current_page, total=total, mode=mode),
         )
-
-    def _set_pref(uid: int, key: str, value: Any) -> None:
-        if uid not in deps.runtime.user_preferences:
-            deps.runtime.user_preferences[uid] = {}
-        deps.runtime.user_preferences[uid][key] = value
 
     def _gen_defaults(uid: int) -> dict[str, Any]:
         prefs = deps.runtime.user_preferences.get(uid, {})
@@ -214,11 +154,11 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
         profile = DOWNLOAD_FILTER_PROFILES.get(profile_code)
         if not profile:
             return False
-        _set_pref(uid, "dl_default_source", profile["source"])
-        _set_pref(uid, "dl_default_sort", profile["sort"])
-        _set_pref(uid, "dl_default_period", profile["period"])
-        _set_pref(uid, "dl_default_base", profile["base"])
-        _set_pref(uid, "dl_default_nsfw", profile["nsfw"])
+        set_pref(deps.runtime, uid, "dl_default_source", profile["source"])
+        set_pref(deps.runtime, uid, "dl_default_sort", profile["sort"])
+        set_pref(deps.runtime, uid, "dl_default_period", profile["period"])
+        set_pref(deps.runtime, uid, "dl_default_base", profile["base"])
+        set_pref(deps.runtime, uid, "dl_default_nsfw", profile["nsfw"])
         return True
 
     def _base_label(code: str) -> str:
@@ -1013,42 +953,42 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
         if key == "size":
             try:
                 width_s, height_s = value.split("x", 1)
-                _set_pref(uid, "gen_width", int(width_s))
-                _set_pref(uid, "gen_height", int(height_s))
+                set_pref(deps.runtime, uid, "gen_width", int(width_s))
+                set_pref(deps.runtime, uid, "gen_height", int(height_s))
             except (TypeError, ValueError):
                 await cb.answer("⚠️ Некорректный размер.", show_alert=True)
                 return
         elif key == "steps":
             try:
-                _set_pref(uid, "gen_steps", int(value))
+                set_pref(deps.runtime, uid, "gen_steps", int(value))
             except ValueError:
                 await cb.answer("⚠️ Некорректное значение steps.", show_alert=True)
                 return
         elif key == "cfg":
             try:
-                _set_pref(uid, "gen_cfg", float(value))
+                set_pref(deps.runtime, uid, "gen_cfg", float(value))
             except ValueError:
                 await cb.answer("⚠️ Некорректное значение cfg.", show_alert=True)
                 return
         elif key == "denoise":
             try:
-                _set_pref(uid, "gen_denoise", float(value))
+                set_pref(deps.runtime, uid, "gen_denoise", float(value))
             except ValueError:
                 await cb.answer("⚠️ Некорректное значение denoise.", show_alert=True)
                 return
         elif key == "sampler":
-            _set_pref(uid, "gen_sampler", value)
+            set_pref(deps.runtime, uid, "gen_sampler", value)
         elif key == "scheduler":
-            _set_pref(uid, "gen_scheduler", value)
+            set_pref(deps.runtime, uid, "gen_scheduler", value)
         elif key == "seed":
             try:
-                _set_pref(uid, "gen_seed", int(value))
+                set_pref(deps.runtime, uid, "gen_seed", int(value))
             except ValueError:
                 await cb.answer("⚠️ Некорректный seed.", show_alert=True)
                 return
         elif key == "batch":
             try:
-                _set_pref(uid, "gen_batch", int(value))
+                set_pref(deps.runtime, uid, "gen_batch", int(value))
             except ValueError:
                 await cb.answer("⚠️ Некорректный batch.", show_alert=True)
                 return
@@ -1075,32 +1015,32 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
             if not source:
                 await cb.answer("⚠️ Некорректный source.", show_alert=True)
                 return
-            _set_pref(uid, "dl_default_source", source)
+            set_pref(deps.runtime, uid, "dl_default_source", source)
         elif key == "sort":
             sort_code = normalize_download_sort_code(value, default="")
             if not sort_code:
                 await cb.answer("⚠️ Некорректный sort.", show_alert=True)
                 return
-            _set_pref(uid, "dl_default_sort", sort_code)
+            set_pref(deps.runtime, uid, "dl_default_sort", sort_code)
         elif key == "period":
             period_code = normalize_download_period_code(value, default="")
             if not period_code:
                 await cb.answer("⚠️ Некорректный period.", show_alert=True)
                 return
-            _set_pref(uid, "dl_default_period", period_code)
+            set_pref(deps.runtime, uid, "dl_default_period", period_code)
         elif key == "base":
             base_code = normalize_download_base_code(value, default="")
             if not base_code:
                 await cb.answer("⚠️ Некорректная базовая модель.", show_alert=True)
                 return
-            _set_pref(uid, "dl_default_base", base_code)
+            set_pref(deps.runtime, uid, "dl_default_base", base_code)
         elif key == "profile":
             if not _apply_download_profile(uid, value):
                 await cb.answer("⚠️ Неизвестный профиль.", show_alert=True)
                 return
         elif key == "nsfw" and value == "toggle":
             current = bool(deps.runtime.user_preferences.get(uid, {}).get("dl_default_nsfw", False))
-            _set_pref(uid, "dl_default_nsfw", not current)
+            set_pref(deps.runtime, uid, "dl_default_nsfw", not current)
         else:
             await cb.answer("⚠️ Неизвестный параметр.", show_alert=True)
             return
@@ -1212,43 +1152,43 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
                 height = int(height_s)
                 if not (64 <= width <= 4096 and 64 <= height <= 4096):
                     raise ValueError
-                _set_pref(uid, "gen_width", width)
-                _set_pref(uid, "gen_height", height)
+                set_pref(deps.runtime, uid, "gen_width", width)
+                set_pref(deps.runtime, uid, "gen_height", height)
             elif field == "steps":
                 steps_value = int(float(raw.replace(",", ".")))
                 if not (1 <= steps_value <= 200):
                     raise ValueError
-                _set_pref(uid, "gen_steps", steps_value)
+                set_pref(deps.runtime, uid, "gen_steps", steps_value)
             elif field == "cfg":
                 cfg_value = float(raw.replace(",", "."))
                 if not (0.0 <= cfg_value <= 30.0):
                     raise ValueError
-                _set_pref(uid, "gen_cfg", cfg_value)
+                set_pref(deps.runtime, uid, "gen_cfg", cfg_value)
             elif field == "denoise":
                 denoise_value = float(raw.replace(",", "."))
                 if not (0.0 <= denoise_value <= 1.0):
                     raise ValueError
-                _set_pref(uid, "gen_denoise", denoise_value)
+                set_pref(deps.runtime, uid, "gen_denoise", denoise_value)
             elif field == "seed":
                 seed_value = int(raw.replace(" ", ""))
                 if seed_value < -1:
                     raise ValueError
-                _set_pref(uid, "gen_seed", seed_value)
+                set_pref(deps.runtime, uid, "gen_seed", seed_value)
             elif field == "batch":
                 batch_value = int(raw.replace(" ", ""))
                 if not (1 <= batch_value <= 16):
                     raise ValueError
-                _set_pref(uid, "gen_batch", batch_value)
+                set_pref(deps.runtime, uid, "gen_batch", batch_value)
             elif field == "sampler":
                 sampler_value = raw.strip()
                 if not sampler_value:
                     raise ValueError
-                _set_pref(uid, "gen_sampler", sampler_value)
+                set_pref(deps.runtime, uid, "gen_sampler", sampler_value)
             elif field == "scheduler":
                 scheduler_value = raw.strip()
                 if not scheduler_value:
                     raise ValueError
-                _set_pref(uid, "gen_scheduler", scheduler_value)
+                set_pref(deps.runtime, uid, "gen_scheduler", scheduler_value)
             else:
                 raise ValueError
         except ValueError:
@@ -1303,7 +1243,7 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
                 seen.add(key)
                 dedup.append(token[:64])
             author = ",".join(dedup[:6])
-        _set_pref(uid, "dl_default_author", author)
+        set_pref(deps.runtime, uid, "dl_default_author", author)
         await state.clear()
         await _show_download_settings(msg, uid)
 
@@ -1348,7 +1288,7 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
             await cb.answer("⚠️ Некорректный режим.", show_alert=True)
             return
         uid = deps.callback_user_id(cb)
-        _set_training_mode(uid, mode)
+        set_training_mode(deps.runtime, uid, mode)
         await _show_training(message, uid)
         await cb.answer("✅ Режим обучения обновлён")
 

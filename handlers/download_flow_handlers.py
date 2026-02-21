@@ -19,7 +19,12 @@ from core.interaction import require_callback_message
 from core.states import DownloadStates
 from core.ui_kit import back_button, build_keyboard
 from core.ui_kit.buttons import button, cancel_button, menu_root_button
-from core.user_preferences import read_download_defaults
+
+from .download_flow_utils import (
+    apply_download_profile,
+    download_defaults_for_user,
+    parse_author_filters,
+)
 
 
 @dataclass
@@ -75,43 +80,6 @@ def register_download_flow_handlers(deps: DownloadFlowDeps) -> None:
             ]
         )
 
-    def _download_defaults_for_user(uid: int, *, inferred_base: str) -> dict[str, Any]:
-        prefs = deps.runtime.user_preferences.get(uid, {})
-        defaults = read_download_defaults(prefs, inferred_base=inferred_base)
-        return {
-            "dl_source": defaults["source"],
-            "dl_sort": defaults["sort"],
-            "dl_period": defaults["period"],
-            "dl_base": defaults["base"],
-            "dl_nsfw": defaults["nsfw"],
-            "dl_author": defaults["author"],
-        }
-
-    def _apply_profile(data: dict[str, Any], profile_code: str) -> dict[str, Any]:
-        profile = deps.filter_profiles.get(profile_code)
-        if not profile:
-            return data
-        updated = dict(data)
-        updated["dl_source"] = profile.get("source", updated.get("dl_source", "all"))
-        updated["dl_sort"] = profile.get("sort", updated.get("dl_sort", "downloads"))
-        updated["dl_period"] = profile.get("period", updated.get("dl_period", "all"))
-        updated["dl_base"] = profile.get("base", updated.get("dl_base", "all"))
-        updated["dl_nsfw"] = bool(profile.get("nsfw", updated.get("dl_nsfw", False)))
-        return updated
-
-    def _parse_author_filters(raw: str) -> list[str]:
-        items = [item.strip().lstrip("@") for item in raw.split(",")]
-        cleaned = [item for item in items if item]
-        unique: list[str] = []
-        seen: set[str] = set()
-        for item in cleaned:
-            key = item.lower()
-            if key in seen:
-                continue
-            seen.add(key)
-            unique.append(item)
-        return unique[:6]
-
     async def _run_search(state: FSMContext, *, limit: int) -> list[Any]:
         data = await state.get_data()
         query = str(data.get("dl_query", "")).strip()
@@ -122,7 +90,7 @@ def register_download_flow_handlers(deps: DownloadFlowDeps) -> None:
         base_code = data.get("dl_base", "all")
         include_nsfw = bool(data.get("dl_nsfw", False))
         author_nick = str(data.get("dl_author", "")).strip()
-        author_filters = _parse_author_filters(author_nick)
+        author_filters = parse_author_filters(author_nick)
         page_size = int(data.get("dl_page_size", default_page_size) or default_page_size)
 
         base_models = deps.base_code_to_api.get(base_code, [])
@@ -198,7 +166,11 @@ def register_download_flow_handlers(deps: DownloadFlowDeps) -> None:
                 base_model = deps.downloader.infer_base_model(req.params.checkpoint)
             inferred_base = base_code_from_base_model(base_model)
 
-        defaults = _download_defaults_for_user(uid, inferred_base=inferred_base)
+        defaults = download_defaults_for_user(
+            deps.runtime.user_preferences,
+            uid,
+            inferred_base=inferred_base,
+        )
         await state.update_data(dl_type=model_type, **defaults)
         await state.set_state(DownloadStates.choosing_source)
         message = await _callback_message(cb)
@@ -254,7 +226,7 @@ def register_download_flow_handlers(deps: DownloadFlowDeps) -> None:
 
         if action == "profile" and len(payload) >= 3:
             data = await state.get_data()
-            updated = _apply_profile(data, payload[2])
+            updated = apply_download_profile(data, deps.filter_profiles.get(payload[2]))
             await state.update_data(**updated)
             await deps.show_filter_menu(message, state, edit=True)
             await cb.answer("✅ Профиль применён")
@@ -333,7 +305,7 @@ def register_download_flow_handlers(deps: DownloadFlowDeps) -> None:
             await deps.show_filter_menu(msg, state, edit=False)
             return
 
-        author = "" if raw in {"-", "*"} else ",".join(_parse_author_filters(raw))
+        author = "" if raw in {"-", "*"} else ",".join(parse_author_filters(raw))
         await state.update_data(dl_author=author)
         await state.set_state(DownloadStates.choosing_filters)
         await deps.show_filter_menu(msg, state, edit=False)

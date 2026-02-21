@@ -25,6 +25,10 @@ from core.html_utils import h
 from core.image_utils import image_dimensions, resize_image_by_percent, shrink_image_to_box
 from core.interaction import require_callback_message
 from core.models import GenerationParams
+from core.prompt_enhancements import (
+    numeric_control_range_text,
+    numeric_enhancement_control,
+)
 from core.runtime import ActiveGeneration, PreviewArtifact, PromptRequest, RuntimeStore
 from core.ui_copy import START_TEXT, main_menu_keyboard
 from core.ui_kit import build_keyboard
@@ -585,19 +589,22 @@ def register_prompt_editor_send_handlers(
             return None
         return (width, height)
 
+    def _enhancement_preset_values(field: str) -> list[str]:
+        control = numeric_enhancement_control(field)
+        if control is None:
+            return []
+        return list(control.presets)
+
     def _custom_field_meta(field: str) -> tuple[str, float | int, float | int]:
+        control = numeric_enhancement_control(field)
+        if control is not None:
+            return (control.label, control.min_value, control.max_value)
         if field == "steps":
             return ("Steps", 1, 150)
         if field == "cfg":
             return ("CFG", 0.0, 30.0)
         if field == "denoise":
             return ("Denoise", 0.0, 1.0)
-        if field == "hires_scale":
-            return ("Hi-res scale", 1.0, 3.0)
-        if field == "hires_denoise":
-            return ("Hi-res denoise", 0.0, 1.0)
-        if field == "pag_scale":
-            return ("PAG scale", 0.5, 10.0)
         if field == "compression_percent":
             return ("Сжатие (%)", 1, 100)
         raise ValueError("unknown field")
@@ -621,13 +628,31 @@ def register_prompt_editor_send_handlers(
             artifact.enable_sampler_pass = True
             return True
         if field == "hires_scale":
-            artifact.params.hires_scale = float(value)
+            control = numeric_enhancement_control("hires_scale")
+            if control is None:
+                return False
+            numeric = float(value)
+            if numeric < control.min_value or numeric > control.max_value:
+                return False
+            artifact.params.hires_scale = numeric
             return True
         if field == "hires_denoise":
-            artifact.params.hires_denoise = float(value)
+            control = numeric_enhancement_control("hires_denoise")
+            if control is None:
+                return False
+            numeric = float(value)
+            if numeric < control.min_value or numeric > control.max_value:
+                return False
+            artifact.params.hires_denoise = numeric
             return True
         if field == "pag_scale":
-            artifact.params.pag_scale = float(value)
+            control = numeric_enhancement_control("pag_scale")
+            if control is None:
+                return False
+            numeric = float(value)
+            if numeric < control.min_value or numeric > control.max_value:
+                return False
+            artifact.params.pag_scale = numeric
             return True
         if field == "compression_percent":
             artifact.compression_percent = int(value)
@@ -882,33 +907,52 @@ def register_prompt_editor_send_handlers(
             await cb.answer()
             return
         if menu_key == "hrs":
+            hires_scale_values = _enhancement_preset_values("hires_scale")
             kb = _simple_value_keyboard(
                 artifact_id=artifact_id,
                 key="hires_scale",
-                values=["1.25", "1.5", "1.75", "2.0"],
+                values=hires_scale_values,
                 back_callback=back_callback,
             )
-            await _edit_preview_message(cb, caption="Выберите Hi-res scale:", reply_markup=kb)
+            await _edit_preview_message(
+                cb,
+                caption=(
+                    "Выберите Hi-res scale " f"({numeric_control_range_text('hires_scale')}):"
+                ),
+                reply_markup=kb,
+            )
             await cb.answer()
             return
         if menu_key == "hrd":
+            hires_denoise_values = _enhancement_preset_values("hires_denoise")
             kb = _simple_value_keyboard(
                 artifact_id=artifact_id,
                 key="hires_denoise",
-                values=["0.3", "0.4", "0.5", "0.6", "0.7"],
+                values=hires_denoise_values,
                 back_callback=back_callback,
             )
-            await _edit_preview_message(cb, caption="Выберите Hi-res denoise:", reply_markup=kb)
+            await _edit_preview_message(
+                cb,
+                caption=(
+                    "Выберите Hi-res denoise " f"({numeric_control_range_text('hires_denoise')}):"
+                ),
+                reply_markup=kb,
+            )
             await cb.answer()
             return
         if menu_key == "pags":
+            pag_scale_values = _enhancement_preset_values("pag_scale")
             kb = _simple_value_keyboard(
                 artifact_id=artifact_id,
                 key="pag_scale",
-                values=["1.0", "2.0", "3.0", "4.0", "5.0"],
+                values=pag_scale_values,
                 back_callback=back_callback,
             )
-            await _edit_preview_message(cb, caption="Выберите PAG scale:", reply_markup=kb)
+            await _edit_preview_message(
+                cb,
+                caption=("Выберите PAG scale " f"({numeric_control_range_text('pag_scale')}):"),
+                reply_markup=kb,
+            )
             await cb.answer()
             return
         if menu_key == "sampler":

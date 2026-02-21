@@ -16,6 +16,11 @@ from aiogram.types import (
 from core.callbacks import ValueSelectionCallback
 from core.html_utils import h, truncate
 from core.models import GenerationParams
+from core.prompt_enhancements import (
+    numeric_control_range_text,
+    numeric_control_rows,
+    numeric_enhancement_control,
+)
 from core.runtime import PromptRequest, RuntimeStore
 from core.states import PromptEditorStates
 from core.ui import custom_btn
@@ -84,6 +89,12 @@ def register_prompt_editor_thematic_handlers(
             await cb.answer("❌ Некорректный запрос.", show_alert=True)
             return None
         return parsed.value
+
+    def _control_bounds(field: str) -> tuple[float, float]:
+        control = numeric_enhancement_control(field)
+        if control is None:
+            raise ValueError(f"Unknown enhancement control: {field}")
+        return control.min_value, control.max_value
 
     def _scalar_kb(config: ThematicScalarConfig) -> InlineKeyboardMarkup:
         rows = [
@@ -619,14 +630,18 @@ def register_prompt_editor_thematic_handlers(
             open_callback="pe:hires:scale",
             prefix="pe_hrs",
             custom_state=PromptEditorStates.entering_custom_hires_scale,
-            menu_text="Hi-res Fix scale (множитель, 1.0-3.0):",
-            custom_prompt="Hi-res scale (1.0-3.0):",
-            invalid_input_text="Число 1.0-3.0:",
-            values_rows=[["1.25", "1.5", "2.0"]],
+            menu_text=(
+                f"Hi-res Fix scale (множитель, " f"{numeric_control_range_text('hires_scale')}):"
+            ),
+            custom_prompt=(f"Hi-res scale ({numeric_control_range_text('hires_scale')}):"),
+            invalid_input_text=(f"Число {numeric_control_range_text('hires_scale')}:"),
+            values_rows=numeric_control_rows("hires_scale"),
             back_callback="pe:enh:hires",
             set_value=lambda params, value: setattr(params, "hires_scale", float(value)),
             parse_value=lambda raw: float(raw),
-            validate_value=lambda value: 1.0 <= float(value) <= 3.0,
+            validate_value=lambda value: _control_bounds("hires_scale")[0]
+            <= float(value)
+            <= _control_bounds("hires_scale")[1],
             render_text=_hires_submenu_text,
             render_keyboard=_hires_submenu_kb,
             ack_text=lambda params: f"✅ Scale: x{params.hires_scale}",
@@ -638,14 +653,20 @@ def register_prompt_editor_thematic_handlers(
             open_callback="pe:hires:denoise",
             prefix="pe_hrd",
             custom_state=PromptEditorStates.entering_custom_hires_denoise,
-            menu_text="Hi-res Fix denoise (0.0-1.0, меньше = ближе к оригиналу):",
-            custom_prompt="Hi-res denoise (0.0-1.0):",
-            invalid_input_text="Число 0.0-1.0:",
-            values_rows=[["0.3", "0.4", "0.5"], ["0.6", "0.7"]],
+            menu_text=(
+                "Hi-res Fix denoise "
+                f"({numeric_control_range_text('hires_denoise')}, "
+                "меньше = ближе к оригиналу):"
+            ),
+            custom_prompt=(f"Hi-res denoise ({numeric_control_range_text('hires_denoise')}):"),
+            invalid_input_text=(f"Число {numeric_control_range_text('hires_denoise')}:"),
+            values_rows=numeric_control_rows("hires_denoise"),
             back_callback="pe:enh:hires",
             set_value=lambda params, value: setattr(params, "hires_denoise", float(value)),
             parse_value=lambda raw: float(raw),
-            validate_value=lambda value: 0.0 <= float(value) <= 1.0,
+            validate_value=lambda value: _control_bounds("hires_denoise")[0]
+            <= float(value)
+            <= _control_bounds("hires_denoise")[1],
             render_text=_hires_submenu_text,
             render_keyboard=_hires_submenu_kb,
             ack_text=lambda params: f"✅ Hi-res denoise: {params.hires_denoise}",
@@ -880,14 +901,16 @@ def register_prompt_editor_thematic_handlers(
             open_callback="pe:pag:scale",
             prefix="pe_pag",
             custom_state=PromptEditorStates.entering_custom_pag_scale,
-            menu_text="PAG Scale (0.5-10.0):",
-            custom_prompt="PAG Scale (0.5-10.0):",
-            invalid_input_text="Число 0.5-10.0:",
-            values_rows=[["1.0", "2.0", "3.0"], ["4.0", "5.0"]],
+            menu_text=(f"PAG Scale ({numeric_control_range_text('pag_scale')}):"),
+            custom_prompt=(f"PAG Scale ({numeric_control_range_text('pag_scale')}):"),
+            invalid_input_text=(f"Число {numeric_control_range_text('pag_scale')}:"),
+            values_rows=numeric_control_rows("pag_scale"),
             back_callback="pe:enh:pag",
             set_value=lambda params, value: setattr(params, "pag_scale", float(value)),
             parse_value=lambda raw: float(raw),
-            validate_value=lambda value: 0.5 <= float(value) <= 10.0,
+            validate_value=lambda value: _control_bounds("pag_scale")[0]
+            <= float(value)
+            <= _control_bounds("pag_scale")[1],
             render_text=_pag_submenu_text,
             render_keyboard=_pag_submenu_kb,
             ack_text=lambda params: f"✅ PAG scale: {params.pag_scale}",

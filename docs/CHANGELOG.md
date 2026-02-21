@@ -52,7 +52,7 @@
   - `.pre-commit-config.yaml`,
   - `requirements-dev.txt`,
   - `.github/workflows/ci.yml`.
-- Mypy-миграция расширена на handlers-слой, временные `ignore_errors` сняты.
+- Mypy-покрытие включает handlers-слой, временные `ignore_errors` сняты.
 - Текущий baseline: `ruff`, `mypy`, `pytest`, `compileall` проходят.
 
 ### UI/UX и стабильность (Telegram)

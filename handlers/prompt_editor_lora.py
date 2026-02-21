@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
+from aiogram.types import Message
 
 from comfyui_client import ComfyUIClient
 from core.html_utils import h
@@ -10,7 +9,11 @@ from core.models import GenerationParams
 from core.runtime import RuntimeStore
 from core.states import PromptEditorStates
 from core.ui import loras_text
+from core.ui_kit import back_button, build_keyboard
+from core.ui_kit.buttons import button
 from model_downloader import ModelDownloader
+
+from .prompt_editor_session import show_prompt_panel
 
 
 def checkpoint_base_model(checkpoint_name: str, downloader: ModelDownloader) -> str:
@@ -151,74 +154,13 @@ async def show_lora_menu(
         lines.append(f"⚠️ Возможна несовместимость LoRA: {h(bad_names)}{h(suffix)}")
 
     text = "\n".join(lines)
-    kb = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="➕ Добавить",
-                    callback_data="pe:lora:add",
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="➖ Удалить последнюю",
-                    callback_data="pe:lora:remove_last",
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="🗑 Очистить все",
-                    callback_data="pe:lora:clear",
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="⬅️ Назад",
-                    callback_data="pe:back",
-                )
-            ],
+    kb = build_keyboard(
+        [
+            [button("➕ Добавить", "pe:lora:add")],
+            [button("➖ Удалить последнюю", "pe:lora:remove_last")],
+            [button("🗑 Очистить все", "pe:lora:clear")],
+            [back_button("pe:back")],
         ]
     )
-    if req.ui_chat_id is not None and req.ui_message_id is not None and message.bot:
-        try:
-            edited = await message.bot.edit_message_text(
-                text=text,
-                chat_id=req.ui_chat_id,
-                message_id=req.ui_message_id,
-                reply_markup=kb,
-            )
-            if isinstance(edited, Message):
-                req.ui_chat_id = edited.chat.id
-                req.ui_message_id = edited.message_id
-                runtime.user_ui_panels[uid] = {
-                    "chat_id": edited.chat.id,
-                    "message_id": edited.message_id,
-                }
-                await state.set_state(PromptEditorStates.editing)
-                return
-        except TelegramBadRequest:
-            pass
-
-    if edit:
-        try:
-            edited = await message.edit_text(text, reply_markup=kb)
-            if isinstance(edited, Message):
-                req.ui_chat_id = edited.chat.id
-                req.ui_message_id = edited.message_id
-                runtime.user_ui_panels[uid] = {
-                    "chat_id": edited.chat.id,
-                    "message_id": edited.message_id,
-                }
-                await state.set_state(PromptEditorStates.editing)
-                return
-        except TelegramBadRequest:
-            pass
-
-    sent = await message.answer(text, reply_markup=kb)
-    req.ui_chat_id = sent.chat.id
-    req.ui_message_id = sent.message_id
-    runtime.user_ui_panels[uid] = {
-        "chat_id": sent.chat.id,
-        "message_id": sent.message_id,
-    }
+    await show_prompt_panel(runtime, message, req, text, kb, prefer_edit=edit)
     await state.set_state(PromptEditorStates.editing)

@@ -13,9 +13,12 @@ from aiogram.types import (
     Message,
 )
 
-from core.interaction import callback_message as interaction_callback_message
+from core.callbacks import ValueSelectionCallback
+from core.interaction import require_callback_message
 from core.runtime import PromptRequest, RuntimeStore
 from core.states import PromptEditorStates
+from core.ui_kit import build_keyboard
+from core.ui_kit.buttons import button
 
 
 @dataclass
@@ -38,13 +41,10 @@ def register_prompt_editor_reference_handlers(
     router: Router,
     deps: PromptEditorReferenceHandlersDeps,
 ) -> None:
-    _callback_message = interaction_callback_message
-
     @router.callback_query(F.data == "pe:edit:refs")
     async def pe_edit_refs(cb: CallbackQuery, state: FSMContext):
-        message = _callback_message(cb)
+        message = await require_callback_message(cb)
         if message is None:
-            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
             return
         uid = deps.callback_user_id(cb)
         await deps.show_reference_menu(message, state, uid, edit=True)
@@ -116,9 +116,8 @@ def register_prompt_editor_reference_handlers(
 
     @router.callback_query(F.data == "pe:refs:view")
     async def pe_refs_view(cb: CallbackQuery):
-        message = _callback_message(cb)
+        message = await require_callback_message(cb)
         if message is None:
-            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
             return
         payload = await deps.require_prompt_request_for_callback(cb)
         if not payload:
@@ -166,9 +165,8 @@ def register_prompt_editor_reference_handlers(
 
     @router.callback_query(F.data == "pe:refs:remove_last")
     async def pe_refs_remove_last(cb: CallbackQuery, state: FSMContext):
-        message = _callback_message(cb)
+        message = await require_callback_message(cb)
         if message is None:
-            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
             return
         payload = await deps.require_prompt_request_for_callback(cb)
         if not payload:
@@ -185,9 +183,8 @@ def register_prompt_editor_reference_handlers(
 
     @router.callback_query(F.data == "pe:refs:clear")
     async def pe_refs_clear(cb: CallbackQuery, state: FSMContext):
-        message = _callback_message(cb)
+        message = await require_callback_message(cb)
         if message is None:
-            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
             return
         payload = await deps.require_prompt_request_for_callback(cb)
         if not payload:
@@ -206,19 +203,8 @@ def register_prompt_editor_reference_handlers(
             await cb.answer()
             return
 
-        kb = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(
-                        text="✅ Удалить",
-                        callback_data="pe:refs:clear:yes",
-                    ),
-                    InlineKeyboardButton(
-                        text="❌ Отмена",
-                        callback_data="pe:refs:clear:no",
-                    ),
-                ]
-            ]
+        kb = build_keyboard(
+            [[button("✅ Удалить", "pe:refs:clear:yes"), button("❌ Отмена", "pe:refs:clear:no")]]
         )
         await message.edit_text(
             f"⚠️ Удалить все {count} референсов?",
@@ -228,9 +214,8 @@ def register_prompt_editor_reference_handlers(
 
     @router.callback_query(F.data == "pe:refs:clear:yes")
     async def pe_refs_clear_yes(cb: CallbackQuery, state: FSMContext):
-        message = _callback_message(cb)
+        message = await require_callback_message(cb)
         if message is None:
-            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
             return
         payload = await deps.require_prompt_request_for_callback(cb)
         if not payload:
@@ -249,9 +234,8 @@ def register_prompt_editor_reference_handlers(
 
     @router.callback_query(F.data == "pe:refs:clear:no")
     async def pe_refs_clear_no(cb: CallbackQuery, state: FSMContext):
-        message = _callback_message(cb)
+        message = await require_callback_message(cb)
         if message is None:
-            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
             return
         payload = await deps.require_prompt_request_for_callback(cb)
         if not payload:
@@ -269,21 +253,19 @@ def register_prompt_editor_reference_handlers(
 
     @router.callback_query(F.data.startswith("pe:refs:del:"))
     async def pe_refs_del(cb: CallbackQuery):
-        message = _callback_message(cb)
+        message = await require_callback_message(cb)
         if message is None:
-            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
             return
         payload = await deps.require_prompt_request_for_callback(cb)
         if not payload:
             return
 
         _, req = payload
-        data_value = cb.data or ""
-        parts = data_value.split(":", 3)
-        if len(parts) < 4:
+        parsed = ValueSelectionCallback.parse(cb.data or "", prefix="pe:refs:del")
+        if parsed is None or not parsed.value:
             await cb.answer("Некорректный идентификатор референса.", show_alert=True)
             return
-        ref_id = parts[3]
+        ref_id = parsed.value
         before = len(req.params.reference_images)
         req.params.reference_images = [
             item for item in req.params.reference_images if item.get("id") != ref_id

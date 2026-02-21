@@ -3,39 +3,21 @@ from __future__ import annotations
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import (
     BufferedInputFile,
-    InlineKeyboardButton,
     InlineKeyboardMarkup,
     Message,
 )
 
 from core.image_utils import compress_for_photo
+from core.ui_kit import back_button, build_keyboard
+from core.ui_kit.buttons import button, cancel_button
 
 
 def generation_result_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="💾 Сохранить как пресет",
-                    callback_data="save_preset",
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="🔄 Новая генерация",
-                    callback_data="send:new",
-                ),
-                InlineKeyboardButton(
-                    text="❌ Отмена",
-                    callback_data="send:cancel",
-                ),
-            ],
-            [
-                InlineKeyboardButton(
-                    text="⬅️ В меню",
-                    callback_data="menu:root",
-                )
-            ],
+    return build_keyboard(
+        [
+            [button("💾 Сохранить как пресет", "save_preset")],
+            [button("🔄 Новая генерация", "send:new"), cancel_button("send:cancel")],
+            [back_button("menu:root", text="⬅️ В меню")],
         ]
     )
 
@@ -46,34 +28,14 @@ def preview_image_keyboard(
 ) -> InlineKeyboardMarkup:
     rows = [
         [
-            InlineKeyboardButton(
-                text="📄 PNG без сжатия",
-                callback_data=f"img:png:{artifact_id}",
-            ),
-            InlineKeyboardButton(
-                text="✨ Улучшить",
-                callback_data=f"img:open:{artifact_id}",
-            ),
+            button("📄 PNG без сжатия", f"img:png:{artifact_id}"),
+            button("✨ Улучшить", f"img:open:{artifact_id}"),
         ],
     ]
     if parent_artifact_id:
-        rows.append(
-            [
-                InlineKeyboardButton(
-                    text="↩️ К исходнику",
-                    callback_data=f"img:goto_parent:{artifact_id}",
-                )
-            ]
-        )
-    rows.append(
-        [
-            InlineKeyboardButton(
-                text="⬅️ В меню",
-                callback_data="menu:root",
-            )
-        ]
-    )
-    return InlineKeyboardMarkup(inline_keyboard=rows)
+        rows.append([button("↩️ К исходнику", f"img:goto_parent:{artifact_id}")])
+    rows.append([back_button("menu:root", text="⬅️ В меню")])
+    return build_keyboard(rows)
 
 
 async def deliver_generated_images(

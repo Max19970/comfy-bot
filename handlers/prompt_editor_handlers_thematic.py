@@ -5,7 +5,6 @@ from dataclasses import dataclass
 from typing import cast
 
 from aiogram import F, Router
-from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
 from aiogram.types import (
     CallbackQuery,
@@ -14,15 +13,19 @@ from aiogram.types import (
     Message,
 )
 
+from core.callbacks import ValueSelectionCallback
 from core.html_utils import h, truncate
 from core.models import GenerationParams
-from core.runtime import PromptRequest
+from core.runtime import PromptRequest, RuntimeStore
 from core.states import PromptEditorStates
 from core.ui import custom_btn
+
+from .prompt_editor_session import show_prompt_panel
 
 
 @dataclass
 class PromptEditorThematicHandlersDeps:
+    runtime: RuntimeStore
     max_reference_images: int
     is_freeu_supported: Callable[[], bool]
     is_pag_supported: Callable[[], bool]
@@ -48,24 +51,21 @@ def register_prompt_editor_thematic_handlers(
         text: str,
         reply_markup: InlineKeyboardMarkup,
     ) -> None:
-        if req.ui_chat_id is not None and req.ui_message_id is not None and message.bot:
-            try:
-                edited = await message.bot.edit_message_text(
-                    text=text,
-                    chat_id=req.ui_chat_id,
-                    message_id=req.ui_message_id,
-                    reply_markup=reply_markup,
-                )
-                if isinstance(edited, Message):
-                    req.ui_chat_id = edited.chat.id
-                    req.ui_message_id = edited.message_id
-                    return
-            except TelegramBadRequest:
-                pass
+        await show_prompt_panel(
+            deps.runtime,
+            message,
+            req,
+            text,
+            reply_markup,
+            prefer_edit=False,
+        )
 
-        sent = await message.answer(text, reply_markup=reply_markup)
-        req.ui_chat_id = sent.chat.id
-        req.ui_message_id = sent.message_id
+    async def _selected_value(cb: CallbackQuery, *, prefix: str) -> str | None:
+        parsed = ValueSelectionCallback.parse(cb.data or "", prefix=prefix)
+        if parsed is None:
+            await cb.answer("❌ Некорректный запрос.", show_alert=True)
+            return None
+        return parsed.value
 
     @router.callback_query(F.data == "pe:sub:more")
     async def pe_submenu_more(cb: CallbackQuery):
@@ -541,7 +541,9 @@ def register_prompt_editor_thematic_handlers(
         if not payload:
             return
         uid, req = payload
-        value = (cb.data or "").split(":")[1]
+        value = await _selected_value(cb, prefix="pe_hrs")
+        if value is None:
+            return
         if value == "custom":
             await state.set_state(PromptEditorStates.entering_custom_hires_scale)
             await cast(Message, cb.message).edit_text(
@@ -614,7 +616,9 @@ def register_prompt_editor_thematic_handlers(
         if not payload:
             return
         uid, req = payload
-        value = (cb.data or "").split(":")[1]
+        value = await _selected_value(cb, prefix="pe_hrd")
+        if value is None:
+            return
         if value == "custom":
             await state.set_state(PromptEditorStates.entering_custom_hires_denoise)
             await cast(Message, cb.message).edit_text(
@@ -910,7 +914,9 @@ def register_prompt_editor_thematic_handlers(
         if not payload:
             return
         uid, req = payload
-        value = (cb.data or "").split(":")[1]
+        value = await _selected_value(cb, prefix="pe_pag")
+        if value is None:
+            return
         if value == "custom":
             await state.set_state(PromptEditorStates.entering_custom_pag_scale)
             await cast(Message, cb.message).edit_text(
@@ -1171,7 +1177,9 @@ def register_prompt_editor_thematic_handlers(
         if not payload:
             return
         _, req = payload
-        value = (cb.data or "").split(":")[1]
+        value = await _selected_value(cb, prefix="pe_ts")
+        if value is None:
+            return
         if value == "custom":
             await state.set_state(PromptEditorStates.entering_custom_tile_size)
             await cast(Message, cb.message).edit_text(
@@ -1248,7 +1256,9 @@ def register_prompt_editor_thematic_handlers(
         if not payload:
             return
         _, req = payload
-        value = (cb.data or "").split(":")[1]
+        value = await _selected_value(cb, prefix="pe_vt")
+        if value is None:
+            return
         if value == "custom":
             await state.set_state(PromptEditorStates.entering_custom_vae_tile_size)
             await cast(Message, cb.message).edit_text(
@@ -1326,7 +1336,9 @@ def register_prompt_editor_thematic_handlers(
         if not payload:
             return
         _, req = payload
-        value = (cb.data or "").split(":")[1]
+        value = await _selected_value(cb, prefix="pe_tovlp")
+        if value is None:
+            return
         if value == "custom":
             await state.set_state(PromptEditorStates.entering_custom_tile_overlap)
             await cast(Message, cb.message).edit_text(

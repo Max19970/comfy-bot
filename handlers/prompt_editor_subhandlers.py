@@ -176,6 +176,7 @@ def register_prompt_editor_subhandlers(deps: PromptEditorSubhandlersDeps) -> Non
     register_prompt_editor_thematic_handlers(
         deps.router,
         PromptEditorThematicHandlersDeps(
+            runtime=deps.runtime,
             max_reference_images=deps.max_reference_images,
             is_freeu_supported=deps.is_freeu_supported,
             is_pag_supported=deps.is_pag_supported,

@@ -20,12 +20,15 @@ from aiogram.types import (
 )
 
 from comfyui_client import ComfyUIClient
+from core.callbacks import ValueSelectionCallback
 from core.html_utils import h
 from core.image_utils import image_dimensions, resize_image_by_percent, shrink_image_to_box
-from core.interaction import callback_message as interaction_callback_message
+from core.interaction import require_callback_message
 from core.models import GenerationParams
 from core.runtime import ActiveGeneration, PreviewArtifact, PromptRequest, RuntimeStore
 from core.ui_copy import START_TEXT, main_menu_keyboard
+from core.ui_kit import build_keyboard
+from core.ui_kit.buttons import button
 
 
 @dataclass
@@ -46,8 +49,6 @@ def register_prompt_editor_send_handlers(
     router: Router,
     deps: PromptEditorSendHandlersDeps,
 ) -> None:
-    _callback_message = interaction_callback_message
-
     def _user_artifact(uid: int, artifact_id: str) -> PreviewArtifact | None:
         artifact = deps.runtime.preview_artifacts.get(artifact_id)
         if artifact and artifact.owner_uid == uid:
@@ -57,6 +58,33 @@ def register_prompt_editor_send_handlers(
     def _has_pending_input(msg: Message) -> bool:
         uid = msg.from_user.id if msg.from_user else 0
         return uid > 0 and uid in deps.runtime.pending_image_inputs
+
+    async def _callback_value(
+        cb: CallbackQuery,
+        *,
+        prefix: str,
+        invalid_text: str = "⚠️ Некорректный запрос.",
+    ) -> str | None:
+        parsed = ValueSelectionCallback.parse(cb.data or "", prefix=prefix)
+        if parsed is None:
+            await cb.answer(invalid_text, show_alert=True)
+            return None
+        return parsed.value
+
+    async def _artifact_from_callback(
+        cb: CallbackQuery,
+        *,
+        prefix: str,
+        missing_text: str = "⚠️ Картинка не найдена.",
+    ) -> tuple[str, PreviewArtifact] | None:
+        artifact_id = await _callback_value(cb, prefix=prefix)
+        if artifact_id is None:
+            return None
+        artifact = _user_artifact(cb.from_user.id, artifact_id)
+        if artifact is None:
+            await cb.answer(missing_text, show_alert=True)
+            return None
+        return artifact_id, artifact
 
     async def _move_main_panel_to_bottom(
         uid: int,
@@ -365,7 +393,7 @@ def register_prompt_editor_send_handlers(
         caption: str,
         reply_markup: InlineKeyboardMarkup,
     ) -> None:
-        message = _callback_message(cb)
+        message = await require_callback_message(cb)
         if message is None:
             return
         try:
@@ -608,17 +636,13 @@ def register_prompt_editor_send_handlers(
 
     @router.callback_query(F.data.startswith("send:"))
     async def send_images(cb: CallbackQuery, state: FSMContext):
-        message = _callback_message(cb)
+        message = await require_callback_message(cb)
         if message is None:
-            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
             return
 
-        data_value = cb.data or ""
-        parts = data_value.split(":")
-        if len(parts) != 2:
-            await cb.answer("❌ Некорректный режим.", show_alert=True)
+        mode = await _callback_value(cb, prefix="send", invalid_text="❌ Некорректный режим.")
+        if mode is None:
             return
-        mode = parts[1]
 
         if mode == "new":
             payload = await deps.require_prompt_request_for_callback(cb)
@@ -655,22 +679,18 @@ def register_prompt_editor_send_handlers(
 
     @router.callback_query(F.data.startswith("img:png:"))
     async def image_send_png(cb: CallbackQuery):
-        message = _callback_message(cb)
+        message = await require_callback_message(cb)
         if message is None:
-            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
             return
 
-        uid = cb.from_user.id
-        data_value = cb.data or ""
-        parts = data_value.split(":", 2)
-        if len(parts) != 3:
-            await cb.answer("⚠️ Некорректный запрос.", show_alert=True)
+        artifact_payload = await _artifact_from_callback(
+            cb,
+            prefix="img:png",
+            missing_text="⚠️ Картинка не найдена или недоступна.",
+        )
+        if artifact_payload is None:
             return
-        artifact_id = parts[2]
-        artifact = _user_artifact(uid, artifact_id)
-        if not artifact:
-            await cb.answer("⚠️ Картинка не найдена или недоступна.", show_alert=True)
-            return
+        _, artifact = artifact_payload
 
         image_bytes = deps.runtime.artifact_bytes(artifact)
         if not image_bytes:
@@ -687,17 +707,10 @@ def register_prompt_editor_send_handlers(
 
     @router.callback_query(F.data.startswith("img:back:"))
     async def image_back(cb: CallbackQuery):
-        uid = cb.from_user.id
-        data_value = cb.data or ""
-        parts = data_value.split(":", 2)
-        if len(parts) != 3:
-            await cb.answer("⚠️ Некорректный запрос.", show_alert=True)
+        artifact_payload = await _artifact_from_callback(cb, prefix="img:back")
+        if artifact_payload is None:
             return
-        artifact_id = parts[2]
-        artifact = _user_artifact(uid, artifact_id)
-        if not artifact:
-            await cb.answer("⚠️ Картинка не найдена.", show_alert=True)
-            return
+        _, artifact = artifact_payload
         await _edit_preview_message(
             cb,
             caption=(
@@ -713,21 +726,18 @@ def register_prompt_editor_send_handlers(
 
     @router.callback_query(F.data.startswith("img:goto_parent:"))
     async def image_goto_parent(cb: CallbackQuery):
-        message = _callback_message(cb)
+        message = await require_callback_message(cb)
         if message is None:
-            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
             return
-        uid = cb.from_user.id
-        data_value = cb.data or ""
-        parts = data_value.split(":", 2)
-        if len(parts) != 3:
-            await cb.answer("⚠️ Некорректный запрос.", show_alert=True)
+
+        artifact_payload = await _artifact_from_callback(cb, prefix="img:goto_parent")
+        if artifact_payload is None:
             return
-        artifact = _user_artifact(uid, parts[2])
-        if not artifact or not artifact.parent_artifact_id:
+        _, artifact = artifact_payload
+        if not artifact.parent_artifact_id:
             await cb.answer("⚠️ Исходник не найден.", show_alert=True)
             return
-        parent = _user_artifact(uid, artifact.parent_artifact_id)
+        parent = _user_artifact(cb.from_user.id, artifact.parent_artifact_id)
         if not parent or parent.preview_message_id is None or parent.preview_chat_id is None:
             await cb.answer("⚠️ Ссылка на исходник недоступна.", show_alert=True)
             return
@@ -742,17 +752,10 @@ def register_prompt_editor_send_handlers(
 
     @router.callback_query(F.data.startswith("img:open:"))
     async def image_open_enhancements(cb: CallbackQuery):
-        uid = cb.from_user.id
-        data_value = cb.data or ""
-        parts = data_value.split(":", 2)
-        if len(parts) != 3:
-            await cb.answer("⚠️ Некорректный запрос.", show_alert=True)
+        artifact_payload = await _artifact_from_callback(cb, prefix="img:open")
+        if artifact_payload is None:
             return
-        artifact_id = parts[2]
-        artifact = _user_artifact(uid, artifact_id)
-        if not artifact:
-            await cb.answer("⚠️ Картинка не найдена.", show_alert=True)
-            return
+        _, artifact = artifact_payload
 
         await _render_artifact_menu(cb, artifact, menu="hub")
         await cb.answer()
@@ -1107,20 +1110,20 @@ def register_prompt_editor_send_handlers(
 
     @router.callback_query(F.data.startswith("img:custom:"))
     async def image_custom_start(cb: CallbackQuery):
-        message = _callback_message(cb)
+        message = await require_callback_message(cb)
         if message is None:
-            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
             return
 
-        uid = cb.from_user.id
-        data_value = cb.data or ""
-        parts = data_value.split(":")
-        if len(parts) != 4:
+        value = await _callback_value(cb, prefix="img:custom")
+        if value is None:
+            return
+        parts = value.split(":", 1)
+        if len(parts) != 2:
             await cb.answer("⚠️ Некорректный запрос.", show_alert=True)
             return
-        field = parts[2]
-        artifact_id = parts[3]
+        field, artifact_id = parts
 
+        uid = cb.from_user.id
         artifact = _user_artifact(uid, artifact_id)
         if not artifact:
             await cb.answer("⚠️ Картинка не найдена.", show_alert=True)
@@ -1157,22 +1160,15 @@ def register_prompt_editor_send_handlers(
 
     @router.callback_query(F.data.startswith("img:to_editor:"))
     async def image_to_editor(cb: CallbackQuery, state: FSMContext):
-        message = _callback_message(cb)
+        message = await require_callback_message(cb)
         if message is None:
-            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
             return
 
+        artifact_payload = await _artifact_from_callback(cb, prefix="img:to_editor")
+        if artifact_payload is None:
+            return
+        _, artifact = artifact_payload
         uid = cb.from_user.id
-        data_value = cb.data or ""
-        parts = data_value.split(":", 2)
-        if len(parts) != 3:
-            await cb.answer("⚠️ Некорректный запрос.", show_alert=True)
-            return
-        artifact_id = parts[2]
-        artifact = _user_artifact(uid, artifact_id)
-        if not artifact:
-            await cb.answer("⚠️ Картинка не найдена.", show_alert=True)
-            return
 
         deps.runtime.active_prompt_requests[uid] = PromptRequest(
             params=GenerationParams(**asdict(artifact.params)),
@@ -1252,22 +1248,15 @@ def register_prompt_editor_send_handlers(
 
     @router.callback_query(F.data.startswith("img:run:"))
     async def image_run_enhancements(cb: CallbackQuery):
-        message = _callback_message(cb)
+        message = await require_callback_message(cb)
         if message is None:
-            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
             return
 
         uid = cb.from_user.id
-        data_value = cb.data or ""
-        parts = data_value.split(":", 2)
-        if len(parts) != 3:
-            await cb.answer("⚠️ Некорректный запрос.", show_alert=True)
+        artifact_payload = await _artifact_from_callback(cb, prefix="img:run")
+        if artifact_payload is None:
             return
-        artifact_id = parts[2]
-        artifact = _user_artifact(uid, artifact_id)
-        if not artifact:
-            await cb.answer("⚠️ Картинка не найдена.", show_alert=True)
-            return
+        artifact_id, artifact = artifact_payload
         artifact_item = artifact
 
         if (
@@ -1285,15 +1274,8 @@ def register_prompt_editor_send_handlers(
         status_msg = await message.answer("⏳ Запускаю улучшение...")
         await cb.answer("🚀 Улучшение запущено")
         generation_id = f"enh_{uuid.uuid4().hex}"
-        enhancement_cancel_kb = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(
-                        text="❌ Отменить улучшение",
-                        callback_data=f"pe:gen:cancel:{generation_id}",
-                    )
-                ]
-            ]
+        enhancement_cancel_kb = build_keyboard(
+            [[button("❌ Отменить улучшение", f"pe:gen:cancel:{generation_id}")]]
         )
         try:
             await status_msg.edit_reply_markup(reply_markup=enhancement_cancel_kb)

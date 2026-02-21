@@ -21,6 +21,7 @@ from core.download_filters import (
     normalize_download_sort_code,
     normalize_download_source,
 )
+from core.interaction import require_callback_message
 from core.states import ServiceSettingsStates
 from core.ui_kit import back_button, build_keyboard
 from core.ui_kit.buttons import button, menu_root_button, noop_button
@@ -33,7 +34,6 @@ class CommonCoreDeps:
     cfg: Any
     runtime: Any
     client: Any
-    callback_message: Callable[[CallbackQuery], Message | None]
     callback_user_id: Callable[[CallbackQuery], int]
     message_user_id: Callable[[Message], int]
     render_user_panel: Callable[..., Awaitable[Message]]
@@ -52,6 +52,9 @@ class CommonCoreDeps:
 
 def register_common_core_handlers(deps: CommonCoreDeps) -> None:
     router = deps.router
+
+    async def _callback_message(cb: CallbackQuery) -> Message | None:
+        return await require_callback_message(cb)
 
     def _service_back_keyboard() -> InlineKeyboardMarkup:
         return build_keyboard(
@@ -705,9 +708,8 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
 
     @router.callback_query(F.data == "menu:root")
     async def menu_root(cb: CallbackQuery):
-        message = deps.callback_message(cb)
+        message = await _callback_message(cb)
         if message is None:
-            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
             return
         uid = deps.callback_user_id(cb)
         await deps.render_user_panel(
@@ -721,9 +723,8 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
 
     @router.callback_query(F.data == "menu:generation")
     async def menu_generation(cb: CallbackQuery):
-        message = deps.callback_message(cb)
+        message = await _callback_message(cb)
         if message is None:
-            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
             return
         uid = deps.callback_user_id(cb)
         await deps.render_user_panel(
@@ -737,9 +738,8 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
 
     @router.callback_query(F.data == "menu:models")
     async def menu_models(cb: CallbackQuery):
-        message = deps.callback_message(cb)
+        message = await _callback_message(cb)
         if message is None:
-            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
             return
         uid = deps.callback_user_id(cb)
         await deps.render_user_panel(
@@ -753,9 +753,8 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
 
     @router.callback_query(F.data == "menu:service")
     async def menu_service(cb: CallbackQuery):
-        message = deps.callback_message(cb)
+        message = await _callback_message(cb)
         if message is None:
-            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
             return
         uid = deps.callback_user_id(cb)
         await deps.render_user_panel(
@@ -854,9 +853,8 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
 
     @router.callback_query(F.data == "menu:cancel")
     async def menu_cancel(cb: CallbackQuery, state: FSMContext):
-        message = deps.callback_message(cb)
+        message = await _callback_message(cb)
         if message is None:
-            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
             return
         await _cancel_for_user(message, state, uid=deps.callback_user_id(cb))
         await cb.answer()
@@ -868,9 +866,8 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
 
     @router.callback_query(F.data == "menu:models_refresh")
     async def menu_models_refresh(cb: CallbackQuery):
-        message = deps.callback_message(cb)
+        message = await _callback_message(cb)
         if message is None:
-            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
             return
         await _show_models_report(message, deps.callback_user_id(cb))
         await cb.answer("✅ Список обновлён")
@@ -882,9 +879,8 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
 
     @router.callback_query(F.data == "menu:queue")
     async def menu_queue(cb: CallbackQuery):
-        message = deps.callback_message(cb)
+        message = await _callback_message(cb)
         if message is None:
-            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
             return
         await _show_queue(message, deps.callback_user_id(cb))
         await cb.answer()
@@ -895,18 +891,16 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
 
     @router.callback_query(F.data == "menu:settings")
     async def menu_settings(cb: CallbackQuery):
-        message = deps.callback_message(cb)
+        message = await _callback_message(cb)
         if message is None:
-            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
             return
         await _show_settings(message, deps.callback_user_id(cb))
         await cb.answer()
 
     @router.callback_query(F.data == "menu:settings:toggle_mode")
     async def menu_settings_toggle_mode(cb: CallbackQuery):
-        message = deps.callback_message(cb)
+        message = await _callback_message(cb)
         if message is None:
-            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
             return
         uid = deps.callback_user_id(cb)
         current = bool(deps.runtime.user_preferences.get(uid, {}).get("pro_mode", False))
@@ -918,9 +912,8 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
 
     @router.callback_query(F.data == "menu:settings:gen")
     async def menu_settings_generation(cb: CallbackQuery, state: FSMContext):
-        message = deps.callback_message(cb)
+        message = await _callback_message(cb)
         if message is None:
-            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
             return
         if await state.get_state() == ServiceSettingsStates.entering_generation_value.state:
             await state.clear()
@@ -929,27 +922,24 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
 
     @router.callback_query(F.data == "menu:settings:dl")
     async def menu_settings_download(cb: CallbackQuery):
-        message = deps.callback_message(cb)
+        message = await _callback_message(cb)
         if message is None:
-            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
             return
         await _show_download_settings(message, deps.callback_user_id(cb))
         await cb.answer()
 
     @router.callback_query(F.data == "menu:settings:dl:base")
     async def menu_settings_download_base(cb: CallbackQuery):
-        message = deps.callback_message(cb)
+        message = await _callback_message(cb)
         if message is None:
-            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
             return
         await _show_download_base_settings(message, deps.callback_user_id(cb))
         await cb.answer()
 
     @router.callback_query(F.data == "menu:settings:reset:gen")
     async def menu_settings_reset_generation(cb: CallbackQuery):
-        message = deps.callback_message(cb)
+        message = await _callback_message(cb)
         if message is None:
-            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
             return
         uid = deps.callback_user_id(cb)
         prefs = deps.runtime.user_preferences.get(uid, {})
@@ -968,9 +958,8 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
 
     @router.callback_query(F.data == "menu:settings:reset:dl")
     async def menu_settings_reset_download(cb: CallbackQuery):
-        message = deps.callback_message(cb)
+        message = await _callback_message(cb)
         if message is None:
-            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
             return
         uid = deps.callback_user_id(cb)
         prefs = deps.runtime.user_preferences.get(uid, {})
@@ -988,9 +977,8 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
 
     @router.callback_query(F.data.startswith("menu:settings:gen:menu:"))
     async def menu_settings_generation_menu(cb: CallbackQuery, state: FSMContext):
-        message = deps.callback_message(cb)
+        message = await _callback_message(cb)
         if message is None:
-            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
             return
         if await state.get_state() == ServiceSettingsStates.entering_generation_value.state:
             await state.clear()
@@ -1012,9 +1000,8 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
 
     @router.callback_query(F.data.startswith("menu:settings:set:gen:"))
     async def menu_settings_set_generation(cb: CallbackQuery):
-        message = deps.callback_message(cb)
+        message = await _callback_message(cb)
         if message is None:
-            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
             return
         uid = deps.callback_user_id(cb)
         parts = (cb.data or "").split(":", 6)
@@ -1073,9 +1060,8 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
 
     @router.callback_query(F.data.startswith("menu:settings:set:dl:"))
     async def menu_settings_set_download(cb: CallbackQuery):
-        message = deps.callback_message(cb)
+        message = await _callback_message(cb)
         if message is None:
-            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
             return
         uid = deps.callback_user_id(cb)
         parts = (cb.data or "").split(":", 6)
@@ -1123,9 +1109,8 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
 
     @router.callback_query(F.data.startswith("menu:settings:input:"))
     async def menu_settings_input_start(cb: CallbackQuery, state: FSMContext):
-        message = deps.callback_message(cb)
+        message = await _callback_message(cb)
         if message is None:
-            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
             return
 
         parts = (cb.data or "").split(":", 3)
@@ -1324,18 +1309,16 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
 
     @router.callback_query(F.data == "menu:training")
     async def menu_training(cb: CallbackQuery):
-        message = deps.callback_message(cb)
+        message = await _callback_message(cb)
         if message is None:
-            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
             return
         await _show_training(message, deps.callback_user_id(cb))
         await cb.answer()
 
     @router.callback_query(F.data.startswith("menu:training:page:"))
     async def menu_training_page(cb: CallbackQuery):
-        message = deps.callback_message(cb)
+        message = await _callback_message(cb)
         if message is None:
-            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
             return
         data_value = cb.data or ""
         parts = data_value.split(":")
@@ -1352,9 +1335,8 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
 
     @router.callback_query(F.data.startswith("menu:training:mode:"))
     async def menu_training_mode(cb: CallbackQuery):
-        message = deps.callback_message(cb)
+        message = await _callback_message(cb)
         if message is None:
-            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
             return
         data_value = cb.data or ""
         parts = data_value.split(":")

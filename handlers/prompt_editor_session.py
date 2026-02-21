@@ -11,7 +11,11 @@ from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 from comfyui_client import ComfyUIClient
 from config import Config
 from core.html_utils import h
-from core.interaction import callback_message, edit_message_by_anchor, edit_or_answer
+from core.interaction import (
+    edit_message_by_anchor,
+    edit_or_answer,
+    require_callback_message,
+)
 from core.models import GenerationParams
 from core.runtime import PromptRequest, RuntimeStore
 from core.telegram import callback_user_id, message_user_id
@@ -240,9 +244,8 @@ async def require_prompt_request_for_callback(
     runtime: RuntimeStore,
     cb: CallbackQuery,
 ) -> tuple[int, PromptRequest] | None:
-    message = callback_message(cb)
+    message = await require_callback_message(cb)
     if message is None:
-        await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
         return None
 
     uid = callback_user_id(cb)

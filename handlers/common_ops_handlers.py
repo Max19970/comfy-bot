@@ -12,6 +12,7 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
+from core.interaction import require_callback_message
 from core.states import DeleteModelStates
 from core.ui_kit import back_button, build_keyboard
 from core.ui_kit.buttons import menu_root_button
@@ -23,7 +24,6 @@ class CommonDeleteDeps:
     runtime: Any
     client: Any
     downloader: Any
-    callback_message: Callable[[CallbackQuery], Message | None]
     callback_user_id: Callable[[CallbackQuery], int]
     message_user_id: Callable[[Message], int]
     render_user_panel: Callable[..., Awaitable[Message]]
@@ -39,7 +39,6 @@ class CommonJobsDeps:
     router: Router
     runtime: Any
     client: Any
-    callback_message: Callable[[CallbackQuery], Message | None]
     callback_user_id: Callable[[CallbackQuery], int]
     message_user_id: Callable[[Message], int]
     render_user_panel: Callable[..., Awaitable[Message]]
@@ -53,6 +52,9 @@ class CommonJobsDeps:
 
 def register_common_delete_handlers(deps: CommonDeleteDeps) -> None:
     router = deps.router
+
+    async def _callback_message(cb: CallbackQuery) -> Message | None:
+        return await require_callback_message(cb)
 
     def _models_back_keyboard() -> Any:
         return build_keyboard(
@@ -172,9 +174,8 @@ def register_common_delete_handlers(deps: CommonDeleteDeps) -> None:
 
     @router.callback_query(F.data == "menu:delete_model")
     async def menu_delete_model(cb: CallbackQuery, state: FSMContext):
-        message = deps.callback_message(cb)
+        message = await _callback_message(cb)
         if message is None:
-            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
             return
         await state.clear()
         await state.set_state(DeleteModelStates.choosing_type)
@@ -329,6 +330,9 @@ def register_common_delete_handlers(deps: CommonDeleteDeps) -> None:
 def register_common_jobs_handlers(deps: CommonJobsDeps) -> None:
     router = deps.router
 
+    async def _callback_message(cb: CallbackQuery) -> Message | None:
+        return await require_callback_message(cb)
+
     async def _show_job_detail(message: Message, uid: int, generation_id: str) -> None:
         item = deps.runtime.active_generations.get(generation_id)
         if item is None or item.owner_uid != uid:
@@ -438,18 +442,16 @@ def register_common_jobs_handlers(deps: CommonJobsDeps) -> None:
 
     @router.callback_query(F.data == "menu:jobs")
     async def menu_jobs(cb: CallbackQuery):
-        message = deps.callback_message(cb)
+        message = await _callback_message(cb)
         if message is None:
-            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
             return
         await _show_jobs(message, deps.callback_user_id(cb), page=0)
         await cb.answer()
 
     @router.callback_query(F.data.startswith("menu:jobs:page:"))
     async def menu_jobs_page(cb: CallbackQuery):
-        message = deps.callback_message(cb)
+        message = await _callback_message(cb)
         if message is None:
-            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
             return
         try:
             page = int((cb.data or "").split(":", 3)[3])
@@ -460,9 +462,8 @@ def register_common_jobs_handlers(deps: CommonJobsDeps) -> None:
 
     @router.callback_query(F.data.startswith("menu:jobs:open:"))
     async def menu_jobs_open(cb: CallbackQuery):
-        message = deps.callback_message(cb)
+        message = await _callback_message(cb)
         if message is None:
-            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
             return
         generation_id = (cb.data or "").split(":", 3)[3] if cb.data else ""
         await _show_job_detail(message, deps.callback_user_id(cb), generation_id)
@@ -470,9 +471,8 @@ def register_common_jobs_handlers(deps: CommonJobsDeps) -> None:
 
     @router.callback_query(F.data.startswith("menu:jobs:cancel:"))
     async def menu_jobs_cancel_one(cb: CallbackQuery):
-        message = deps.callback_message(cb)
+        message = await _callback_message(cb)
         if message is None:
-            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
             return
         generation_id = (cb.data or "").split(":", 3)[3] if cb.data else ""
         item = deps.runtime.active_generations.get(generation_id)
@@ -488,9 +488,8 @@ def register_common_jobs_handlers(deps: CommonJobsDeps) -> None:
 
     @router.callback_query(F.data.startswith("menu:jobs:goto:"))
     async def menu_jobs_goto_source(cb: CallbackQuery):
-        message = deps.callback_message(cb)
+        message = await _callback_message(cb)
         if message is None:
-            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
             return
         generation_id = (cb.data or "").split(":", 3)[3] if cb.data else ""
         item = deps.runtime.active_generations.get(generation_id)
@@ -512,9 +511,8 @@ def register_common_jobs_handlers(deps: CommonJobsDeps) -> None:
 
     @router.callback_query(F.data == "menu:jobs:cancel_all")
     async def menu_jobs_cancel_all(cb: CallbackQuery):
-        message = deps.callback_message(cb)
+        message = await _callback_message(cb)
         if message is None:
-            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
             return
 
         uid = deps.callback_user_id(cb)

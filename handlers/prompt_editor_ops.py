@@ -8,7 +8,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery
 
 from core.callbacks import PagedSelectionCallback
-from core.interaction import callback_message
+from core.interaction import require_callback_message
 from core.models import GenerationParams
 from core.ui_kit import back_button
 
@@ -28,9 +28,8 @@ async def open_paginated_choice(
         prefix,
         extra=[[back_button(back_callback)]],
     )
-    message = callback_message(cb)
+    message = await require_callback_message(cb)
     if message is None:
-        await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
         return
     await message.edit_text(title, reply_markup=kb)
     await cb.answer()
@@ -55,9 +54,8 @@ async def change_paginated_choice_page(
         prefix,
         extra=[[back_button(back_callback)]],
     )
-    message = callback_message(cb)
+    message = await require_callback_message(cb)
     if message is None:
-        await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
         return
     await message.edit_reply_markup(reply_markup=kb)
     await cb.answer()
@@ -80,9 +78,8 @@ async def set_prompt_param_from_callback(
         return
     uid, req = payload
     setattr(req.params, field, value)
-    message = callback_message(cb)
+    message = await require_callback_message(cb)
     if message is None:
-        await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
         return
     await show_prompt_editor(message, state, uid, edit=True, notice=notice)
     await cb.answer()

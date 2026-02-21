@@ -17,7 +17,6 @@ from aiogram.types.base import TelegramObject
 from comfyui_client import ComfyUIClient
 from config import Config
 from core.html_utils import h, truncate
-from core.interaction import callback_message
 from core.panels import render_user_panel
 from core.queue_utils import queue_item_prompt_id
 from core.runtime import RuntimeStore
@@ -308,7 +307,6 @@ def register_common_handlers(
             cfg=cfg,
             runtime=runtime,
             client=client,
-            callback_message=callback_message,
             callback_user_id=callback_user_id,
             message_user_id=message_user_id,
             render_user_panel=render_user_panel,
@@ -332,7 +330,6 @@ def register_common_handlers(
             runtime=runtime,
             client=client,
             downloader=downloader,
-            callback_message=callback_message,
             callback_user_id=callback_user_id,
             message_user_id=message_user_id,
             render_user_panel=render_user_panel,
@@ -349,7 +346,6 @@ def register_common_handlers(
             router=router,
             runtime=runtime,
             client=client,
-            callback_message=callback_message,
             callback_user_id=callback_user_id,
             message_user_id=message_user_id,
             render_user_panel=render_user_panel,

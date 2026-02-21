@@ -13,7 +13,13 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from core.callbacks import ValueSelectionCallback
-from core.download_filters import base_code_from_base_model
+from core.download_filters import (
+    base_code_from_base_model,
+    normalize_download_base_code,
+    normalize_download_period_code,
+    normalize_download_sort_code,
+    normalize_download_source,
+)
 from core.html_utils import h
 from core.interaction import require_callback_message
 from core.states import DownloadStates
@@ -76,30 +82,14 @@ def register_download_flow_handlers(deps: DownloadFlowDeps) -> None:
 
     def _download_defaults_for_user(uid: int, *, inferred_base: str) -> dict[str, Any]:
         prefs = deps.runtime.user_preferences.get(uid, {})
-        source = str(prefs.get("dl_default_source", "all")).strip().lower()
-        if source not in {"all", "civitai", "huggingface"}:
-            source = "all"
-        sort_code = str(prefs.get("dl_default_sort", "downloads")).strip().lower()
-        if sort_code not in {"downloads", "rating", "newest"}:
-            sort_code = "downloads"
-        period = str(prefs.get("dl_default_period", "all")).strip().lower()
-        if period not in {"all", "month", "week"}:
-            period = "all"
-        base = str(prefs.get("dl_default_base", inferred_base)).strip().lower()
-        if base not in {
-            "all",
-            "sd15",
-            "sd2",
-            "sdxl09",
-            "sdxl",
-            "sd3",
-            "sd35",
-            "pony",
-            "flux",
-            "illustrious",
-            "noobai",
-        }:
-            base = inferred_base
+        source = normalize_download_source(str(prefs.get("dl_default_source", "all")))
+        sort_code = normalize_download_sort_code(str(prefs.get("dl_default_sort", "downloads")))
+        period = normalize_download_period_code(str(prefs.get("dl_default_period", "all")))
+        default_base = normalize_download_base_code(inferred_base)
+        base = normalize_download_base_code(
+            str(prefs.get("dl_default_base", default_base)),
+            default=default_base,
+        )
         nsfw = bool(prefs.get("dl_default_nsfw", False))
         author_raw = str(prefs.get("dl_default_author", "")).strip()
         return {
@@ -468,6 +458,8 @@ def register_download_flow_handlers(deps: DownloadFlowDeps) -> None:
             page = int(data.get("dl_results_page", 0) or 0)
             loaded_limit = int(data.get("dl_loaded_limit", page_size * 2) or (page_size * 2))
             exhausted = bool(data.get("dl_more_exhausted", False))
+            notice = ""
+            callback_answered = False
 
             if value == "first":
                 page = 0
@@ -478,15 +470,31 @@ def register_download_flow_handlers(deps: DownloadFlowDeps) -> None:
             elif value == "last":
                 page = max(0, (len(results) - 1) // page_size)
             else:
+                await cb.answer()
+                callback_answered = True
                 prev_count = len(results)
                 next_limit = min(200, loaded_limit + page_size * 2)
                 if next_limit == loaded_limit:
-                    await cb.answer("Больше загрузить нельзя.", show_alert=True)
+                    exhausted = True
+                    notice = "Больше результатов не найдено."
+                    await state.update_data(dl_more_exhausted=True)
+                    max_page = max(0, (len(results) - 1) // page_size)
+                    page = max(0, min(page, max_page))
+                    await deps.show_results_menu(
+                        message,
+                        state,
+                        results,
+                        edit=True,
+                        page=page,
+                        page_size=page_size,
+                        can_continue=False,
+                        notice=notice,
+                    )
                     return
                 try:
                     results = await _run_search(state, limit=next_limit)
                 except (aiohttp.ClientError, asyncio.TimeoutError, RuntimeError, ValueError) as exc:
-                    await cb.answer(f"Ошибка поиска: {h(exc)}", show_alert=True)
+                    await message.answer(f"⚠️ Ошибка поиска: {h(exc)}")
                     return
                 loaded_limit = next_limit
                 exhausted = len(results) <= prev_count
@@ -498,9 +506,9 @@ def register_download_flow_handlers(deps: DownloadFlowDeps) -> None:
                 max_page = max(0, (len(results) - 1) // page_size)
                 page = min(page, max_page)
                 if exhausted:
-                    await cb.answer("Больше результатов не найдено.")
+                    notice = "Больше результатов не найдено."
                 else:
-                    await cb.answer("Подгрузил ещё результаты")
+                    notice = "Подгрузил ещё результаты."
 
             max_page = max(0, (len(results) - 1) // page_size)
             page = max(0, min(page, max_page))
@@ -515,8 +523,9 @@ def register_download_flow_handlers(deps: DownloadFlowDeps) -> None:
                 page=page,
                 page_size=page_size,
                 can_continue=can_continue,
+                notice=notice,
             )
-            if value != "more":
+            if not callback_answered:
                 await cb.answer()
             return
 

@@ -12,6 +12,16 @@ from aiogram.types import (
 )
 
 from comfyui_client import ComfyUIClient
+from core.download_filters import (
+    DOWNLOAD_BASE_CODE_TO_API,
+    DOWNLOAD_BASE_CODE_TO_LABEL,
+    DOWNLOAD_FILTER_PROFILES,
+    DOWNLOAD_PERIOD_CODE_TO_API,
+    DOWNLOAD_PERIOD_CODE_TO_LABEL,
+    DOWNLOAD_SORT_CODE_TO_API,
+    DOWNLOAD_SORT_CODE_TO_LABEL,
+    download_source_label,
+)
 from core.formatting import human_size, short_number
 from core.html_utils import h
 from core.panels import render_user_panel
@@ -38,99 +48,6 @@ MODEL_TYPE_LABELS = {
     "vae": "VAE",
 }
 
-SOURCE_LABELS = {
-    "civitai": "CivitAI",
-    "huggingface": "HuggingFace",
-    "all": "Оба источника",
-}
-
-SORT_CODE_TO_LABEL = {
-    "downloads": "По скачиваниям",
-    "rating": "По рейтингу",
-    "newest": "Новые",
-}
-
-SORT_CODE_TO_API = {
-    "downloads": "Most Downloaded",
-    "rating": "Highest Rated",
-    "newest": "Newest",
-}
-
-PERIOD_CODE_TO_LABEL = {
-    "all": "Всё время",
-    "month": "Месяц",
-    "week": "Неделя",
-}
-
-PERIOD_CODE_TO_API = {
-    "all": "AllTime",
-    "month": "Month",
-    "week": "Week",
-}
-
-FILTER_PROFILES: dict[str, dict[str, Any]] = {
-    "popular": {
-        "label": "🔥 Популярные",
-        "source": "all",
-        "sort": "downloads",
-        "period": "all",
-        "base": "all",
-        "nsfw": False,
-    },
-    "fresh": {
-        "label": "🆕 Новые",
-        "source": "all",
-        "sort": "newest",
-        "period": "week",
-        "base": "all",
-        "nsfw": False,
-    },
-    "quality": {
-        "label": "⭐ Рейтинг",
-        "source": "all",
-        "sort": "rating",
-        "period": "month",
-        "base": "all",
-        "nsfw": False,
-    },
-    "anime": {
-        "label": "🎎 Anime",
-        "source": "civitai",
-        "sort": "downloads",
-        "period": "month",
-        "base": "pony",
-        "nsfw": False,
-    },
-}
-
-BASE_CODE_TO_LABEL = {
-    "all": "Все",
-    "sd15": "SD 1.5",
-    "sdxl09": "SDXL 0.9",
-    "sdxl": "SDXL",
-    "sd2": "SD 2.x",
-    "sd3": "SD 3",
-    "sd35": "SD 3.5",
-    "pony": "Pony",
-    "illustrious": "Illustrious",
-    "noobai": "NoobAI",
-    "flux": "Flux",
-}
-
-BASE_CODE_TO_API = {
-    "all": [],
-    "sd15": ["SD 1.5"],
-    "sdxl09": ["SDXL 0.9"],
-    "sdxl": ["SDXL 1.0"],
-    "sd2": ["SD 2.0", "SD 2.1"],
-    "sd3": ["SD 3"],
-    "sd35": ["SD 3.5"],
-    "pony": ["Pony"],
-    "illustrious": ["Illustrious"],
-    "noobai": ["NoobAI"],
-    "flux": ["Flux.1 D"],
-}
-
 
 def _mark(active: bool, label: str) -> str:
     return f"✅ {label}" if active else label
@@ -141,7 +58,7 @@ def _type_title(model_type: str) -> str:
 
 
 def _source_title(source: str) -> str:
-    return SOURCE_LABELS.get(source, source)
+    return download_source_label(source)
 
 
 def _hydrate_result(data: dict[str, Any]) -> SearchResult:
@@ -167,11 +84,11 @@ def _search_filters_summary(
     author_nick: str,
     page_size: int,
 ) -> str:
-    parts = [f"Сортировка: {SORT_CODE_TO_LABEL.get(sort_code, 'По скачиваниям')}"]
+    parts = [f"Сортировка: {DOWNLOAD_SORT_CODE_TO_LABEL.get(sort_code, 'По скачиваниям')}"]
     if _supports_period_filter(source):
-        parts.append(f"Период: {PERIOD_CODE_TO_LABEL.get(period_code, 'Всё время')}")
+        parts.append(f"Период: {DOWNLOAD_PERIOD_CODE_TO_LABEL.get(period_code, 'Всё время')}")
     if _supports_base_filter(model_type=model_type, source=source):
-        parts.append(f"Base: {BASE_CODE_TO_LABEL.get(base_code, 'Все')}")
+        parts.append(f"Base: {DOWNLOAD_BASE_CODE_TO_LABEL.get(base_code, 'Все')}")
     if _supports_nsfw_filter(source):
         parts.append(f"NSFW: {'вкл' if include_nsfw else 'выкл'}")
     if source in {"civitai", "all"} and author_nick.strip():
@@ -276,7 +193,7 @@ def _build_filter_keyboard(
         rows.append(
             [
                 button(
-                    f"🧬 Базовые модели: {BASE_CODE_TO_LABEL.get(base_code, 'Все')}",
+                    f"🧬 Базовые модели: {DOWNLOAD_BASE_CODE_TO_LABEL.get(base_code, 'Все')}",
                     "dlflt:base_menu",
                 )
             ]
@@ -510,7 +427,7 @@ def register_download_handlers(
         text = (
             "🧬 <b>Базовые модели</b>\n"
             "Выберите семейство моделей для фильтрации поиска.\n"
-            f"<b>Текущий выбор:</b> {h(BASE_CODE_TO_LABEL.get(base_code, 'Все'))}"
+            f"<b>Текущий выбор:</b> {h(DOWNLOAD_BASE_CODE_TO_LABEL.get(base_code, 'Все'))}"
         )
         await _render_download_panel(
             message,
@@ -529,6 +446,7 @@ def register_download_handlers(
         page: int = 0,
         page_size: int = 8,
         can_continue: bool = False,
+        notice: str = "",
     ) -> None:
         data = await state.get_data()
         source = data.get("dl_source", "all")
@@ -580,6 +498,10 @@ def register_download_handlers(
             f"<i>{h(_search_filters_summary(model_type=data.get('dl_type', 'checkpoint'), sort_code=sort_code, period_code=period_code, base_code=base_code, include_nsfw=include_nsfw, source=source, author_nick=author_nick, page_size=page_size))}</i>",
             "",
         ]
+        notice_text = notice.strip()
+        if notice_text:
+            lines.append(f"💬 <i>{h(notice_text)}</i>")
+            lines.append("")
         max_text_len = 3800
         for offset, result in enumerate(page_items):
             index = start + offset
@@ -672,15 +594,15 @@ def register_download_handlers(
             show_query_prompt=show_query_prompt,
             supports_base_filter=_supports_base_filter,
             supports_nsfw_filter=_supports_nsfw_filter,
-            base_code_to_api=BASE_CODE_TO_API,
-            sort_code_to_api=SORT_CODE_TO_API,
-            period_code_to_api=PERIOD_CODE_TO_API,
+            base_code_to_api=DOWNLOAD_BASE_CODE_TO_API,
+            sort_code_to_api=DOWNLOAD_SORT_CODE_TO_API,
+            period_code_to_api=DOWNLOAD_PERIOD_CODE_TO_API,
             show_results_menu=show_results_menu,
             hydrate_result=_hydrate_result,
             human_size=human_size,
             short_number=short_number,
             apply_version_option=apply_version_option,
             show_download_confirmation=show_download_confirmation,
-            filter_profiles=FILTER_PROFILES,
+            filter_profiles=DOWNLOAD_FILTER_PROFILES,
         )
     )

@@ -13,6 +13,14 @@ from aiogram.filters import Command, CommandStart, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
+from core.download_filters import (
+    DOWNLOAD_FILTER_PROFILES,
+    download_base_label,
+    normalize_download_base_code,
+    normalize_download_period_code,
+    normalize_download_sort_code,
+    normalize_download_source,
+)
 from core.states import ServiceSettingsStates
 from core.ui_kit import back_button, build_keyboard
 from core.ui_kit.buttons import button, menu_root_button, noop_button
@@ -212,30 +220,10 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
 
     def _download_defaults(uid: int) -> dict[str, Any]:
         prefs = deps.runtime.user_preferences.get(uid, {})
-        source = str(prefs.get("dl_default_source", "all")).strip().lower()
-        sort_code = str(prefs.get("dl_default_sort", "downloads")).strip().lower()
-        period = str(prefs.get("dl_default_period", "all")).strip().lower()
-        base = str(prefs.get("dl_default_base", "all")).strip().lower()
-        if source not in {"all", "civitai", "huggingface"}:
-            source = "all"
-        if sort_code not in {"downloads", "rating", "newest"}:
-            sort_code = "downloads"
-        if period not in {"all", "month", "week"}:
-            period = "all"
-        if base not in {
-            "all",
-            "sd15",
-            "sd2",
-            "sdxl09",
-            "sdxl",
-            "sd3",
-            "sd35",
-            "pony",
-            "flux",
-            "illustrious",
-            "noobai",
-        }:
-            base = "all"
+        source = normalize_download_source(str(prefs.get("dl_default_source", "all")))
+        sort_code = normalize_download_sort_code(str(prefs.get("dl_default_sort", "downloads")))
+        period = normalize_download_period_code(str(prefs.get("dl_default_period", "all")))
+        base = normalize_download_base_code(str(prefs.get("dl_default_base", "all")))
         author = str(prefs.get("dl_default_author", "")).strip()
         return {
             "source": source,
@@ -247,37 +235,7 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
         }
 
     def _apply_download_profile(uid: int, profile_code: str) -> bool:
-        profiles: dict[str, dict[str, Any]] = {
-            "popular": {
-                "source": "all",
-                "sort": "downloads",
-                "period": "all",
-                "base": "all",
-                "nsfw": False,
-            },
-            "fresh": {
-                "source": "all",
-                "sort": "newest",
-                "period": "week",
-                "base": "all",
-                "nsfw": False,
-            },
-            "quality": {
-                "source": "all",
-                "sort": "rating",
-                "period": "month",
-                "base": "all",
-                "nsfw": False,
-            },
-            "anime": {
-                "source": "civitai",
-                "sort": "downloads",
-                "period": "month",
-                "base": "pony",
-                "nsfw": False,
-            },
-        }
-        profile = profiles.get(profile_code)
+        profile = DOWNLOAD_FILTER_PROFILES.get(profile_code)
         if not profile:
             return False
         _set_pref(uid, "dl_default_source", profile["source"])
@@ -288,20 +246,7 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
         return True
 
     def _base_label(code: str) -> str:
-        labels = {
-            "all": "Все",
-            "sd15": "SD 1.5",
-            "sd2": "SD 2.x",
-            "sdxl09": "SDXL 0.9",
-            "sdxl": "SDXL 1.0",
-            "sd3": "SD 3",
-            "sd35": "SD 3.5",
-            "pony": "Pony",
-            "flux": "Flux",
-            "illustrious": "Illustrious",
-            "noobai": "NoobAI",
-        }
-        return labels.get(code, "Все")
+        return download_base_label(code)
 
     async def _show_settings(message: Message, uid: int) -> None:
         pro_mode = deps.runtime.user_preferences.get(uid, {}).get("pro_mode", False)
@@ -1167,37 +1112,29 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
         key = parts[4]
         value = parts[5].strip().lower()
         if key == "source":
-            if value not in {"all", "civitai", "huggingface"}:
+            source = normalize_download_source(value, default="")
+            if not source:
                 await cb.answer("⚠️ Некорректный source.", show_alert=True)
                 return
-            _set_pref(uid, "dl_default_source", value)
+            _set_pref(uid, "dl_default_source", source)
         elif key == "sort":
-            if value not in {"downloads", "rating", "newest"}:
+            sort_code = normalize_download_sort_code(value, default="")
+            if not sort_code:
                 await cb.answer("⚠️ Некорректный sort.", show_alert=True)
                 return
-            _set_pref(uid, "dl_default_sort", value)
+            _set_pref(uid, "dl_default_sort", sort_code)
         elif key == "period":
-            if value not in {"all", "month", "week"}:
+            period_code = normalize_download_period_code(value, default="")
+            if not period_code:
                 await cb.answer("⚠️ Некорректный period.", show_alert=True)
                 return
-            _set_pref(uid, "dl_default_period", value)
+            _set_pref(uid, "dl_default_period", period_code)
         elif key == "base":
-            if value not in {
-                "all",
-                "sd15",
-                "sd2",
-                "sdxl09",
-                "sdxl",
-                "sd3",
-                "sd35",
-                "pony",
-                "flux",
-                "illustrious",
-                "noobai",
-            }:
+            base_code = normalize_download_base_code(value, default="")
+            if not base_code:
                 await cb.answer("⚠️ Некорректная базовая модель.", show_alert=True)
                 return
-            _set_pref(uid, "dl_default_base", value)
+            _set_pref(uid, "dl_default_base", base_code)
         elif key == "profile":
             if not _apply_download_profile(uid, value):
                 await cb.answer("⚠️ Неизвестный профиль.", show_alert=True)

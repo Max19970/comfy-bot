@@ -7,6 +7,8 @@ from typing import Any
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, InlineKeyboardButton
 
+from core.callbacks import PagedSelectionCallback
+from core.interaction import callback_message
 from core.models import GenerationParams
 
 
@@ -25,10 +27,11 @@ async def open_paginated_choice(
         prefix,
         extra=[[InlineKeyboardButton(text="⬅️ Назад", callback_data=back_callback)]],
     )
-    if cb.message is None or not hasattr(cb.message, "edit_text"):
+    message = callback_message(cb)
+    if message is None:
         await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
         return
-    await cb.message.edit_text(title, reply_markup=kb)
+    await message.edit_text(title, reply_markup=kb)
     await cb.answer()
 
 
@@ -40,18 +43,22 @@ async def change_paginated_choice_page(
     back_callback: str = "pe:back",
     paginated_keyboard: Callable[..., Any],
 ) -> None:
-    data = cb.data or ""
-    page = int(data.split(":", 1)[1])
+    page_cb = PagedSelectionCallback.parse(cb.data or "", prefix=prefix)
+    if page_cb is None:
+        await cb.answer("❌ Некорректный запрос.", show_alert=True)
+        return
+    page = page_cb.page
     kb = paginated_keyboard(
         items,
         page,
         prefix,
         extra=[[InlineKeyboardButton(text="⬅️ Назад", callback_data=back_callback)]],
     )
-    if cb.message is None or not hasattr(cb.message, "edit_reply_markup"):
+    message = callback_message(cb)
+    if message is None:
         await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
         return
-    await cb.message.edit_reply_markup(reply_markup=kb)
+    await message.edit_reply_markup(reply_markup=kb)
     await cb.answer()
 
 
@@ -72,10 +79,11 @@ async def set_prompt_param_from_callback(
         return
     uid, req = payload
     setattr(req.params, field, value)
-    if cb.message is None:
+    message = callback_message(cb)
+    if message is None:
         await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
         return
-    await show_prompt_editor(cb.message, state, uid, edit=True, notice=notice)
+    await show_prompt_editor(message, state, uid, edit=True, notice=notice)
     await cb.answer()
 
 

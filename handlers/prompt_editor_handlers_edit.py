@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import cast
 
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
@@ -14,6 +13,8 @@ from aiogram.types import (
 )
 
 from comfyui_client import ComfyUIClient
+from core.callbacks import IndexedSelectionCallback
+from core.interaction import callback_message as interaction_callback_message
 from core.models import GenerationParams
 from core.runtime import PromptRequest, RuntimeStore
 from core.states import PromptEditorStates
@@ -48,10 +49,14 @@ def register_prompt_editor_edit_handlers(
     router: Router,
     deps: PromptEditorEditHandlersDeps,
 ) -> None:
-    def _callback_message(cb: CallbackQuery) -> Message | None:
-        if cb.message is None or not hasattr(cb.message, "edit_text"):
+    _callback_message = interaction_callback_message
+
+    async def _selected_index(cb: CallbackQuery, *, prefix: str) -> int | None:
+        parsed = IndexedSelectionCallback.parse(cb.data or "", prefix=prefix)
+        if parsed is None:
+            await cb.answer("❌ Некорректный запрос.", show_alert=True)
             return None
-        return cast(Message, cb.message)
+        return parsed.index
 
     @router.callback_query(F.data == "pe:edit:positive")
     async def pe_edit_positive(cb: CallbackQuery, state: FSMContext):
@@ -135,12 +140,9 @@ def register_prompt_editor_edit_handlers(
 
     @router.callback_query(F.data.startswith("pe_ckpt:"))
     async def pe_ckpt_chosen(cb: CallbackQuery, state: FSMContext):
-        data_value = cb.data or ""
-        parts = data_value.split(":", 1)
-        if len(parts) != 2:
-            await cb.answer("❌ Некорректный запрос.", show_alert=True)
+        idx = await _selected_index(cb, prefix="pe_ckpt")
+        if idx is None:
             return
-        idx = int(parts[1])
         items = deps.client.info.checkpoints
         if idx < 0 or idx >= len(items):
             await cb.answer("❌ Неверный индекс.", show_alert=True)
@@ -186,12 +188,9 @@ def register_prompt_editor_edit_handlers(
 
     @router.callback_query(F.data.startswith("pe_smpl:"))
     async def pe_sampler_chosen(cb: CallbackQuery, state: FSMContext):
-        data_value = cb.data or ""
-        parts = data_value.split(":", 1)
-        if len(parts) != 2:
-            await cb.answer("❌ Некорректный запрос.", show_alert=True)
+        idx = await _selected_index(cb, prefix="pe_smpl")
+        if idx is None:
             return
-        idx = int(parts[1])
         items = deps.client.info.samplers or ["euler"]
         if idx < 0 or idx >= len(items):
             await cb.answer("❌ Неверный индекс.", show_alert=True)
@@ -223,12 +222,9 @@ def register_prompt_editor_edit_handlers(
 
     @router.callback_query(F.data.startswith("pe_sched:"))
     async def pe_sched_chosen(cb: CallbackQuery, state: FSMContext):
-        data_value = cb.data or ""
-        parts = data_value.split(":", 1)
-        if len(parts) != 2:
-            await cb.answer("❌ Некорректный запрос.", show_alert=True)
+        idx = await _selected_index(cb, prefix="pe_sched")
+        if idx is None:
             return
-        idx = int(parts[1])
         items = deps.client.info.schedulers or ["normal"]
         if idx < 0 or idx >= len(items):
             await cb.answer("❌ Неверный индекс.", show_alert=True)
@@ -260,12 +256,9 @@ def register_prompt_editor_edit_handlers(
 
     @router.callback_query(F.data.startswith("pe_upsc:"))
     async def pe_upsc_chosen(cb: CallbackQuery, state: FSMContext):
-        data_value = cb.data or ""
-        parts = data_value.split(":", 1)
-        if len(parts) != 2:
-            await cb.answer("❌ Некорректный запрос.", show_alert=True)
+        idx = await _selected_index(cb, prefix="pe_upsc")
+        if idx is None:
             return
-        idx = int(parts[1])
         items = ["(без апскейла)"] + deps.client.info.upscale_models
         if idx < 0 or idx >= len(items):
             await cb.answer("❌ Неверный индекс.", show_alert=True)
@@ -298,12 +291,9 @@ def register_prompt_editor_edit_handlers(
 
     @router.callback_query(F.data.startswith("pe_vae:"))
     async def pe_vae_chosen(cb: CallbackQuery, state: FSMContext):
-        data_value = cb.data or ""
-        parts = data_value.split(":", 1)
-        if len(parts) != 2:
-            await cb.answer("❌ Некорректный запрос.", show_alert=True)
+        idx = await _selected_index(cb, prefix="pe_vae")
+        if idx is None:
             return
-        idx = int(parts[1])
         items = ["(из checkpoint)"] + deps.client.info.vaes
         if idx < 0 or idx >= len(items):
             await cb.answer("❌ Неверный индекс.", show_alert=True)
@@ -336,12 +326,9 @@ def register_prompt_editor_edit_handlers(
 
     @router.callback_query(F.data.startswith("pe_cn:"))
     async def pe_cn_chosen(cb: CallbackQuery, state: FSMContext):
-        data_value = cb.data or ""
-        parts = data_value.split(":", 1)
-        if len(parts) != 2:
-            await cb.answer("❌ Некорректный запрос.", show_alert=True)
+        idx = await _selected_index(cb, prefix="pe_cn")
+        if idx is None:
             return
-        idx = int(parts[1])
         items = ["(выкл)"] + deps.client.info.controlnets
         if idx < 0 or idx >= len(items):
             await cb.answer("❌ Неверный индекс.", show_alert=True)
@@ -374,12 +361,9 @@ def register_prompt_editor_edit_handlers(
 
     @router.callback_query(F.data.startswith("pe_emb:"))
     async def pe_emb_chosen(cb: CallbackQuery, state: FSMContext):
-        data_value = cb.data or ""
-        parts = data_value.split(":", 1)
-        if len(parts) != 2:
-            await cb.answer("❌ Некорректный запрос.", show_alert=True)
+        idx = await _selected_index(cb, prefix="pe_emb")
+        if idx is None:
             return
-        idx = int(parts[1])
         items = ["(без embedding)"] + deps.client.info.embeddings
         if idx < 0 or idx >= len(items):
             await cb.answer("❌ Неверный индекс.", show_alert=True)

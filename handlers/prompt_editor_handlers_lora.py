@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import cast
 
 from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
@@ -14,7 +13,9 @@ from aiogram.types import (
     Message,
 )
 
+from core.callbacks import IndexedSelectionCallback
 from core.html_utils import h
+from core.interaction import callback_message as interaction_callback_message
 from core.runtime import PromptRequest, RuntimeStore
 from core.states import PromptEditorStates
 from core.ui import custom_btn
@@ -46,10 +47,7 @@ def register_prompt_editor_lora_handlers(
     router: Router,
     deps: PromptEditorLoraHandlersDeps,
 ) -> None:
-    def _callback_message(cb: CallbackQuery) -> Message | None:
-        if cb.message is None or not hasattr(cb.message, "edit_text"):
-            return None
-        return cast(Message, cb.message)
+    _callback_message = interaction_callback_message
 
     async def offer_lora_trigger_prompt(
         message: Message,
@@ -213,12 +211,11 @@ def register_prompt_editor_lora_handlers(
 
         _, req = payload
 
-        data_value = cb.data or ""
-        parts = data_value.split(":", 1)
-        if len(parts) != 2:
+        parsed = IndexedSelectionCallback.parse(cb.data or "", prefix="pe_lora_pick")
+        if parsed is None:
             await cb.answer("❌ Неверный формат выбора LoRA.", show_alert=True)
             return
-        idx = int(parts[1])
+        idx = parsed.index
         data = await state.get_data()
         items = data.get("pe_lora_pick_names")
         if not isinstance(items, list) or not items:

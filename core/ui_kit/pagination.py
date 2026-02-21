@@ -6,6 +6,8 @@ from typing import Generic, TypeVar
 
 from aiogram.types import InlineKeyboardButton
 
+from core.callbacks import IndexedSelectionCallback, PagedSelectionCallback
+
 from .buttons import button, noop_button
 
 _ItemT = TypeVar("_ItemT")
@@ -32,11 +34,11 @@ def build_page_window(items: list[_ItemT], page: int, page_size: int) -> PageWin
 
 
 def item_callback(prefix: str, index: int) -> str:
-    return f"{prefix}:{index}"
+    return IndexedSelectionCallback(prefix=prefix, index=index).pack()
 
 
 def page_callback(prefix: str, page: int) -> str:
-    return f"{prefix}_page:{page}"
+    return PagedSelectionCallback(prefix=prefix, page=page).pack()
 
 
 def page_nav_row(prefix: str, page: int, total_pages: int) -> list[InlineKeyboardButton]:

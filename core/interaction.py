@@ -13,6 +13,18 @@ def callback_message(cb: CallbackQuery) -> Message | None:
     return cast(Message, message)
 
 
+async def require_callback_message(
+    cb: CallbackQuery,
+    *,
+    alert_text: str = "⚠️ Сообщение недоступно.",
+) -> Message | None:
+    message = callback_message(cb)
+    if message is None:
+        await cb.answer(alert_text, show_alert=True)
+        return None
+    return message
+
+
 def is_message_not_modified_error(exc: TelegramBadRequest) -> bool:
     return "message is not modified" in str(exc).lower()
 

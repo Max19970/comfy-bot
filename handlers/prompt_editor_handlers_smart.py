@@ -10,13 +10,12 @@ from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
 from aiogram.types import (
     CallbackQuery,
-    InlineKeyboardButton,
     InlineKeyboardMarkup,
     Message,
 )
 
 from core.html_utils import h
-from core.interaction import callback_message as interaction_callback_message
+from core.interaction import require_callback_message
 from core.runtime import PromptRequest
 from core.states import PromptEditorStates
 from smart_prompt import SmartPromptError, SmartPromptService
@@ -49,13 +48,10 @@ def register_prompt_editor_smart_handlers(
     router: Router,
     deps: PromptEditorSmartHandlersDeps,
 ) -> None:
-    _callback_message = interaction_callback_message
-
     @router.callback_query(F.data == "pe:smart:start")
     async def pe_smart_prompt_start(cb: CallbackQuery, state: FSMContext):
-        message = _callback_message(cb)
+        message = await require_callback_message(cb)
         if message is None:
-            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
             return
         payload = await deps.require_prompt_request_for_callback(cb)
         if not payload:
@@ -81,18 +77,8 @@ def register_prompt_editor_smart_handlers(
             "",
             f"🧪 <b>Checkpoint:</b> <code>{h(req.params.checkpoint or '(не выбран)')}</code>",
         ]
-        kb = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(
-                        text="⬅️ Назад",
-                        callback_data="pe:back",
-                    )
-                ]
-            ]
-        )
         await state.set_state(PromptEditorStates.entering_smart_prompt)
-        await message.edit_text("\n".join(lines), reply_markup=kb)
+        await message.edit_text("\n".join(lines), reply_markup=deps.back_keyboard("pe:back"))
         await cb.answer()
 
     @router.message(PromptEditorStates.entering_smart_prompt)
@@ -199,6 +185,9 @@ def register_prompt_editor_smart_handlers(
 
     @router.callback_query(F.data == "pe:smart:apply")
     async def pe_smart_apply(cb: CallbackQuery, state: FSMContext):
+        message = await require_callback_message(cb)
+        if message is None:
+            return
         payload = await deps.require_prompt_request_for_callback(cb)
         if not payload:
             return
@@ -210,11 +199,14 @@ def register_prompt_editor_smart_handlers(
         notice = str(data.get("pe_smart_notice") or "✅ TIPO-промпт применён.").strip()
 
         await deps.clear_smart_prompt_result_data(state)
-        await deps.show_prompt_editor(cb.message, state, uid, edit=True, notice=notice)
+        await deps.show_prompt_editor(message, state, uid, edit=True, notice=notice)
         await cb.answer()
 
     @router.callback_query(F.data == "pe:smart:merge")
     async def pe_smart_merge(cb: CallbackQuery, state: FSMContext):
+        message = await require_callback_message(cb)
+        if message is None:
+            return
         payload = await deps.require_prompt_request_for_callback(cb)
         if not payload:
             return
@@ -233,11 +225,14 @@ def register_prompt_editor_smart_handlers(
             notice += "\n" + meta_notice
 
         await deps.clear_smart_prompt_result_data(state)
-        await deps.show_prompt_editor(cb.message, state, uid, edit=True, notice=notice)
+        await deps.show_prompt_editor(message, state, uid, edit=True, notice=notice)
         await cb.answer()
 
     @router.callback_query(F.data == "pe:smart:restore")
     async def pe_smart_restore(cb: CallbackQuery, state: FSMContext):
+        message = await require_callback_message(cb)
+        if message is None:
+            return
         payload = await deps.require_prompt_request_for_callback(cb)
         if not payload:
             return
@@ -249,7 +244,7 @@ def register_prompt_editor_smart_handlers(
 
         await deps.clear_smart_prompt_result_data(state)
         await deps.show_prompt_editor(
-            cb.message,
+            message,
             state,
             uid,
             edit=True,
@@ -259,6 +254,9 @@ def register_prompt_editor_smart_handlers(
 
     @router.callback_query(F.data == "pe:smart:cancel")
     async def pe_smart_cancel(cb: CallbackQuery, state: FSMContext):
+        message = await require_callback_message(cb)
+        if message is None:
+            return
         payload = await deps.require_prompt_request_for_callback(cb)
         if not payload:
             return
@@ -266,7 +264,7 @@ def register_prompt_editor_smart_handlers(
         uid, _ = payload
         await deps.clear_smart_prompt_result_data(state)
         await deps.show_prompt_editor(
-            cb.message,
+            message,
             state,
             uid,
             edit=True,
@@ -276,9 +274,8 @@ def register_prompt_editor_smart_handlers(
 
     @router.callback_query(F.data == "pe:smart:edit")
     async def pe_smart_edit(cb: CallbackQuery, state: FSMContext):
-        message = _callback_message(cb)
+        message = await require_callback_message(cb)
         if message is None:
-            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
             return
         payload = await deps.require_prompt_request_for_callback(cb)
         if not payload:
@@ -297,13 +294,16 @@ def register_prompt_editor_smart_handlers(
 
     @router.callback_query(F.data == "pe:smart:result:back")
     async def pe_smart_result_back(cb: CallbackQuery, state: FSMContext):
+        message = await require_callback_message(cb)
+        if message is None:
+            return
         payload = await deps.require_prompt_request_for_callback(cb)
         if not payload:
             return
 
         uid, _ = payload
         await deps.show_smart_prompt_result_confirmation(
-            cb.message,
+            message,
             state,
             uid,
             edit=True,

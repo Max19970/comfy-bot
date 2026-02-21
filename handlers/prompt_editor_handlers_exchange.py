@@ -10,13 +10,12 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import (
     BufferedInputFile,
     CallbackQuery,
-    InlineKeyboardButton,
     InlineKeyboardMarkup,
     Message,
 )
 
 from core.html_utils import h, truncate
-from core.interaction import callback_message as interaction_callback_message
+from core.interaction import require_callback_message
 from core.models import GenerationParams
 from core.prompt_exchange import (
     PROMPT_EXCHANGE_PREFIX,
@@ -26,6 +25,8 @@ from core.prompt_exchange import (
 )
 from core.runtime import PromptRequest
 from core.states import PromptEditorStates
+from core.ui_kit import back_button, build_keyboard
+from core.ui_kit.buttons import button
 
 _MAX_IMPORT_FILE_BYTES = 128_000
 _TOKEN_INLINE_LIMIT = 3500
@@ -46,58 +47,28 @@ class PromptEditorExchangeHandlersDeps:
 
 
 def _exchange_menu_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
+    return build_keyboard(
+        [
             [
-                InlineKeyboardButton(
-                    text="📤 Копировать",
-                    callback_data="pe:exchange:export",
-                ),
-                InlineKeyboardButton(
-                    text="📥 Вставить",
-                    callback_data="pe:exchange:import",
-                ),
+                button("📤 Копировать", "pe:exchange:export"),
+                button("📥 Вставить", "pe:exchange:import"),
             ],
-            [
-                InlineKeyboardButton(
-                    text="⬅️ Назад",
-                    callback_data="pe:back",
-                )
-            ],
+            [back_button("pe:back")],
         ]
     )
 
 
 def _exchange_result_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="⬅️ К обмену",
-                    callback_data="pe:exchange",
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="⬅️ В редактор",
-                    callback_data="pe:back",
-                )
-            ],
+    return build_keyboard(
+        [
+            [back_button("pe:exchange", text="⬅️ К обмену")],
+            [back_button("pe:back", text="⬅️ В редактор")],
         ]
     )
 
 
 def _exchange_import_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="⬅️ К обмену",
-                    callback_data="pe:exchange",
-                )
-            ]
-        ]
-    )
+    return build_keyboard([[back_button("pe:exchange", text="⬅️ К обмену")]])
 
 
 def _preview_line(label: str, value: str) -> str:
@@ -111,8 +82,6 @@ def register_prompt_editor_exchange_handlers(
     router: Router,
     deps: PromptEditorExchangeHandlersDeps,
 ) -> None:
-    _callback_message = interaction_callback_message
-
     async def _apply_import_from_text(
         message: Message,
         state: FSMContext,
@@ -145,9 +114,8 @@ def register_prompt_editor_exchange_handlers(
 
     @router.callback_query(F.data == "pe:exchange")
     async def pe_exchange_menu(cb: CallbackQuery):
-        message = _callback_message(cb)
+        message = await require_callback_message(cb)
         if message is None:
-            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
             return
         payload = await deps.require_prompt_request_for_callback(cb)
         if not payload:
@@ -170,9 +138,8 @@ def register_prompt_editor_exchange_handlers(
 
     @router.callback_query(F.data == "pe:exchange:export")
     async def pe_exchange_export(cb: CallbackQuery):
-        message = _callback_message(cb)
+        message = await require_callback_message(cb)
         if message is None:
-            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
             return
         payload = await deps.require_prompt_request_for_callback(cb)
         if not payload:
@@ -215,9 +182,8 @@ def register_prompt_editor_exchange_handlers(
 
     @router.callback_query(F.data == "pe:exchange:import")
     async def pe_exchange_import_start(cb: CallbackQuery, state: FSMContext):
-        message = _callback_message(cb)
+        message = await require_callback_message(cb)
         if message is None:
-            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
             return
         payload = await deps.require_prompt_request_for_callback(cb)
         if not payload:

@@ -9,15 +9,16 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import (
     CallbackQuery,
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
     Message,
 )
 
 from comfyui_client import ComfyUIClient
-from core.interaction import callback_message as interaction_callback_message
+from core.callbacks import ValueSelectionCallback
+from core.interaction import require_callback_message
 from core.models import GenerationParams
 from core.runtime import PromptRequest, RuntimeStore
+from core.ui_kit import back_button, build_keyboard
+from core.ui_kit.buttons import button
 
 
 @dataclass
@@ -41,8 +42,6 @@ def register_prompt_editor_flow_handlers(
     router: Router,
     deps: PromptEditorFlowHandlersDeps,
 ) -> None:
-    _callback_message = interaction_callback_message
-
     def _latest_user_generation(uid: int):
         candidates = [
             item for item in deps.runtime.active_generations.values() if item.owner_uid == uid
@@ -82,15 +81,27 @@ def register_prompt_editor_flow_handlers(
             notice="🔁 Загружен последний запрос (seed = random).",
         )
 
+    def _cancel_editor_keyboard():
+        return build_keyboard(
+            [
+                [button("✅ Отменить", "pe:cancel:confirm"), button("💾 Сохранить", "pe:save")],
+                [back_button("pe:back")],
+            ]
+        )
+
+    def _empty_positive_confirm_keyboard():
+        return build_keyboard(
+            [[button("✅ Да", "pe:gen:empty:yes"), button("❌ Нет", "pe:gen:empty:no")]]
+        )
+
     @router.message(Command("generate"))
     async def cmd_generate(msg: Message, state: FSMContext):
         await _start_generate(msg, state, deps.message_user_id(msg))
 
     @router.callback_query(F.data == "menu:generate")
     async def menu_generate(cb: CallbackQuery, state: FSMContext):
-        message = _callback_message(cb)
+        message = await require_callback_message(cb)
         if message is None:
-            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
             return
         await _start_generate(message, state, deps.callback_user_id(cb))
         await cb.answer()
@@ -101,18 +112,16 @@ def register_prompt_editor_flow_handlers(
 
     @router.callback_query(F.data == "menu:repeat")
     async def menu_repeat(cb: CallbackQuery, state: FSMContext):
-        message = _callback_message(cb)
+        message = await require_callback_message(cb)
         if message is None:
-            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
             return
         await _start_repeat(message, state, deps.callback_user_id(cb))
         await cb.answer()
 
     @router.callback_query(F.data == "pe:back")
     async def pe_back(cb: CallbackQuery, state: FSMContext):
-        message = _callback_message(cb)
+        message = await require_callback_message(cb)
         if message is None:
-            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
             return
         uid = deps.callback_user_id(cb)
         await deps.show_prompt_editor(message, state, uid, edit=True)
@@ -120,9 +129,8 @@ def register_prompt_editor_flow_handlers(
 
     @router.callback_query(F.data == "pe:cancel")
     async def pe_cancel(cb: CallbackQuery, state: FSMContext):
-        message = _callback_message(cb)
+        message = await require_callback_message(cb)
         if message is None:
-            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
             return
         payload = await deps.require_prompt_request_for_callback(cb)
         if not payload:
@@ -131,29 +139,9 @@ def register_prompt_editor_flow_handlers(
         uid, req = payload
         changed_count = deps.changed_params_count(req.params)
         if changed_count > 0:
-            kb = InlineKeyboardMarkup(
-                inline_keyboard=[
-                    [
-                        InlineKeyboardButton(
-                            text="✅ Отменить",
-                            callback_data="pe:cancel:confirm",
-                        ),
-                        InlineKeyboardButton(
-                            text="💾 Сохранить",
-                            callback_data="pe:save",
-                        ),
-                    ],
-                    [
-                        InlineKeyboardButton(
-                            text="⬅️ Назад",
-                            callback_data="pe:back",
-                        )
-                    ],
-                ]
-            )
             await message.edit_text(
                 f"⚠️ Вы изменили {changed_count} параметров. Точно отменить редактор?",
-                reply_markup=kb,
+                reply_markup=_cancel_editor_keyboard(),
             )
             await cb.answer()
             return
@@ -165,9 +153,8 @@ def register_prompt_editor_flow_handlers(
 
     @router.callback_query(F.data == "pe:cancel:confirm")
     async def pe_cancel_confirm(cb: CallbackQuery, state: FSMContext):
-        message = _callback_message(cb)
+        message = await require_callback_message(cb)
         if message is None:
-            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
             return
         uid = deps.callback_user_id(cb)
         deps.runtime.active_prompt_requests.pop(uid, None)
@@ -178,9 +165,8 @@ def register_prompt_editor_flow_handlers(
     @router.callback_query(F.data.startswith("pe:gen:cancel"))
     async def pe_gen_cancel(cb: CallbackQuery, state: FSMContext):
         uid = deps.callback_user_id(cb)
-        data_value = cb.data or ""
-        parts = data_value.split(":")
-        generation_id = parts[3] if len(parts) >= 4 else ""
+        parsed = ValueSelectionCallback.parse(cb.data or "", prefix="pe:gen:cancel")
+        generation_id = parsed.value if parsed else ""
 
         gen = None
         if generation_id and generation_id != "pending":
@@ -201,9 +187,8 @@ def register_prompt_editor_flow_handlers(
 
     @router.callback_query(F.data == "pe:proceed")
     async def pe_proceed(cb: CallbackQuery, state: FSMContext):
-        message = _callback_message(cb)
+        message = await require_callback_message(cb)
         if message is None:
-            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
             return
         payload = await deps.require_prompt_request_for_callback(cb)
         if not payload:
@@ -212,23 +197,9 @@ def register_prompt_editor_flow_handlers(
         uid, req = payload
         if req.operation == "generate":
             if not req.params.positive.strip():
-                kb = InlineKeyboardMarkup(
-                    inline_keyboard=[
-                        [
-                            InlineKeyboardButton(
-                                text="✅ Да",
-                                callback_data="pe:gen:empty:yes",
-                            ),
-                            InlineKeyboardButton(
-                                text="❌ Нет",
-                                callback_data="pe:gen:empty:no",
-                            ),
-                        ]
-                    ]
-                )
                 await message.edit_text(
                     "⚠️ Positive prompt пустой. Всё равно генерировать?",
-                    reply_markup=kb,
+                    reply_markup=_empty_positive_confirm_keyboard(),
                 )
                 await cb.answer()
                 return
@@ -241,9 +212,8 @@ def register_prompt_editor_flow_handlers(
 
     @router.callback_query(F.data == "pe:gen:empty:yes")
     async def pe_generate_empty_yes(cb: CallbackQuery, state: FSMContext):
-        message = _callback_message(cb)
+        message = await require_callback_message(cb)
         if message is None:
-            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
             return
         payload = await deps.require_prompt_request_for_callback(cb)
         if not payload:
@@ -255,9 +225,8 @@ def register_prompt_editor_flow_handlers(
 
     @router.callback_query(F.data == "pe:gen:empty:no")
     async def pe_generate_empty_no(cb: CallbackQuery, state: FSMContext):
-        message = _callback_message(cb)
+        message = await require_callback_message(cb)
         if message is None:
-            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
             return
         payload = await deps.require_prompt_request_for_callback(cb)
         if not payload:
@@ -275,9 +244,8 @@ def register_prompt_editor_flow_handlers(
 
     @router.callback_query(F.data == "pe:gen:back")
     async def pe_generate_back_to_editor(cb: CallbackQuery, state: FSMContext):
-        message = _callback_message(cb)
+        message = await require_callback_message(cb)
         if message is None:
-            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
             return
         payload = await deps.require_prompt_request_for_callback(cb)
         if not payload:

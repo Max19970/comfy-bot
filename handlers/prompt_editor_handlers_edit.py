@@ -13,8 +13,9 @@ from aiogram.types import (
 )
 
 from comfyui_client import ComfyUIClient
-from core.callbacks import IndexedSelectionCallback
+from core.callbacks import IndexedSelectionCallback, ValueSelectionCallback
 from core.interaction import callback_message as interaction_callback_message
+from core.interaction import require_callback_message
 from core.models import GenerationParams
 from core.runtime import PromptRequest, RuntimeStore
 from core.states import PromptEditorStates
@@ -57,6 +58,13 @@ def register_prompt_editor_edit_handlers(
             await cb.answer("❌ Некорректный запрос.", show_alert=True)
             return None
         return parsed.index
+
+    async def _selected_value(cb: CallbackQuery, *, prefix: str) -> str | None:
+        parsed = ValueSelectionCallback.parse(cb.data or "", prefix=prefix)
+        if parsed is None:
+            await cb.answer("❌ Некорректный запрос.", show_alert=True)
+            return None
+        return parsed.value
 
     @router.callback_query(F.data == "pe:edit:positive")
     async def pe_edit_positive(cb: CallbackQuery, state: FSMContext):
@@ -408,21 +416,17 @@ def register_prompt_editor_edit_handlers(
 
     @router.callback_query(F.data.startswith("pe_cns:"))
     async def pe_controlnet_strength_chosen(cb: CallbackQuery, state: FSMContext):
-        message = _callback_message(cb)
+        message = await require_callback_message(cb)
         if message is None:
-            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
             return
         payload = await deps.require_prompt_request_for_callback(cb)
         if not payload:
             return
 
         uid, req = payload
-        data_value = cb.data or ""
-        parts = data_value.split(":")
-        if len(parts) < 2:
-            await cb.answer("❌ Некорректный запрос.", show_alert=True)
+        value = await _selected_value(cb, prefix="pe_cns")
+        if value is None:
             return
-        value = parts[1]
         if value == "custom":
             await state.set_state(PromptEditorStates.entering_custom_controlnet_strength)
             await message.edit_text(
@@ -468,9 +472,8 @@ def register_prompt_editor_edit_handlers(
 
     @router.callback_query(F.data == "pe:edit:size")
     async def pe_edit_size(cb: CallbackQuery):
-        message = _callback_message(cb)
+        message = await require_callback_message(cb)
         if message is None:
-            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
             return
         rows: list[list[InlineKeyboardButton]] = []
         row: list[InlineKeyboardButton] = []
@@ -498,21 +501,19 @@ def register_prompt_editor_edit_handlers(
 
     @router.callback_query(F.data.startswith("pe_size:"))
     async def pe_size_chosen(cb: CallbackQuery, state: FSMContext):
-        message = _callback_message(cb)
+        message = await require_callback_message(cb)
         if message is None:
-            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
             return
         payload = await deps.require_prompt_request_for_callback(cb)
         if not payload:
             return
 
         uid, req = payload
-        data_value = cb.data or ""
-        parts = data_value.split(":")
-        if len(parts) < 2:
+        parsed = ValueSelectionCallback.parse(cb.data or "", prefix="pe_size")
+        if parsed is None:
             await cb.answer("❌ Некорректный запрос.", show_alert=True)
             return
-        if parts[1] == "custom":
+        if parsed.value == "custom":
             await state.set_state(PromptEditorStates.entering_custom_size)
             await message.edit_text(
                 "Введите размер ШИРИНАxВЫСОТА (например 640x960):",
@@ -521,10 +522,15 @@ def register_prompt_editor_edit_handlers(
             await cb.answer()
             return
 
-        if len(parts) < 3:
+        size_parts = parsed.value.split(":", 1)
+        if len(size_parts) != 2:
             await cb.answer("❌ Некорректный размер.", show_alert=True)
             return
-        req.params.width, req.params.height = int(parts[1]), int(parts[2])
+        try:
+            req.params.width, req.params.height = int(size_parts[0]), int(size_parts[1])
+        except ValueError:
+            await cb.answer("❌ Некорректный размер.", show_alert=True)
+            return
         await deps.show_prompt_editor(message, state, uid, edit=True, notice="✅ Размер обновлён.")
         await cb.answer()
 
@@ -555,9 +561,8 @@ def register_prompt_editor_edit_handlers(
 
     @router.callback_query(F.data == "pe:edit:steps")
     async def pe_edit_steps(cb: CallbackQuery):
-        message = _callback_message(cb)
+        message = await require_callback_message(cb)
         if message is None:
-            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
             return
         kb = InlineKeyboardMarkup(
             inline_keyboard=[
@@ -587,21 +592,17 @@ def register_prompt_editor_edit_handlers(
 
     @router.callback_query(F.data.startswith("pe_steps:"))
     async def pe_steps_chosen(cb: CallbackQuery, state: FSMContext):
-        message = _callback_message(cb)
+        message = await require_callback_message(cb)
         if message is None:
-            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
             return
         payload = await deps.require_prompt_request_for_callback(cb)
         if not payload:
             return
 
         uid, req = payload
-        data_value = cb.data or ""
-        parts = data_value.split(":")
-        if len(parts) < 2:
-            await cb.answer("❌ Некорректный запрос.", show_alert=True)
+        value = await _selected_value(cb, prefix="pe_steps")
+        if value is None:
             return
-        value = parts[1]
         if value == "custom":
             await state.set_state(PromptEditorStates.entering_custom_steps)
             await message.edit_text(
@@ -636,9 +637,8 @@ def register_prompt_editor_edit_handlers(
 
     @router.callback_query(F.data == "pe:edit:cfg")
     async def pe_edit_cfg(cb: CallbackQuery):
-        message = _callback_message(cb)
+        message = await require_callback_message(cb)
         if message is None:
-            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
             return
         kb = InlineKeyboardMarkup(
             inline_keyboard=[
@@ -668,21 +668,17 @@ def register_prompt_editor_edit_handlers(
 
     @router.callback_query(F.data.startswith("pe_cfg:"))
     async def pe_cfg_chosen(cb: CallbackQuery, state: FSMContext):
-        message = _callback_message(cb)
+        message = await require_callback_message(cb)
         if message is None:
-            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
             return
         payload = await deps.require_prompt_request_for_callback(cb)
         if not payload:
             return
 
         uid, req = payload
-        data_value = cb.data or ""
-        parts = data_value.split(":")
-        if len(parts) < 2:
-            await cb.answer("❌ Некорректный запрос.", show_alert=True)
+        value = await _selected_value(cb, prefix="pe_cfg")
+        if value is None:
             return
-        value = parts[1]
         if value == "custom":
             await state.set_state(PromptEditorStates.entering_custom_cfg)
             await message.edit_text(
@@ -717,9 +713,8 @@ def register_prompt_editor_edit_handlers(
 
     @router.callback_query(F.data == "pe:edit:denoise")
     async def pe_edit_denoise(cb: CallbackQuery):
-        message = _callback_message(cb)
+        message = await require_callback_message(cb)
         if message is None:
-            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
             return
         kb = InlineKeyboardMarkup(
             inline_keyboard=[
@@ -745,21 +740,17 @@ def register_prompt_editor_edit_handlers(
 
     @router.callback_query(F.data.startswith("pe_dn:"))
     async def pe_dn_chosen(cb: CallbackQuery, state: FSMContext):
-        message = _callback_message(cb)
+        message = await require_callback_message(cb)
         if message is None:
-            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
             return
         payload = await deps.require_prompt_request_for_callback(cb)
         if not payload:
             return
 
         uid, req = payload
-        data_value = cb.data or ""
-        parts = data_value.split(":")
-        if len(parts) < 2:
-            await cb.answer("❌ Некорректный запрос.", show_alert=True)
+        value = await _selected_value(cb, prefix="pe_dn")
+        if value is None:
             return
-        value = parts[1]
         if value == "custom":
             await state.set_state(PromptEditorStates.entering_custom_denoise)
             await message.edit_text(
@@ -794,9 +785,8 @@ def register_prompt_editor_edit_handlers(
 
     @router.callback_query(F.data == "pe:edit:ref_strength")
     async def pe_edit_ref_strength(cb: CallbackQuery):
-        message = _callback_message(cb)
+        message = await require_callback_message(cb)
         if message is None:
-            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
             return
         kb = InlineKeyboardMarkup(
             inline_keyboard=[
@@ -834,21 +824,17 @@ def register_prompt_editor_edit_handlers(
 
     @router.callback_query(F.data.startswith("pe_rstr:"))
     async def pe_ref_strength_chosen(cb: CallbackQuery, state: FSMContext):
-        message = _callback_message(cb)
+        message = await require_callback_message(cb)
         if message is None:
-            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
             return
         payload = await deps.require_prompt_request_for_callback(cb)
         if not payload:
             return
 
         uid, req = payload
-        data_value = cb.data or ""
-        parts = data_value.split(":")
-        if len(parts) < 2:
-            await cb.answer("❌ Некорректный запрос.", show_alert=True)
+        value = await _selected_value(cb, prefix="pe_rstr")
+        if value is None:
             return
-        value = parts[1]
         if value == "custom":
             await state.set_state(PromptEditorStates.entering_custom_reference_strength)
             await message.edit_text(
@@ -889,9 +875,8 @@ def register_prompt_editor_edit_handlers(
 
     @router.callback_query(F.data == "pe:edit:seed")
     async def pe_edit_seed(cb: CallbackQuery):
-        message = _callback_message(cb)
+        message = await require_callback_message(cb)
         if message is None:
-            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
             return
         kb = InlineKeyboardMarkup(
             inline_keyboard=[
@@ -910,21 +895,17 @@ def register_prompt_editor_edit_handlers(
 
     @router.callback_query(F.data.startswith("pe_seed:"))
     async def pe_seed_chosen(cb: CallbackQuery, state: FSMContext):
-        message = _callback_message(cb)
+        message = await require_callback_message(cb)
         if message is None:
-            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
             return
         payload = await deps.require_prompt_request_for_callback(cb)
         if not payload:
             return
 
         uid, req = payload
-        data_value = cb.data or ""
-        parts = data_value.split(":")
-        if len(parts) < 2:
-            await cb.answer("❌ Некорректный запрос.", show_alert=True)
+        value = await _selected_value(cb, prefix="pe_seed")
+        if value is None:
             return
-        value = parts[1]
         if value == "custom":
             await state.set_state(PromptEditorStates.entering_custom_seed)
             await message.edit_text(
@@ -959,9 +940,8 @@ def register_prompt_editor_edit_handlers(
 
     @router.callback_query(F.data == "pe:edit:batch")
     async def pe_edit_batch(cb: CallbackQuery):
-        message = _callback_message(cb)
+        message = await require_callback_message(cb)
         if message is None:
-            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
             return
         kb = InlineKeyboardMarkup(
             inline_keyboard=[
@@ -983,21 +963,17 @@ def register_prompt_editor_edit_handlers(
 
     @router.callback_query(F.data.startswith("pe_batch:"))
     async def pe_batch_chosen(cb: CallbackQuery, state: FSMContext):
-        message = _callback_message(cb)
+        message = await require_callback_message(cb)
         if message is None:
-            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
             return
         payload = await deps.require_prompt_request_for_callback(cb)
         if not payload:
             return
 
         uid, req = payload
-        data_value = cb.data or ""
-        parts = data_value.split(":")
-        if len(parts) < 2:
-            await cb.answer("❌ Некорректный запрос.", show_alert=True)
+        value = await _selected_value(cb, prefix="pe_batch")
+        if value is None:
             return
-        value = parts[1]
         if value == "custom":
             await state.set_state(PromptEditorStates.entering_custom_batch)
             await message.edit_text(
@@ -1041,9 +1017,8 @@ def register_prompt_editor_edit_handlers(
 
     @router.callback_query(F.data == "pe:toggle:mode")
     async def pe_toggle_mode(cb: CallbackQuery, state: FSMContext):
-        message = _callback_message(cb)
+        message = await require_callback_message(cb)
         if message is None:
-            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
             return
         payload = await deps.require_prompt_request_for_callback(cb)
         if not payload:

@@ -43,3 +43,19 @@ class PagedSelectionCallback:
         except ValueError:
             return None
         return cls(prefix=prefix, page=page)
+
+
+@dataclass(frozen=True)
+class ValueSelectionCallback:
+    prefix: str
+    value: str
+
+    def pack(self) -> str:
+        return f"{self.prefix}:{self.value}"
+
+    @classmethod
+    def parse(cls, data: str, *, prefix: str) -> ValueSelectionCallback | None:
+        marker = f"{prefix}:"
+        if not data.startswith(marker):
+            return None
+        return cls(prefix=prefix, value=data[len(marker) :])

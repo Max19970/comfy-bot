@@ -10,9 +10,11 @@ import aiohttp
 from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
+from aiogram.types import CallbackQuery, Message
 
 from core.states import DeleteModelStates
+from core.ui_kit import back_button, build_keyboard
+from core.ui_kit.buttons import menu_root_button
 
 
 @dataclass
@@ -53,10 +55,10 @@ def register_common_delete_handlers(deps: CommonDeleteDeps) -> None:
     router = deps.router
 
     def _models_back_keyboard() -> Any:
-        return InlineKeyboardMarkup(
-            inline_keyboard=[
-                [InlineKeyboardButton(text="⬅️ Модели", callback_data="menu:models")],
-                [InlineKeyboardButton(text="🏠 В меню", callback_data="menu:root")],
+        return build_keyboard(
+            [
+                [back_button("menu:models", text="⬅️ Модели")],
+                [menu_root_button()],
             ]
         )
 
@@ -507,3 +509,26 @@ def register_common_jobs_handlers(deps: CommonJobsDeps) -> None:
             return
         await message.answer("📌 Исходное сообщение задачи", reply_to_message_id=status_message_id)
         await cb.answer("Готово")
+
+    @router.callback_query(F.data == "menu:jobs:cancel_all")
+    async def menu_jobs_cancel_all(cb: CallbackQuery):
+        message = deps.callback_message(cb)
+        if message is None:
+            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
+            return
+
+        uid = deps.callback_user_id(cb)
+        items = deps.user_generations(deps.runtime, uid)
+        if not items:
+            await cb.answer("Активных задач нет.", show_alert=True)
+            await _show_jobs(message, uid, page=0)
+            return
+
+        for item in items:
+            if item.task is not None and not item.task.done():
+                item.task.cancel()
+            if item.prompt_id:
+                asyncio.create_task(deps.client.cancel_prompt(item.prompt_id))
+
+        await cb.answer(f"🛑 Отмена запрошена для {len(items)} задач")
+        await _show_jobs(message, uid, page=0)

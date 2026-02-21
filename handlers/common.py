@@ -23,6 +23,8 @@ from core.queue_utils import queue_item_prompt_id
 from core.runtime import RuntimeStore
 from core.telegram import callback_user_id, message_user_id
 from core.ui_copy import FALLBACK_TEXT, START_TEXT, main_menu_keyboard
+from core.ui_kit import back_button, build_keyboard
+from core.ui_kit.buttons import button, cancel_button, noop_button
 from model_downloader import ModelDownloader
 
 from .common_core_handlers import CommonCoreDeps, register_common_core_handlers
@@ -85,77 +87,34 @@ DELETE_PAGE_SIZE = 8
 
 
 def _generation_menu_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="✨ Новая генерация",
-                    callback_data="menu:generate",
-                )
-            ],
-            [InlineKeyboardButton(text="🔁 Повтор", callback_data="menu:repeat")],
-            [InlineKeyboardButton(text="📂 Пресеты", callback_data="menu:presets")],
-            [
-                InlineKeyboardButton(
-                    text="⬅️ В меню",
-                    callback_data="menu:root",
-                )
-            ],
+    return build_keyboard(
+        [
+            [button("✨ Новая генерация", "menu:generate")],
+            [button("🔁 Повтор", "menu:repeat")],
+            [button("📂 Пресеты", "menu:presets")],
+            [back_button("menu:root", text="⬅️ В меню")],
         ]
     )
 
 
 def _models_menu_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="⬇️ Скачать модель",
-                    callback_data="menu:download",
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="🧪 Обновить список",
-                    callback_data="menu:models_refresh",
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="🗑 Удалить локальную",
-                    callback_data="menu:delete_model",
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="⬅️ В меню",
-                    callback_data="menu:root",
-                )
-            ],
+    return build_keyboard(
+        [
+            [button("⬇️ Скачать модель", "menu:download")],
+            [button("🧪 Обновить список", "menu:models_refresh")],
+            [button("🗑 Удалить локальную", "menu:delete_model")],
+            [back_button("menu:root", text="⬅️ В меню")],
         ]
     )
 
 
 def _service_menu_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="🧵 Мои задачи",
-                    callback_data="menu:jobs",
-                )
-            ],
-            [
-                InlineKeyboardButton(text="📊 Очередь", callback_data="menu:queue"),
-                InlineKeyboardButton(text="⚙️ Настройки", callback_data="menu:settings"),
-            ],
-            [InlineKeyboardButton(text="🎓 Обучение", callback_data="menu:training")],
-            [
-                InlineKeyboardButton(
-                    text="⬅️ В меню",
-                    callback_data="menu:root",
-                )
-            ],
+    return build_keyboard(
+        [
+            [button("🧵 Мои задачи", "menu:jobs")],
+            [button("📊 Очередь", "menu:queue"), button("⚙️ Настройки", "menu:settings")],
+            [button("🎓 Обучение", "menu:training")],
+            [back_button("menu:root", text="⬅️ В меню")],
         ]
     )
 
@@ -185,72 +144,32 @@ def _jobs_keyboard(
 
     nav: list[InlineKeyboardButton] = []
     if page > 0:
-        nav.append(
-            InlineKeyboardButton(
-                text="◀️",
-                callback_data=f"menu:jobs:page:{page - 1}",
-            )
-        )
-    nav.append(
-        InlineKeyboardButton(
-            text=f"· {page + 1}/{total_pages} ·",
-            callback_data="noop",
-        )
-    )
+        nav.append(button("◀️", f"menu:jobs:page:{page - 1}"))
+    nav.append(noop_button(f"· {page + 1}/{total_pages} ·"))
     if page < total_pages - 1:
-        nav.append(
-            InlineKeyboardButton(
-                text="▶️",
-                callback_data=f"menu:jobs:page:{page + 1}",
-            )
-        )
+        nav.append(button("▶️", f"menu:jobs:page:{page + 1}"))
     rows.append(nav)
 
     rows.append(
         [
-            InlineKeyboardButton(
-                text="🔄 Обновить",
-                callback_data=f"menu:jobs:page:{page}",
-            ),
-            InlineKeyboardButton(
-                text="❌ Отменить все",
-                callback_data="menu:cancel",
-            ),
+            button("🔄 Обновить", f"menu:jobs:page:{page}"),
+            cancel_button("menu:jobs:cancel_all", text="❌ Отменить все"),
         ]
     )
-    rows.append(
-        [
-            InlineKeyboardButton(
-                text="⬅️ Сервис",
-                callback_data="menu:service",
-            )
-        ]
-    )
-    return InlineKeyboardMarkup(inline_keyboard=rows)
+    rows.append([back_button("menu:service", text="⬅️ Сервис")])
+    return build_keyboard(rows)
 
 
 def _job_detail_keyboard(generation_id: str) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
+    return build_keyboard(
+        [
             [
-                InlineKeyboardButton(
-                    text="🔄 Обновить",
-                    callback_data=f"menu:jobs:open:{generation_id}",
-                ),
-                InlineKeyboardButton(
-                    text="📌 К источнику",
-                    callback_data=f"menu:jobs:goto:{generation_id}",
-                ),
+                button("🔄 Обновить", f"menu:jobs:open:{generation_id}"),
+                button("📌 К источнику", f"menu:jobs:goto:{generation_id}"),
             ],
             [
-                InlineKeyboardButton(
-                    text="🛑 Отменить задачу",
-                    callback_data=f"menu:jobs:cancel:{generation_id}",
-                ),
-                InlineKeyboardButton(
-                    text="⬅️ К списку",
-                    callback_data="menu:jobs",
-                ),
+                button("🛑 Отменить задачу", f"menu:jobs:cancel:{generation_id}"),
+                back_button("menu:jobs", text="⬅️ К списку"),
             ],
         ]
     )
@@ -278,8 +197,8 @@ def _delete_types_keyboard() -> InlineKeyboardMarkup:
                 )
             ]
         )
-    rows.append([InlineKeyboardButton(text="❌ Отмена", callback_data="dmdl:cancel")])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
+    rows.append([cancel_button("dmdl:cancel")])
+    return build_keyboard(rows)
 
 
 def _delete_files_keyboard(
@@ -307,34 +226,26 @@ def _delete_files_keyboard(
 
     nav: list[InlineKeyboardButton] = []
     if page > 0:
-        nav.append(InlineKeyboardButton(text="◀️", callback_data=f"dmdl:page:{page - 1}"))
-    nav.append(
-        InlineKeyboardButton(
-            text=f"· {page + 1}/{total_pages} ·",
-            callback_data="noop",
-        )
-    )
+        nav.append(button("◀️", f"dmdl:page:{page - 1}"))
+    nav.append(noop_button(f"· {page + 1}/{total_pages} ·"))
     if page < total_pages - 1:
-        nav.append(InlineKeyboardButton(text="▶️", callback_data=f"dmdl:page:{page + 1}"))
+        nav.append(button("▶️", f"dmdl:page:{page + 1}"))
     rows.append(nav)
 
     rows.append(
         [
-            InlineKeyboardButton(text="⬅️ Тип", callback_data="dmdl:back:type"),
-            InlineKeyboardButton(text="❌ Отмена", callback_data="dmdl:cancel"),
+            back_button("dmdl:back:type", text="⬅️ Тип"),
+            cancel_button("dmdl:cancel"),
         ]
     )
-    return InlineKeyboardMarkup(inline_keyboard=rows)
+    return build_keyboard(rows)
 
 
 def _delete_confirm_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(text="🗑 Удалить", callback_data="dmdl:confirm:yes"),
-                InlineKeyboardButton(text="⬅️ Назад", callback_data="dmdl:confirm:no"),
-            ],
-            [InlineKeyboardButton(text="❌ Отмена", callback_data="dmdl:cancel")],
+    return build_keyboard(
+        [
+            [button("🗑 Удалить", "dmdl:confirm:yes"), back_button("dmdl:confirm:no")],
+            [cancel_button("dmdl:cancel")],
         ]
     )
 

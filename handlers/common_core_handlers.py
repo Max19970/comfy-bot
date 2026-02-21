@@ -14,6 +14,8 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from core.states import ServiceSettingsStates
+from core.ui_kit import back_button, build_keyboard
+from core.ui_kit.buttons import button, menu_root_button, noop_button
 
 
 @dataclass
@@ -43,18 +45,18 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
     router = deps.router
 
     def _service_back_keyboard() -> InlineKeyboardMarkup:
-        return InlineKeyboardMarkup(
-            inline_keyboard=[
-                [InlineKeyboardButton(text="⬅️ Сервис", callback_data="menu:service")],
-                [InlineKeyboardButton(text="🏠 В меню", callback_data="menu:root")],
+        return build_keyboard(
+            [
+                [back_button("menu:service", text="⬅️ Сервис")],
+                [menu_root_button()],
             ]
         )
 
     def _models_back_keyboard() -> InlineKeyboardMarkup:
-        return InlineKeyboardMarkup(
-            inline_keyboard=[
-                [InlineKeyboardButton(text="⬅️ Модели", callback_data="menu:models")],
-                [InlineKeyboardButton(text="🏠 В меню", callback_data="menu:root")],
+        return build_keyboard(
+            [
+                [back_button("menu:models", text="⬅️ Модели")],
+                [menu_root_button()],
             ]
         )
 
@@ -127,30 +129,26 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
         rows: list[list[InlineKeyboardButton]] = []
         nav: list[InlineKeyboardButton] = []
         if page > 0:
-            nav.append(
-                InlineKeyboardButton(text="◀️", callback_data=f"menu:training:page:{page - 1}")
-            )
-        nav.append(InlineKeyboardButton(text=f"· {page + 1}/{total} ·", callback_data="noop"))
+            nav.append(button("◀️", f"menu:training:page:{page - 1}"))
+        nav.append(noop_button(f"· {page + 1}/{total} ·"))
         if page < total - 1:
-            nav.append(
-                InlineKeyboardButton(text="▶️", callback_data=f"menu:training:page:{page + 1}")
-            )
+            nav.append(button("▶️", f"menu:training:page:{page + 1}"))
         rows.append(nav)
         rows.append(
             [
-                InlineKeyboardButton(
-                    text=("✅ Простой" if mode == "simple" else "Простой"),
-                    callback_data="menu:training:mode:simple",
+                button(
+                    ("✅ Простой" if mode == "simple" else "Простой"),
+                    "menu:training:mode:simple",
                 ),
-                InlineKeyboardButton(
-                    text=("✅ Расширенный" if mode == "advanced" else "Расширенный"),
-                    callback_data="menu:training:mode:advanced",
+                button(
+                    ("✅ Расширенный" if mode == "advanced" else "Расширенный"),
+                    "menu:training:mode:advanced",
                 ),
             ]
         )
-        rows.append([InlineKeyboardButton(text="⬅️ Сервис", callback_data="menu:service")])
-        rows.append([InlineKeyboardButton(text="🏠 В меню", callback_data="menu:root")])
-        return InlineKeyboardMarkup(inline_keyboard=rows)
+        rows.append([back_button("menu:service", text="⬅️ Сервис")])
+        rows.append([menu_root_button()])
+        return build_keyboard(rows)
 
     async def _show_training(message: Message, uid: int, *, page: int | None = None) -> None:
         pages = _training_pages()

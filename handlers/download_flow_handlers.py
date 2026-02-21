@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass
-from typing import Any, cast
+from typing import Any
 
 import aiohttp
 from aiogram import F, Router
@@ -12,8 +12,12 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
+from core.callbacks import ValueSelectionCallback
 from core.html_utils import h
+from core.interaction import require_callback_message
 from core.states import DownloadStates
+from core.ui_kit import back_button, build_keyboard
+from core.ui_kit.buttons import button, cancel_button, menu_root_button
 
 
 @dataclass
@@ -52,25 +56,20 @@ def register_download_flow_handlers(deps: DownloadFlowDeps) -> None:
     default_page_size = 8
 
     def _models_back_keyboard() -> InlineKeyboardMarkup:
-        return InlineKeyboardMarkup(
-            inline_keyboard=[
-                [InlineKeyboardButton(text="⬅️ Модели", callback_data="menu:models")],
-                [InlineKeyboardButton(text="🏠 В меню", callback_data="menu:root")],
+        return build_keyboard(
+            [
+                [back_button("menu:models", text="⬅️ Модели")],
+                [menu_root_button()],
             ]
         )
 
     def _download_done_keyboard() -> InlineKeyboardMarkup:
-        return InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(
-                        text="⬅️ К результатам",
-                        callback_data="dldone:results",
-                    )
-                ],
-                [InlineKeyboardButton(text="🔎 Новый поиск", callback_data="dldone:new")],
-                [InlineKeyboardButton(text="⬅️ Модели", callback_data="menu:models")],
-                [InlineKeyboardButton(text="🏠 В меню", callback_data="menu:root")],
+        return build_keyboard(
+            [
+                [back_button("dldone:results", text="⬅️ К результатам")],
+                [button("🔎 Новый поиск", "dldone:new")],
+                [back_button("menu:models", text="⬅️ Модели")],
+                [menu_root_button()],
             ]
         )
 
@@ -165,28 +164,46 @@ def register_download_flow_handlers(deps: DownloadFlowDeps) -> None:
             civitai_authors=(author_filters if source in {"civitai", "all"} else []),
         )
 
+    async def _callback_message(cb: CallbackQuery) -> Message | None:
+        return await require_callback_message(cb)
+
+    async def _callback_value(
+        cb: CallbackQuery,
+        *,
+        prefix: str,
+        invalid_text: str,
+    ) -> str | None:
+        parsed = ValueSelectionCallback.parse(cb.data or "", prefix=prefix)
+        if parsed is None:
+            await cb.answer(invalid_text, show_alert=True)
+            return None
+        return parsed.value
+
     @router.message(Command("download"))
     async def cmd_download(msg: Message, state: FSMContext):
         await deps.start_download(msg, state, deps.message_user_id(msg))
 
     @router.callback_query(F.data == "menu:download")
     async def menu_download(cb: CallbackQuery, state: FSMContext):
-        if cb.message is None or not hasattr(cb.message, "edit_text"):
-            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
+        message = await _callback_message(cb)
+        if message is None:
             return
-        message = cast(Message, cb.message)
         await deps.start_download(message, state, deps.callback_user_id(cb))
         await cb.answer()
 
     @router.callback_query(DownloadStates.choosing_type, F.data.startswith("dltype:"))
     async def dl_type_chosen(cb: CallbackQuery, state: FSMContext):
-        model_type = (cb.data or "").split(":", 1)[1]
+        model_type = await _callback_value(
+            cb, prefix="dltype", invalid_text="❌ Неверный выбор типа."
+        )
+        if model_type is None:
+            return
         if model_type == "cancel":
             await state.clear()
-            if cb.message is not None and hasattr(cb.message, "edit_text"):
-                await cast(Message, cb.message).edit_text(
-                    "❌ Скачивание отменено.",
-                    reply_markup=_models_back_keyboard(),
+            message = await _callback_message(cb)
+            if message is not None:
+                await message.edit_text(
+                    "❌ Скачивание отменено.", reply_markup=_models_back_keyboard()
                 )
             await cb.answer()
             return
@@ -207,8 +224,9 @@ def register_download_flow_handlers(deps: DownloadFlowDeps) -> None:
         defaults = _download_defaults_for_user(uid, inferred_base=inferred_base)
         await state.update_data(dl_type=model_type, **defaults)
         await state.set_state(DownloadStates.choosing_source)
-        if cb.message is not None and hasattr(cb.message, "edit_text"):
-            await cast(Message, cb.message).edit_text(
+        message = await _callback_message(cb)
+        if message is not None:
+            await message.edit_text(
                 f"🔍 <b>Где искать {h(deps.type_title(model_type))}?</b>",
                 reply_markup=deps.build_source_keyboard(),
             )
@@ -216,11 +234,14 @@ def register_download_flow_handlers(deps: DownloadFlowDeps) -> None:
 
     @router.callback_query(DownloadStates.choosing_source, F.data.startswith("dlsrc:"))
     async def dl_src_chosen(cb: CallbackQuery, state: FSMContext):
-        source = (cb.data or "").split(":", 1)[1]
+        source = await _callback_value(cb, prefix="dlsrc", invalid_text="❌ Неверный источник.")
+        if source is None:
+            return
         if source == "back":
             await state.set_state(DownloadStates.choosing_type)
-            if cb.message is not None and hasattr(cb.message, "edit_text"):
-                await cast(Message, cb.message).edit_text(
+            message = await _callback_message(cb)
+            if message is not None:
+                await message.edit_text(
                     "📦 <b>Скачивание компонентов</b>\nВыберите тип:",
                     reply_markup=deps.build_type_keyboard(),
                 )
@@ -229,26 +250,28 @@ def register_download_flow_handlers(deps: DownloadFlowDeps) -> None:
 
         await state.update_data(dl_source=source)
         await state.set_state(DownloadStates.choosing_filters)
-        if cb.message is not None and hasattr(cb.message, "edit_text"):
-            await deps.show_filter_menu(cast(Message, cb.message), state, edit=True)
+        message = await _callback_message(cb)
+        if message is not None:
+            await deps.show_filter_menu(message, state, edit=True)
         await cb.answer()
 
     @router.callback_query(DownloadStates.choosing_filters, F.data.startswith("dlflt:"))
     async def dl_filter_chosen(cb: CallbackQuery, state: FSMContext):
+        message = await _callback_message(cb)
+        if message is None:
+            return
         payload = (cb.data or "").split(":")
         action = payload[1] if len(payload) > 1 else ""
 
         if action == "go":
             await state.set_state(DownloadStates.entering_query)
-            if cb.message is not None and hasattr(cb.message, "edit_text"):
-                await deps.show_query_prompt(cast(Message, cb.message), state, edit=True)
+            await deps.show_query_prompt(message, state, edit=True)
             await cb.answer()
             return
 
         if action == "author":
             await state.set_state(DownloadStates.entering_author)
-            if cb.message is not None and hasattr(cb.message, "edit_text"):
-                await deps.show_author_prompt(cast(Message, cb.message), state, edit=True)
+            await deps.show_author_prompt(message, state, edit=True)
             await cb.answer()
             return
 
@@ -256,8 +279,7 @@ def register_download_flow_handlers(deps: DownloadFlowDeps) -> None:
             data = await state.get_data()
             updated = _apply_profile(data, payload[2])
             await state.update_data(**updated)
-            if cb.message is not None and hasattr(cb.message, "edit_text"):
-                await deps.show_filter_menu(cast(Message, cb.message), state, edit=True)
+            await deps.show_filter_menu(message, state, edit=True)
             await cb.answer("✅ Профиль применён")
             return
 
@@ -271,14 +293,12 @@ def register_download_flow_handlers(deps: DownloadFlowDeps) -> None:
                 await cb.answer("Некорректный размер страницы.", show_alert=True)
                 return
             await state.update_data(dl_page_size=page_size)
-            if cb.message is not None and hasattr(cb.message, "edit_text"):
-                await deps.show_filter_menu(cast(Message, cb.message), state, edit=True)
+            await deps.show_filter_menu(message, state, edit=True)
             await cb.answer("✅ Размер страницы обновлён")
             return
 
         if action == "base_menu":
-            if cb.message is not None and hasattr(cb.message, "edit_text"):
-                await deps.show_base_filter_menu(cast(Message, cb.message), state, edit=True)
+            await deps.show_base_filter_menu(message, state, edit=True)
             await cb.answer()
             return
 
@@ -286,11 +306,10 @@ def register_download_flow_handlers(deps: DownloadFlowDeps) -> None:
             data = await state.get_data()
             model_type = data.get("dl_type", "checkpoint")
             await state.set_state(DownloadStates.choosing_source)
-            if cb.message is not None and hasattr(cb.message, "edit_text"):
-                await cast(Message, cb.message).edit_text(
-                    f"🔍 <b>Где искать {h(deps.type_title(model_type))}?</b>",
-                    reply_markup=deps.build_source_keyboard(),
-                )
+            await message.edit_text(
+                f"🔍 <b>Где искать {h(deps.type_title(model_type))}?</b>",
+                reply_markup=deps.build_source_keyboard(),
+            )
             await cb.answer()
             return
 
@@ -304,21 +323,24 @@ def register_download_flow_handlers(deps: DownloadFlowDeps) -> None:
             data = await state.get_data()
             await state.update_data(dl_nsfw=not bool(data.get("dl_nsfw", False)))
 
-        if cb.message is not None and hasattr(cb.message, "edit_text"):
-            await deps.show_filter_menu(cast(Message, cb.message), state, edit=True)
+        await deps.show_filter_menu(message, state, edit=True)
         await cb.answer()
 
     @router.callback_query(DownloadStates.choosing_filters, F.data == "dlbase:back")
     async def dl_base_back(cb: CallbackQuery, state: FSMContext):
-        if cb.message is not None and hasattr(cb.message, "edit_text"):
-            await deps.show_filter_menu(cast(Message, cb.message), state, edit=True)
+        message = await _callback_message(cb)
+        if message is None:
+            return
+        await deps.show_filter_menu(message, state, edit=True)
         await cb.answer()
 
     @router.callback_query(DownloadStates.entering_author, F.data == "dlauth:back")
     async def dl_author_back(cb: CallbackQuery, state: FSMContext):
         await state.set_state(DownloadStates.choosing_filters)
-        if cb.message is not None and hasattr(cb.message, "edit_text"):
-            await deps.show_filter_menu(cast(Message, cb.message), state, edit=True)
+        message = await _callback_message(cb)
+        if message is None:
+            return
+        await deps.show_filter_menu(message, state, edit=True)
         await cb.answer()
 
     @router.message(DownloadStates.entering_author, F.text)
@@ -342,8 +364,10 @@ def register_download_flow_handlers(deps: DownloadFlowDeps) -> None:
     @router.callback_query(DownloadStates.entering_query, F.data == "dlqry:back")
     async def dl_query_back(cb: CallbackQuery, state: FSMContext):
         await state.set_state(DownloadStates.choosing_filters)
-        if cb.message is not None and hasattr(cb.message, "edit_text"):
-            await deps.show_filter_menu(cast(Message, cb.message), state, edit=True)
+        message = await _callback_message(cb)
+        if message is None:
+            return
+        await deps.show_filter_menu(message, state, edit=True)
         await cb.answer()
 
     @router.message(DownloadStates.entering_query, F.text)
@@ -375,15 +399,8 @@ def register_download_flow_handlers(deps: DownloadFlowDeps) -> None:
         except (aiohttp.ClientError, asyncio.TimeoutError, RuntimeError, ValueError) as exc:
             await status.edit_text(
                 f"❌ <b>Ошибка поиска:</b> <code>{h(exc)}</code>",
-                reply_markup=InlineKeyboardMarkup(
-                    inline_keyboard=[
-                        [
-                            InlineKeyboardButton(
-                                text="⬅️ Назад к фильтрам",
-                                callback_data="dlqry:back",
-                            )
-                        ]
-                    ]
+                reply_markup=build_keyboard(
+                    [[back_button("dlqry:back", text="⬅️ Назад к фильтрам")]]
                 ),
             )
             return
@@ -391,15 +408,8 @@ def register_download_flow_handlers(deps: DownloadFlowDeps) -> None:
         if not results:
             await status.edit_text(
                 "❌ Ничего не найдено. Попробуйте другой запрос или измените фильтры.",
-                reply_markup=InlineKeyboardMarkup(
-                    inline_keyboard=[
-                        [
-                            InlineKeyboardButton(
-                                text="⬅️ Назад к фильтрам",
-                                callback_data="dlqry:back",
-                            )
-                        ]
-                    ]
+                reply_markup=build_keyboard(
+                    [[back_button("dlqry:back", text="⬅️ Назад к фильтрам")]]
                 ),
             )
             return
@@ -408,6 +418,7 @@ def register_download_flow_handlers(deps: DownloadFlowDeps) -> None:
             dl_results=[asdict(item) for item in results],
             dl_results_page=0,
             dl_loaded_limit=initial_limit,
+            dl_more_exhausted=False,
         )
         await state.set_state(DownloadStates.choosing_result)
         can_continue = len(results) >= initial_limit
@@ -423,21 +434,24 @@ def register_download_flow_handlers(deps: DownloadFlowDeps) -> None:
 
     @router.callback_query(DownloadStates.choosing_result, F.data.startswith("dlpick:"))
     async def dl_pick(cb: CallbackQuery, state: FSMContext):
-        value = (cb.data or "").split(":", 1)[1]
+        message = await _callback_message(cb)
+        if message is None:
+            return
+        value = await _callback_value(cb, prefix="dlpick", invalid_text="❌ Неверный выбор.")
+        if value is None:
+            return
         if value == "cancel":
             await state.clear()
-            if cb.message is not None and hasattr(cb.message, "edit_text"):
-                await cast(Message, cb.message).edit_text(
-                    "❌ Скачивание отменено.",
-                    reply_markup=_models_back_keyboard(),
-                )
+            await message.edit_text(
+                "❌ Скачивание отменено.",
+                reply_markup=_models_back_keyboard(),
+            )
             await cb.answer()
             return
 
         if value == "new":
             await state.set_state(DownloadStates.entering_query)
-            if cb.message is not None and hasattr(cb.message, "edit_text"):
-                await deps.show_query_prompt(cast(Message, cb.message), state, edit=True)
+            await deps.show_query_prompt(message, state, edit=True)
             await cb.answer()
             return
 
@@ -452,6 +466,7 @@ def register_download_flow_handlers(deps: DownloadFlowDeps) -> None:
             page_size = int(data.get("dl_page_size", default_page_size) or default_page_size)
             page = int(data.get("dl_results_page", 0) or 0)
             loaded_limit = int(data.get("dl_loaded_limit", page_size * 2) or (page_size * 2))
+            exhausted = bool(data.get("dl_more_exhausted", False))
 
             if value == "first":
                 page = 0
@@ -462,6 +477,7 @@ def register_download_flow_handlers(deps: DownloadFlowDeps) -> None:
             elif value == "last":
                 page = max(0, (len(results) - 1) // page_size)
             else:
+                prev_count = len(results)
                 next_limit = min(200, loaded_limit + page_size * 2)
                 if next_limit == loaded_limit:
                     await cb.answer("Больше загрузить нельзя.", show_alert=True)
@@ -472,29 +488,33 @@ def register_download_flow_handlers(deps: DownloadFlowDeps) -> None:
                     await cb.answer(f"Ошибка поиска: {h(exc)}", show_alert=True)
                     return
                 loaded_limit = next_limit
+                exhausted = len(results) <= prev_count
                 await state.update_data(
                     dl_results=[asdict(item) for item in results],
                     dl_loaded_limit=loaded_limit,
+                    dl_more_exhausted=exhausted,
                 )
                 max_page = max(0, (len(results) - 1) // page_size)
                 page = min(page, max_page)
-                await cb.answer("Подгрузил ещё результаты")
+                if exhausted:
+                    await cb.answer("Больше результатов не найдено.")
+                else:
+                    await cb.answer("Подгрузил ещё результаты")
 
             max_page = max(0, (len(results) - 1) // page_size)
             page = max(0, min(page, max_page))
             await state.update_data(dl_results_page=page)
 
-            can_continue = len(results) >= loaded_limit and loaded_limit < 200
-            if cb.message is not None and hasattr(cb.message, "edit_text"):
-                await deps.show_results_menu(
-                    cast(Message, cb.message),
-                    state,
-                    results,
-                    edit=True,
-                    page=page,
-                    page_size=page_size,
-                    can_continue=can_continue,
-                )
+            can_continue = (not exhausted) and len(results) >= loaded_limit and loaded_limit < 200
+            await deps.show_results_menu(
+                message,
+                state,
+                results,
+                edit=True,
+                page=page,
+                page_size=page_size,
+                can_continue=can_continue,
+            )
             if value != "more":
                 await cb.answer()
             return
@@ -529,23 +549,9 @@ def register_download_flow_handlers(deps: DownloadFlowDeps) -> None:
                     label_parts.append(deps.human_size(option.size_bytes))
                 short = " | ".join(label_parts) or f"Версия {idx + 1}"
                 short = short if len(short) <= 58 else short[:55] + "..."
-                rows.append(
-                    [
-                        InlineKeyboardButton(
-                            text=f"{idx + 1}. {short}",
-                            callback_data=f"dlver:{idx}",
-                        )
-                    ]
-                )
-            rows.append([InlineKeyboardButton(text="❌ Отмена", callback_data="dlver:cancel")])
-            rows.append(
-                [
-                    InlineKeyboardButton(
-                        text="⬅️ Назад к результатам",
-                        callback_data="dlver:back",
-                    )
-                ]
-            )
+                rows.append([button(f"{idx + 1}. {short}", f"dlver:{idx}")])
+            rows.append([cancel_button("dlver:cancel")])
+            rows.append([back_button("dlver:back", text="⬅️ Назад к результатам")])
 
             lines = [
                 f"🧬 <b>Выберите версию</b> для <b>{h(result.name)}</b>",
@@ -567,30 +573,29 @@ def register_download_flow_handlers(deps: DownloadFlowDeps) -> None:
                 if meta:
                     lines.append(f"   <i>{h(' | '.join(meta))}</i>")
 
-            if cb.message is not None and hasattr(cb.message, "edit_text"):
-                await cast(Message, cb.message).edit_text(
-                    "\n".join(lines),
-                    reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
-                )
+            await message.edit_text("\n".join(lines), reply_markup=build_keyboard(rows))
             await cb.answer()
             return
 
         await state.update_data(dl_chosen=asdict(result))
         await state.set_state(DownloadStates.confirming_download)
-        if cb.message is not None and hasattr(cb.message, "edit_text"):
-            await deps.show_download_confirmation(cast(Message, cb.message), state, result)
+        await deps.show_download_confirmation(message, state, result)
         await cb.answer()
 
     @router.callback_query(DownloadStates.choosing_version, F.data.startswith("dlver:"))
     async def dl_version_pick(cb: CallbackQuery, state: FSMContext):
-        value = (cb.data or "").split(":", 1)[1]
+        message = await _callback_message(cb)
+        if message is None:
+            return
+        value = await _callback_value(cb, prefix="dlver", invalid_text="❌ Неверный выбор версии.")
+        if value is None:
+            return
         if value == "cancel":
             await state.clear()
-            if cb.message is not None and hasattr(cb.message, "edit_text"):
-                await cast(Message, cb.message).edit_text(
-                    "❌ Скачивание отменено.",
-                    reply_markup=_models_back_keyboard(),
-                )
+            await message.edit_text(
+                "❌ Скачивание отменено.",
+                reply_markup=_models_back_keyboard(),
+            )
             await cb.answer()
             return
 
@@ -604,10 +609,7 @@ def register_download_flow_handlers(deps: DownloadFlowDeps) -> None:
 
             if not results:
                 await state.clear()
-                if cb.message is not None and hasattr(cb.message, "edit_text"):
-                    await cast(Message, cb.message).edit_text(
-                        "❌ Сессия истекла. Запустите /download заново."
-                    )
+                await message.edit_text("❌ Сессия истекла. Запустите /download заново.")
                 await cb.answer()
                 return
 
@@ -615,17 +617,17 @@ def register_download_flow_handlers(deps: DownloadFlowDeps) -> None:
             page_size = int(data.get("dl_page_size", default_page_size) or default_page_size)
             page = int(data.get("dl_results_page", 0) or 0)
             loaded_limit = int(data.get("dl_loaded_limit", page_size * 2) or (page_size * 2))
-            can_continue = len(results) >= loaded_limit and loaded_limit < 200
-            if cb.message is not None and hasattr(cb.message, "edit_text"):
-                await deps.show_results_menu(
-                    cast(Message, cb.message),
-                    state,
-                    results,
-                    edit=True,
-                    page=page,
-                    page_size=page_size,
-                    can_continue=can_continue,
-                )
+            exhausted = bool(data.get("dl_more_exhausted", False))
+            can_continue = (not exhausted) and len(results) >= loaded_limit and loaded_limit < 200
+            await deps.show_results_menu(
+                message,
+                state,
+                results,
+                edit=True,
+                page=page,
+                page_size=page_size,
+                can_continue=can_continue,
+            )
             await cb.answer()
             return
 
@@ -639,10 +641,7 @@ def register_download_flow_handlers(deps: DownloadFlowDeps) -> None:
         chosen_data = data.get("dl_chosen_base")
         if not chosen_data:
             await state.clear()
-            if cb.message is not None and hasattr(cb.message, "edit_text"):
-                await cast(Message, cb.message).edit_text(
-                    "❌ Сессия истекла. Запустите /download заново."
-                )
+            await message.edit_text("❌ Сессия истекла. Запустите /download заново.")
             await cb.answer()
             return
 
@@ -656,8 +655,7 @@ def register_download_flow_handlers(deps: DownloadFlowDeps) -> None:
 
         await state.update_data(dl_chosen=asdict(result), dl_chosen_base=None)
         await state.set_state(DownloadStates.confirming_download)
-        if cb.message is not None and hasattr(cb.message, "edit_text"):
-            await deps.show_download_confirmation(cast(Message, cb.message), state, result)
+        await deps.show_download_confirmation(message, state, result)
         await cb.answer()
 
     @router.callback_query(
@@ -665,7 +663,14 @@ def register_download_flow_handlers(deps: DownloadFlowDeps) -> None:
         F.data.startswith("dlconfirm:"),
     )
     async def dl_confirm(cb: CallbackQuery, state: FSMContext):
-        decision = (cb.data or "").split(":", 1)[1]
+        message = await _callback_message(cb)
+        if message is None:
+            return
+        decision = await _callback_value(
+            cb, prefix="dlconfirm", invalid_text="❌ Неверное действие."
+        )
+        if decision is None:
+            return
         if decision == "back":
             data = await state.get_data()
             results_data = data.get("dl_results", [])
@@ -676,10 +681,7 @@ def register_download_flow_handlers(deps: DownloadFlowDeps) -> None:
 
             if not results:
                 await state.clear()
-                if cb.message is not None and hasattr(cb.message, "edit_text"):
-                    await cast(Message, cb.message).edit_text(
-                        "❌ Сессия истекла. Запустите /download заново."
-                    )
+                await message.edit_text("❌ Сессия истекла. Запустите /download заново.")
                 await cb.answer()
                 return
 
@@ -687,27 +689,26 @@ def register_download_flow_handlers(deps: DownloadFlowDeps) -> None:
             page_size = int(data.get("dl_page_size", default_page_size) or default_page_size)
             page = int(data.get("dl_results_page", 0) or 0)
             loaded_limit = int(data.get("dl_loaded_limit", page_size * 2) or (page_size * 2))
-            can_continue = len(results) >= loaded_limit and loaded_limit < 200
-            if cb.message is not None and hasattr(cb.message, "edit_text"):
-                await deps.show_results_menu(
-                    cast(Message, cb.message),
-                    state,
-                    results,
-                    edit=True,
-                    page=page,
-                    page_size=page_size,
-                    can_continue=can_continue,
-                )
+            exhausted = bool(data.get("dl_more_exhausted", False))
+            can_continue = (not exhausted) and len(results) >= loaded_limit and loaded_limit < 200
+            await deps.show_results_menu(
+                message,
+                state,
+                results,
+                edit=True,
+                page=page,
+                page_size=page_size,
+                can_continue=can_continue,
+            )
             await cb.answer()
             return
 
         if decision == "no":
             await state.clear()
-            if cb.message is not None and hasattr(cb.message, "edit_text"):
-                await cast(Message, cb.message).edit_text(
-                    "❌ Скачивание отменено.",
-                    reply_markup=_models_back_keyboard(),
-                )
+            await message.edit_text(
+                "❌ Скачивание отменено.",
+                reply_markup=_models_back_keyboard(),
+            )
             await cb.answer()
             return
 
@@ -719,8 +720,7 @@ def register_download_flow_handlers(deps: DownloadFlowDeps) -> None:
         chosen_data = data.get("dl_chosen")
         if not chosen_data:
             await state.clear()
-            if cb.message is not None and hasattr(cb.message, "edit_text"):
-                await cast(Message, cb.message).edit_text("❌ Ошибка: выбранная модель не найдена.")
+            await message.edit_text("❌ Ошибка: выбранная модель не найдена.")
             await cb.answer()
             return
 
@@ -744,16 +744,11 @@ def register_download_flow_handlers(deps: DownloadFlowDeps) -> None:
                 ]
             ]
         )
-        if cb.message is None or not hasattr(cb.message, "edit_text"):
-            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
-            return
-
-        source_msg = cast(Message, cb.message)
-        edited = await source_msg.edit_text(
+        edited = await message.edit_text(
             f"⬇️ <b>Скачивание:</b> {h(result.name)}…",
             reply_markup=download_cancel_kb,
         )
-        status_msg: Message = edited if isinstance(edited, Message) else source_msg
+        status_msg: Message = edited if isinstance(edited, Message) else message
         await cb.answer()
 
         import time as _time
@@ -838,17 +833,16 @@ def register_download_flow_handlers(deps: DownloadFlowDeps) -> None:
 
     @router.callback_query(F.data.startswith("dldone:"))
     async def dl_done_actions(cb: CallbackQuery, state: FSMContext):
-        action = (cb.data or "").split(":", 1)[1]
-        message = (
-            cb.message if cb.message is not None and hasattr(cb.message, "edit_text") else None
-        )
+        message = await _callback_message(cb)
+        if message is None:
+            return
+        action = await _callback_value(cb, prefix="dldone", invalid_text="❌ Неизвестное действие.")
+        if action is None:
+            return
 
         if action == "new":
-            if message is None:
-                await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
-                return
             await state.set_state(DownloadStates.entering_query)
-            await deps.show_query_prompt(cast(Message, message), state, edit=True)
+            await deps.show_query_prompt(message, state, edit=True)
             await cb.answer()
             return
 
@@ -866,17 +860,14 @@ def register_download_flow_handlers(deps: DownloadFlowDeps) -> None:
                 )
                 return
 
-            if message is None:
-                await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
-                return
-
             page_size = int(data.get("dl_page_size", default_page_size) or default_page_size)
             page = int(data.get("dl_results_page", 0) or 0)
             loaded_limit = int(data.get("dl_loaded_limit", page_size * 2) or (page_size * 2))
-            can_continue = len(results) >= loaded_limit and loaded_limit < 200
+            exhausted = bool(data.get("dl_more_exhausted", False))
+            can_continue = (not exhausted) and len(results) >= loaded_limit and loaded_limit < 200
             await state.set_state(DownloadStates.choosing_result)
             await deps.show_results_menu(
-                cast(Message, message),
+                message,
                 state,
                 results,
                 edit=True,

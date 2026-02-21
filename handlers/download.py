@@ -18,6 +18,8 @@ from core.panels import render_user_panel
 from core.runtime import RuntimeStore
 from core.states import DownloadStates
 from core.telegram import callback_user_id, message_user_id
+from core.ui_kit import back_button, build_keyboard
+from core.ui_kit.buttons import button, cancel_button, noop_button
 from model_downloader import (
     ModelDownloader,
     SearchResult,
@@ -246,34 +248,24 @@ def _result_button_label(result: SearchResult) -> str:
 
 def _build_type_keyboard() -> InlineKeyboardMarkup:
     rows = [
-        [InlineKeyboardButton(text="Checkpoint", callback_data="dltype:checkpoint")],
-        [InlineKeyboardButton(text="LoRA", callback_data="dltype:lora")],
-        [InlineKeyboardButton(text="Upscaler", callback_data="dltype:upscaler")],
-        [InlineKeyboardButton(text="Embedding", callback_data="dltype:embedding")],
-        [InlineKeyboardButton(text="ControlNet", callback_data="dltype:controlnet")],
-        [InlineKeyboardButton(text="VAE", callback_data="dltype:vae")],
-        [InlineKeyboardButton(text="❌ Отмена", callback_data="dltype:cancel")],
+        [button("Checkpoint", "dltype:checkpoint")],
+        [button("LoRA", "dltype:lora")],
+        [button("Upscaler", "dltype:upscaler")],
+        [button("Embedding", "dltype:embedding")],
+        [button("ControlNet", "dltype:controlnet")],
+        [button("VAE", "dltype:vae")],
+        [cancel_button("dltype:cancel")],
     ]
-    return InlineKeyboardMarkup(inline_keyboard=rows)
+    return build_keyboard(rows)
 
 
 def _build_source_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="CivitAI", callback_data="dlsrc:civitai")],
-            [
-                InlineKeyboardButton(
-                    text="HuggingFace",
-                    callback_data="dlsrc:huggingface",
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="Оба источника",
-                    callback_data="dlsrc:all",
-                )
-            ],
-            [InlineKeyboardButton(text="⬅️ Назад к типу", callback_data="dlsrc:back")],
+    return build_keyboard(
+        [
+            [button("CivitAI", "dlsrc:civitai")],
+            [button("HuggingFace", "dlsrc:huggingface")],
+            [button("Оба источника", "dlsrc:all")],
+            [back_button("dlsrc:back", text="⬅️ Назад к типу")],
         ]
     )
 
@@ -291,36 +283,18 @@ def _build_filter_keyboard(
 ) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = [
         [
-            InlineKeyboardButton(
-                text=_mark(sort_code == "downloads", "📥 Скачивания"),
-                callback_data="dlflt:sort:downloads",
-            ),
-            InlineKeyboardButton(
-                text=_mark(sort_code == "rating", "⭐ Рейтинг"),
-                callback_data="dlflt:sort:rating",
-            ),
-            InlineKeyboardButton(
-                text=_mark(sort_code == "newest", "🆕 Новые"),
-                callback_data="dlflt:sort:newest",
-            ),
+            button(_mark(sort_code == "downloads", "📥 Скачивания"), "dlflt:sort:downloads"),
+            button(_mark(sort_code == "rating", "⭐ Рейтинг"), "dlflt:sort:rating"),
+            button(_mark(sort_code == "newest", "🆕 Новые"), "dlflt:sort:newest"),
         ]
     ]
 
     if _supports_period_filter(source):
         rows.append(
             [
-                InlineKeyboardButton(
-                    text=_mark(period_code == "all", "🕒 Всё время"),
-                    callback_data="dlflt:period:all",
-                ),
-                InlineKeyboardButton(
-                    text=_mark(period_code == "month", "📆 Месяц"),
-                    callback_data="dlflt:period:month",
-                ),
-                InlineKeyboardButton(
-                    text=_mark(period_code == "week", "🗓 Неделя"),
-                    callback_data="dlflt:period:week",
-                ),
+                button(_mark(period_code == "all", "🕒 Всё время"), "dlflt:period:all"),
+                button(_mark(period_code == "month", "📆 Месяц"), "dlflt:period:month"),
+                button(_mark(period_code == "week", "🗓 Неделя"), "dlflt:period:week"),
             ]
         )
 
@@ -328,150 +302,73 @@ def _build_filter_keyboard(
     if show_base_filters:
         rows.append(
             [
-                InlineKeyboardButton(
-                    text=f"🧬 Базовые модели: {BASE_CODE_TO_LABEL.get(base_code, 'Все')}",
-                    callback_data="dlflt:base_menu",
+                button(
+                    f"🧬 Базовые модели: {BASE_CODE_TO_LABEL.get(base_code, 'Все')}",
+                    "dlflt:base_menu",
                 )
             ]
         )
 
     if _supports_nsfw_filter(source):
         rows.append(
-            [
-                InlineKeyboardButton(
-                    text=("🔞 NSFW: вкл" if include_nsfw else "🛡 NSFW: выкл"),
-                    callback_data="dlflt:nsfw:toggle",
-                )
-            ]
+            [button(("🔞 NSFW: вкл" if include_nsfw else "🛡 NSFW: выкл"), "dlflt:nsfw:toggle")]
         )
 
     if source in {"civitai", "all"}:
         author_label = author_nick.strip().lstrip("@") or "любой"
-        rows.append(
-            [
-                InlineKeyboardButton(
-                    text=f"👤 Автор: {author_label}",
-                    callback_data="dlflt:author",
-                )
-            ]
-        )
+        rows.append([button(f"👤 Автор: {author_label}", "dlflt:author")])
 
     rows.append(
         [
-            InlineKeyboardButton(
-                text="🔥 Популярные",
-                callback_data="dlflt:profile:popular",
-            ),
-            InlineKeyboardButton(
-                text="🆕 Новые",
-                callback_data="dlflt:profile:fresh",
-            ),
-            InlineKeyboardButton(
-                text="⭐ Рейтинг",
-                callback_data="dlflt:profile:quality",
-            ),
+            button("🔥 Популярные", "dlflt:profile:popular"),
+            button("🆕 Новые", "dlflt:profile:fresh"),
+            button("⭐ Рейтинг", "dlflt:profile:quality"),
         ]
     )
+    rows.append([button("🎎 Anime", "dlflt:profile:anime")])
     rows.append(
         [
-            InlineKeyboardButton(
-                text="🎎 Anime",
-                callback_data="dlflt:profile:anime",
-            )
-        ]
-    )
-    rows.append(
-        [
-            InlineKeyboardButton(
-                text=_mark(page_size == 5, "5/стр"),
-                callback_data="dlflt:pagesize:5",
-            ),
-            InlineKeyboardButton(
-                text=_mark(page_size == 8, "8/стр"),
-                callback_data="dlflt:pagesize:8",
-            ),
-            InlineKeyboardButton(
-                text=_mark(page_size == 10, "10/стр"),
-                callback_data="dlflt:pagesize:10",
-            ),
+            button(_mark(page_size == 5, "5/стр"), "dlflt:pagesize:5"),
+            button(_mark(page_size == 8, "8/стр"), "dlflt:pagesize:8"),
+            button(_mark(page_size == 10, "10/стр"), "dlflt:pagesize:10"),
         ]
     )
 
     rows.extend(
         [
-            [
-                InlineKeyboardButton(
-                    text="➡️ Ввести запрос",
-                    callback_data="dlflt:go",
-                )
-            ],
-            [InlineKeyboardButton(text="⬅️ Источники", callback_data="dlflt:back")],
+            [button("➡️ Ввести запрос", "dlflt:go")],
+            [back_button("dlflt:back", text="⬅️ Источники")],
         ]
     )
-    return InlineKeyboardMarkup(inline_keyboard=rows)
+    return build_keyboard(rows)
 
 
 def _build_base_filter_keyboard(*, base_code: str) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = [
+        [button(_mark(base_code == "all", "Все"), "dlflt:base:all")],
         [
-            InlineKeyboardButton(
-                text=_mark(base_code == "all", "Все"),
-                callback_data="dlflt:base:all",
-            )
+            button(_mark(base_code == "sd15", "SD 1.5"), "dlflt:base:sd15"),
+            button(_mark(base_code == "sd2", "SD 2.x"), "dlflt:base:sd2"),
         ],
         [
-            InlineKeyboardButton(
-                text=_mark(base_code == "sd15", "SD 1.5"),
-                callback_data="dlflt:base:sd15",
-            ),
-            InlineKeyboardButton(
-                text=_mark(base_code == "sd2", "SD 2.x"),
-                callback_data="dlflt:base:sd2",
-            ),
+            button(_mark(base_code == "sdxl09", "SDXL 0.9"), "dlflt:base:sdxl09"),
+            button(_mark(base_code == "sdxl", "SDXL 1.0"), "dlflt:base:sdxl"),
         ],
         [
-            InlineKeyboardButton(
-                text=_mark(base_code == "sdxl09", "SDXL 0.9"),
-                callback_data="dlflt:base:sdxl09",
-            ),
-            InlineKeyboardButton(
-                text=_mark(base_code == "sdxl", "SDXL 1.0"),
-                callback_data="dlflt:base:sdxl",
-            ),
+            button(_mark(base_code == "sd3", "SD 3"), "dlflt:base:sd3"),
+            button(_mark(base_code == "sd35", "SD 3.5"), "dlflt:base:sd35"),
         ],
         [
-            InlineKeyboardButton(
-                text=_mark(base_code == "sd3", "SD 3"),
-                callback_data="dlflt:base:sd3",
-            ),
-            InlineKeyboardButton(
-                text=_mark(base_code == "sd35", "SD 3.5"),
-                callback_data="dlflt:base:sd35",
-            ),
+            button(_mark(base_code == "pony", "Pony"), "dlflt:base:pony"),
+            button(_mark(base_code == "flux", "Flux"), "dlflt:base:flux"),
         ],
         [
-            InlineKeyboardButton(
-                text=_mark(base_code == "pony", "Pony"),
-                callback_data="dlflt:base:pony",
-            ),
-            InlineKeyboardButton(
-                text=_mark(base_code == "flux", "Flux"),
-                callback_data="dlflt:base:flux",
-            ),
+            button(_mark(base_code == "illustrious", "Illustrious"), "dlflt:base:illustrious"),
+            button(_mark(base_code == "noobai", "NoobAI"), "dlflt:base:noobai"),
         ],
-        [
-            InlineKeyboardButton(
-                text=_mark(base_code == "illustrious", "Illustrious"),
-                callback_data="dlflt:base:illustrious",
-            ),
-            InlineKeyboardButton(
-                text=_mark(base_code == "noobai", "NoobAI"),
-                callback_data="dlflt:base:noobai",
-            ),
-        ],
-        [InlineKeyboardButton(text="⬅️ К фильтрам", callback_data="dlbase:back")],
+        [back_button("dlbase:back", text="⬅️ К фильтрам")],
     ]
-    return InlineKeyboardMarkup(inline_keyboard=rows)
+    return build_keyboard(rows)
 
 
 def _confirmation_text(result: SearchResult) -> str:
@@ -601,16 +498,7 @@ def register_download_handlers(
         *,
         edit: bool,
     ) -> None:
-        kb = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(
-                        text="⬅️ Назад к фильтрам",
-                        callback_data="dlqry:back",
-                    )
-                ]
-            ]
-        )
+        kb = build_keyboard([[back_button("dlqry:back", text="⬅️ Назад к фильтрам")]])
         text = "✏️ Введите поисковый запрос или прямую ссылку на модель CivitAI/HuggingFace:"
         await _render_download_panel(
             message,
@@ -628,11 +516,7 @@ def register_download_handlers(
     ) -> None:
         data = await state.get_data()
         current = str(data.get("dl_author", "")).strip().lstrip("@")
-        kb = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [InlineKeyboardButton(text="⬅️ Назад к фильтрам", callback_data="dlauth:back")]
-            ]
-        )
+        kb = build_keyboard([[back_button("dlauth:back", text="⬅️ Назад к фильтрам")]])
         text = (
             "👤 <b>Фильтр по автору CivitAI</b>\n"
             "Введите один или несколько ников через запятую (без @).\n"
@@ -702,28 +586,21 @@ def register_download_handlers(
 
         nav: list[InlineKeyboardButton] = []
         if current_page > 0:
-            nav.append(InlineKeyboardButton(text="⏮ В начало", callback_data="dlpick:first"))
+            nav.append(button("⏮ В начало", "dlpick:first"))
         if current_page > 0:
-            nav.append(InlineKeyboardButton(text="◀️ Назад", callback_data="dlpick:prev"))
-        nav.append(
-            InlineKeyboardButton(
-                text=f"· {current_page + 1}/{total_pages} ·",
-                callback_data="noop",
-            )
-        )
+            nav.append(button("◀️ Назад", "dlpick:prev"))
+        nav.append(noop_button(f"· {current_page + 1}/{total_pages} ·"))
         if current_page < total_pages - 1:
-            nav.append(InlineKeyboardButton(text="▶️ Далее", callback_data="dlpick:next"))
+            nav.append(button("▶️ Далее", "dlpick:next"))
         if current_page < total_pages - 1:
-            nav.append(InlineKeyboardButton(text="⏭ В конец", callback_data="dlpick:last"))
+            nav.append(button("⏭ В конец", "dlpick:last"))
         if nav:
             rows.append(nav)
 
         if can_continue:
-            rows.append(
-                [InlineKeyboardButton(text="🔎 Продолжить поиск", callback_data="dlpick:more")]
-            )
-        rows.append([InlineKeyboardButton(text="⬅️ Новый поиск", callback_data="dlpick:new")])
-        rows.append([InlineKeyboardButton(text="❌ Отмена", callback_data="dlpick:cancel")])
+            rows.append([button("🔎 Продолжить поиск", "dlpick:more")])
+        rows.append([back_button("dlpick:new", text="⬅️ Новый поиск")])
+        rows.append([cancel_button("dlpick:cancel")])
 
         lines = [
             "📦 <b>Результаты поиска</b>",
@@ -753,7 +630,7 @@ def register_download_handlers(
         lines.append("\nВыберите модель:")
 
         text = "\n".join(lines)
-        kb = InlineKeyboardMarkup(inline_keyboard=rows)
+        kb = build_keyboard(rows)
         await _render_download_panel(
             message,
             state,
@@ -774,19 +651,12 @@ def register_download_handlers(
             rows.append([InlineKeyboardButton(text="🔗 Страница модели", url=result.model_url)])
         rows.append(
             [
-                InlineKeyboardButton(text="⬇️ Скачать", callback_data="dlconfirm:yes"),
-                InlineKeyboardButton(text="❌ Отмена", callback_data="dlconfirm:no"),
+                button("⬇️ Скачать", "dlconfirm:yes"),
+                cancel_button("dlconfirm:no"),
             ]
         )
-        rows.append(
-            [
-                InlineKeyboardButton(
-                    text="⬅️ К результатам",
-                    callback_data="dlconfirm:back",
-                )
-            ]
-        )
-        kb = InlineKeyboardMarkup(inline_keyboard=rows)
+        rows.append([back_button("dlconfirm:back", text="⬅️ К результатам")])
+        kb = build_keyboard(rows)
         await _render_download_panel(
             message,
             state,

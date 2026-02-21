@@ -5,11 +5,12 @@ from dataclasses import asdict
 from typing import Any
 
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, InlineKeyboardButton
+from aiogram.types import CallbackQuery
 
 from core.callbacks import PagedSelectionCallback
 from core.interaction import callback_message
 from core.models import GenerationParams
+from core.ui_kit import back_button
 
 
 async def open_paginated_choice(
@@ -25,7 +26,7 @@ async def open_paginated_choice(
         items,
         0,
         prefix,
-        extra=[[InlineKeyboardButton(text="⬅️ Назад", callback_data=back_callback)]],
+        extra=[[back_button(back_callback)]],
     )
     message = callback_message(cb)
     if message is None:
@@ -52,7 +53,7 @@ async def change_paginated_choice_page(
         items,
         page,
         prefix,
-        extra=[[InlineKeyboardButton(text="⬅️ Назад", callback_data=back_callback)]],
+        extra=[[back_button(back_callback)]],
     )
     message = callback_message(cb)
     if message is None:

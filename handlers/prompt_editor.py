@@ -133,10 +133,7 @@ from .prompt_editor_subhandlers import (
     register_prompt_editor_subhandlers,
 )
 from .prompt_editor_ui import (
-    back_keyboard as _back_keyboard,
-)
-from .prompt_editor_ui import (
-    editor_keyboard as _editor_keyboard,
+    build_prompt_editor_shell,
 )
 from .prompt_editor_view import (
     PromptEditorViewDeps,
@@ -213,7 +210,6 @@ def register_prompt_editor_handlers(
         max_reference_images=MAX_REFERENCE_IMAGES,
     )
     prompt_input_text = _prompt_input_text
-    back_keyboard = _back_keyboard
     merge_prompt_text = _merge_prompt_text
     prompt_preview = _prompt_preview
     smart_prompt_result_keyboard = _smart_prompt_result_keyboard
@@ -237,8 +233,10 @@ def register_prompt_editor_handlers(
     )
     clear_smart_prompt_result_data = clear_smart_prompt_result_data_impl
 
+    shell = build_prompt_editor_shell()
+
     add_reference_from_message = _add_reference_from_message
-    editor_keyboard = _editor_keyboard
+    editor_keyboard = shell.editor_keyboard
 
     view_deps = PromptEditorViewDeps(
         runtime=runtime,
@@ -323,7 +321,7 @@ def register_prompt_editor_handlers(
             add_reference_from_message=add_reference_from_message,
             merge_prompt_text=merge_prompt_text,
             prompt_input_text=prompt_input_text,
-            back_keyboard=back_keyboard,
+            back_keyboard=shell.back_keyboard,
             cleanup_user_message=cleanup_user_message,
             open_paginated_choice=open_paginated_choice,
             change_paginated_choice_page=change_paginated_choice_page,

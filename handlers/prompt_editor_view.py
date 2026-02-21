@@ -4,7 +4,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 from aiogram.fsm.context import FSMContext
-from aiogram.types import Message
+from aiogram.types import InlineKeyboardMarkup, Message
 
 from core.html_utils import h
 from core.models import GenerationParams
@@ -21,28 +21,17 @@ class PromptEditorViewDeps:
     smart_prompt_is_enabled: Callable[[], bool]
     checkpoint_base_model: Callable[[str], str]
     incompatible_loras: Callable[[GenerationParams], list[tuple[str, str, str]]]
-    editor_keyboard: Callable[..., object]
+    editor_keyboard: Callable[..., InlineKeyboardMarkup]
     show_prompt_panel: Callable[..., Awaitable[Message]]
 
 
-async def show_prompt_editor(
-    message: Message,
-    state: FSMContext,
-    uid: int,
+def build_prompt_editor_text(
+    req: PromptRequest,
     *,
-    edit: bool = False,
-    notice: str = "",
+    notice: str,
+    pro_mode: bool,
     deps: PromptEditorViewDeps,
-) -> None:
-    req = deps.runtime.active_prompt_requests.get(uid)
-    if not req:
-        await message.answer("❌ Активный запрос не найден. Используйте /generate.")
-        return
-
-    req.params = deps.normalize_params(req.params)
-    await state.set_state(PromptEditorStates.editing)
-    pro_mode = deps.get_user_pro_mode(deps.runtime, uid)
-
+) -> str:
     lines: list[str] = []
     if notice:
         lines.append(f"💬 <i>{h(notice)}</i>")
@@ -64,7 +53,27 @@ async def show_prompt_editor(
             f"⚠️ <b>LoRA compatibility:</b> {len(bad_loras)} потенциально несовместимы ({h(names)}{h(suffix)})"
         )
 
-    text = "\n".join(lines)
+    return "\n".join(lines)
+
+
+async def show_prompt_editor(
+    message: Message,
+    state: FSMContext,
+    uid: int,
+    *,
+    edit: bool = False,
+    notice: str = "",
+    deps: PromptEditorViewDeps,
+) -> None:
+    req = deps.runtime.active_prompt_requests.get(uid)
+    if not req:
+        await message.answer("❌ Активный запрос не найден. Используйте /generate.")
+        return
+
+    req.params = deps.normalize_params(req.params)
+    await state.set_state(PromptEditorStates.editing)
+    pro_mode = deps.get_user_pro_mode(deps.runtime, uid)
+    text = build_prompt_editor_text(req, notice=notice, pro_mode=pro_mode, deps=deps)
     kb = deps.editor_keyboard(
         req,
         smart_prompt_enabled=deps.smart_prompt_is_enabled(),

@@ -1,8 +1,26 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+from dataclasses import dataclass
+
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from core.runtime import PromptRequest
+from core.ui_kit import MenuNavSpec, back_button, build_keyboard, build_row, menu_nav_row
+from core.ui_kit.buttons import button, cancel_button
+
+
+@dataclass(frozen=True)
+class PromptEditorShell:
+    back_keyboard: Callable[..., InlineKeyboardMarkup]
+    editor_keyboard: Callable[..., InlineKeyboardMarkup]
+
+
+def build_prompt_editor_shell() -> PromptEditorShell:
+    return PromptEditorShell(
+        back_keyboard=back_keyboard,
+        editor_keyboard=editor_keyboard,
+    )
 
 
 def operation_action_text(operation: str) -> str:
@@ -15,16 +33,39 @@ def back_keyboard(
     callback_data: str = "pe:back",
     text: str = "⬅️ Назад",
 ) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text=text,
-                    callback_data=callback_data,
-                )
-            ]
-        ]
-    )
+    return build_keyboard([build_row(back_button(callback_data, text=text))])
+
+
+def _editor_header_rows(
+    *,
+    lora_count: int,
+    smart_label: str,
+) -> list[list[InlineKeyboardButton]]:
+    return [
+        [
+            button("🧪 Checkpoint", "pe:edit:checkpoint"),
+            button(f"🧲 LoRA ({lora_count})", "pe:edit:lora"),
+        ],
+        [
+            button("🟢 Positive", "pe:edit:positive"),
+            button("🔴 Negative", "pe:edit:negative"),
+        ],
+        [button(smart_label, "pe:smart:start")],
+    ]
+
+
+def _editor_shared_footer_rows(
+    req: PromptRequest, *, mode_btn_text: str
+) -> list[list[InlineKeyboardButton]]:
+    return [
+        [button("📋 Копировать/вставить", "pe:exchange")],
+        menu_nav_row(MenuNavSpec(root_callback="menu:root")),
+        [
+            button(f"▶️ {operation_action_text(req.operation)}", "pe:proceed"),
+            button(mode_btn_text, "pe:toggle:mode"),
+            cancel_button("pe:cancel"),
+        ],
+    ]
 
 
 def editor_keyboard(
@@ -48,143 +89,34 @@ def editor_keyboard(
     enh_label = f"✨ Улучшения ({enh_count})" if enh_count else "✨ Улучшения"
 
     mode_btn_text = "🟢 Простой" if pro_mode else "🔧 Про"
+    rows = _editor_header_rows(lora_count=len(params.loras), smart_label=smart_label)
 
     if pro_mode:
-        rows = [
+        rows.extend(
             [
-                InlineKeyboardButton(
-                    text="🧪 Checkpoint",
-                    callback_data="pe:edit:checkpoint",
-                ),
-                InlineKeyboardButton(
-                    text=f"🧲 LoRA ({len(params.loras)})",
-                    callback_data="pe:edit:lora",
-                ),
-            ],
-            [
-                InlineKeyboardButton(text="🟢 Positive", callback_data="pe:edit:positive"),
-                InlineKeyboardButton(text="🔴 Negative", callback_data="pe:edit:negative"),
-            ],
-            [
-                InlineKeyboardButton(text=smart_label, callback_data="pe:smart:start"),
-            ],
-            [
-                InlineKeyboardButton(
-                    text="📐 Сэмплинг",
-                    callback_data="pe:sub:sampling",
-                ),
-                InlineKeyboardButton(
-                    text="🖼 Изображение",
-                    callback_data="pe:sub:image",
-                ),
-                InlineKeyboardButton(
-                    text=enh_label,
-                    callback_data="pe:sub:enhancements",
-                ),
-            ],
-            [
-                InlineKeyboardButton(
-                    text=f"📏 {params.width}×{params.height}",
-                    callback_data="pe:edit:size",
-                ),
-                InlineKeyboardButton(
-                    text=f"🔢 Steps {params.steps}",
-                    callback_data="pe:edit:steps",
-                ),
-                InlineKeyboardButton(text=f"CFG {params.cfg}", callback_data="pe:edit:cfg"),
-            ],
-            [
-                InlineKeyboardButton(
-                    text="💾 Сохранить",
-                    callback_data="pe:save",
-                ),
-                InlineKeyboardButton(
-                    text="📚 Пресеты",
-                    callback_data="pe:presets",
-                ),
-            ],
-            [
-                InlineKeyboardButton(
-                    text="📋 Копировать/вставить",
-                    callback_data="pe:exchange",
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="⬅️ В меню",
-                    callback_data="menu:root",
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text=f"▶️ {operation_action_text(req.operation)}",
-                    callback_data="pe:proceed",
-                ),
-                InlineKeyboardButton(
-                    text=mode_btn_text,
-                    callback_data="pe:toggle:mode",
-                ),
-                InlineKeyboardButton(
-                    text="❌ Отмена",
-                    callback_data="pe:cancel",
-                ),
-            ],
-        ]
+                [
+                    button("📐 Сэмплинг", "pe:sub:sampling"),
+                    button("🖼 Изображение", "pe:sub:image"),
+                    button(enh_label, "pe:sub:enhancements"),
+                ],
+                [
+                    button(f"📏 {params.width}×{params.height}", "pe:edit:size"),
+                    button(f"🔢 Steps {params.steps}", "pe:edit:steps"),
+                    button(f"CFG {params.cfg}", "pe:edit:cfg"),
+                ],
+                [
+                    button("💾 Сохранить", "pe:save"),
+                    button("📚 Пресеты", "pe:presets"),
+                ],
+            ]
+        )
     else:
-        rows = [
+        rows.append(
             [
-                InlineKeyboardButton(
-                    text="🧪 Checkpoint",
-                    callback_data="pe:edit:checkpoint",
-                ),
-                InlineKeyboardButton(
-                    text=f"🧲 LoRA ({len(params.loras)})",
-                    callback_data="pe:edit:lora",
-                ),
-            ],
-            [
-                InlineKeyboardButton(text="🟢 Positive", callback_data="pe:edit:positive"),
-                InlineKeyboardButton(text="🔴 Negative", callback_data="pe:edit:negative"),
-            ],
-            [
-                InlineKeyboardButton(text=smart_label, callback_data="pe:smart:start"),
-            ],
-            [
-                InlineKeyboardButton(
-                    text=f"📏 {params.width}×{params.height}",
-                    callback_data="pe:edit:size",
-                ),
-                InlineKeyboardButton(
-                    text="⚙️ Ещё настроек",
-                    callback_data="pe:sub:more",
-                ),
-            ],
-            [
-                InlineKeyboardButton(
-                    text="📋 Копировать/вставить",
-                    callback_data="pe:exchange",
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="⬅️ В меню",
-                    callback_data="menu:root",
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text=f"▶️ {operation_action_text(req.operation)}",
-                    callback_data="pe:proceed",
-                ),
-                InlineKeyboardButton(
-                    text=mode_btn_text,
-                    callback_data="pe:toggle:mode",
-                ),
-                InlineKeyboardButton(
-                    text="❌ Отмена",
-                    callback_data="pe:cancel",
-                ),
-            ],
-        ]
+                button(f"📏 {params.width}×{params.height}", "pe:edit:size"),
+                button("⚙️ Ещё настроек", "pe:sub:more"),
+            ]
+        )
 
-    return InlineKeyboardMarkup(inline_keyboard=rows)
+    rows.extend(_editor_shared_footer_rows(req, mode_btn_text=mode_btn_text))
+    return build_keyboard(rows)

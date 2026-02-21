@@ -14,7 +14,6 @@ from aiogram.types import (
 
 from comfyui_client import ComfyUIClient
 from core.callbacks import IndexedSelectionCallback, ValueSelectionCallback
-from core.interaction import callback_message as interaction_callback_message
 from core.interaction import require_callback_message
 from core.models import GenerationParams
 from core.runtime import PromptRequest, RuntimeStore
@@ -50,8 +49,6 @@ def register_prompt_editor_edit_handlers(
     router: Router,
     deps: PromptEditorEditHandlersDeps,
 ) -> None:
-    _callback_message = interaction_callback_message
-
     async def _selected_index(cb: CallbackQuery, *, prefix: str) -> int | None:
         parsed = IndexedSelectionCallback.parse(cb.data or "", prefix=prefix)
         if parsed is None:
@@ -68,9 +65,8 @@ def register_prompt_editor_edit_handlers(
 
     @router.callback_query(F.data == "pe:edit:positive")
     async def pe_edit_positive(cb: CallbackQuery, state: FSMContext):
-        message = _callback_message(cb)
+        message = await require_callback_message(cb)
         if message is None:
-            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
             return
         payload = await deps.require_prompt_request_for_callback(cb)
         if not payload:
@@ -97,9 +93,8 @@ def register_prompt_editor_edit_handlers(
 
     @router.callback_query(F.data == "pe:edit:negative")
     async def pe_edit_negative(cb: CallbackQuery, state: FSMContext):
-        message = _callback_message(cb)
+        message = await require_callback_message(cb)
         if message is None:
-            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
             return
         payload = await deps.require_prompt_request_for_callback(cb)
         if not payload:
@@ -170,9 +165,8 @@ def register_prompt_editor_edit_handlers(
             suffix = "" if len(bad_loras) <= 3 else f" и ещё {len(bad_loras) - 3}"
             notice += f" ⚠️ Несовместимые LoRA: {names}{suffix}."
 
-        message = _callback_message(cb)
+        message = await require_callback_message(cb)
         if message is None:
-            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
             return
         await deps.show_prompt_editor(message, state, uid, edit=True, notice=notice)
         await cb.answer()
@@ -387,9 +381,8 @@ def register_prompt_editor_edit_handlers(
 
     @router.callback_query(F.data == "pe:edit:controlnet_strength")
     async def pe_edit_controlnet_strength(cb: CallbackQuery):
-        message = _callback_message(cb)
+        message = await require_callback_message(cb)
         if message is None:
-            await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
             return
         kb = InlineKeyboardMarkup(
             inline_keyboard=[

@@ -13,6 +13,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from core.callbacks import ValueSelectionCallback
+from core.download_filters import base_code_from_base_model
 from core.html_utils import h
 from core.interaction import require_callback_message
 from core.states import DownloadStates
@@ -219,7 +220,7 @@ def register_download_flow_handlers(deps: DownloadFlowDeps) -> None:
             base_model = str(meta.get("base_model") if meta else "").strip()
             if not base_model:
                 base_model = deps.downloader.infer_base_model(req.params.checkpoint)
-            inferred_base = _base_code_from_base_model(base_model)
+            inferred_base = base_code_from_base_model(base_model)
 
         defaults = _download_defaults_for_user(uid, inferred_base=inferred_base)
         await state.update_data(dl_type=model_type, **defaults)
@@ -889,22 +890,3 @@ def register_download_flow_handlers(deps: DownloadFlowDeps) -> None:
             await cb.answer("❌ Отменяю скачивание…")
             return
         await cb.answer("Нечего отменять.", show_alert=True)
-
-
-def _base_code_from_base_model(base_model: str) -> str:
-    value = str(base_model or "").strip().lower()
-    if not value:
-        return "all"
-    if "pony" in value:
-        return "pony"
-    if "flux" in value:
-        return "flux"
-    if "illustrious" in value:
-        return "illustrious"
-    if "sdxl" in value or "stable diffusion xl" in value:
-        return "sdxl"
-    if "sd 2" in value or "stable diffusion 2" in value:
-        return "sd2"
-    if "sd 1" in value or "stable diffusion 1" in value:
-        return "sd15"
-    return "all"

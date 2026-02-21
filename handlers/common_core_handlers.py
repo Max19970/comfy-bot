@@ -24,6 +24,7 @@ from core.download_filters import (
 from core.states import ServiceSettingsStates
 from core.ui_kit import back_button, build_keyboard
 from core.ui_kit.buttons import button, menu_root_button, noop_button
+from core.user_preferences import read_download_defaults, read_generation_defaults
 
 
 @dataclass
@@ -191,48 +192,20 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
 
     def _gen_defaults(uid: int) -> dict[str, Any]:
         prefs = deps.runtime.user_preferences.get(uid, {})
-        width = int(prefs.get("gen_width", deps.cfg.default_width))
-        height = int(prefs.get("gen_height", deps.cfg.default_height))
-        steps = int(prefs.get("gen_steps", deps.cfg.default_steps))
-        cfg_value = float(prefs.get("gen_cfg", deps.cfg.default_cfg))
-        denoise = float(prefs.get("gen_denoise", deps.cfg.default_denoise))
-        seed = int(prefs.get("gen_seed", -1))
-        batch = int(prefs.get("gen_batch", 1))
-        sampler = (
-            str(prefs.get("gen_sampler", deps.cfg.default_sampler)).strip()
-            or deps.cfg.default_sampler
+        return read_generation_defaults(
+            prefs,
+            default_width=deps.cfg.default_width,
+            default_height=deps.cfg.default_height,
+            default_steps=deps.cfg.default_steps,
+            default_cfg=deps.cfg.default_cfg,
+            default_denoise=deps.cfg.default_denoise,
+            default_sampler=deps.cfg.default_sampler,
+            default_scheduler=deps.cfg.default_scheduler,
         )
-        scheduler = (
-            str(prefs.get("gen_scheduler", deps.cfg.default_scheduler)).strip()
-            or deps.cfg.default_scheduler
-        )
-        return {
-            "width": max(64, min(4096, width)),
-            "height": max(64, min(4096, height)),
-            "steps": max(1, min(200, steps)),
-            "cfg": max(0.0, min(30.0, cfg_value)),
-            "denoise": max(0.0, min(1.0, denoise)),
-            "seed": max(-1, seed),
-            "batch": max(1, min(16, batch)),
-            "sampler": sampler,
-            "scheduler": scheduler,
-        }
 
     def _download_defaults(uid: int) -> dict[str, Any]:
         prefs = deps.runtime.user_preferences.get(uid, {})
-        source = normalize_download_source(str(prefs.get("dl_default_source", "all")))
-        sort_code = normalize_download_sort_code(str(prefs.get("dl_default_sort", "downloads")))
-        period = normalize_download_period_code(str(prefs.get("dl_default_period", "all")))
-        base = normalize_download_base_code(str(prefs.get("dl_default_base", "all")))
-        author = str(prefs.get("dl_default_author", "")).strip()
-        return {
-            "source": source,
-            "sort": sort_code,
-            "period": period,
-            "base": base,
-            "nsfw": bool(prefs.get("dl_default_nsfw", False)),
-            "author": author,
-        }
+        return read_download_defaults(prefs)
 
     def _apply_download_profile(uid: int, profile_code: str) -> bool:
         profile = DOWNLOAD_FILTER_PROFILES.get(profile_code)

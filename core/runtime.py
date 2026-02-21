@@ -9,12 +9,6 @@ from typing import Any
 
 from aiogram.types import Message
 
-from core.download_filters import (
-    normalize_download_base_code,
-    normalize_download_period_code,
-    normalize_download_sort_code,
-    normalize_download_source,
-)
 from core.models import GenerationParams
 from core.storage import (
     SESSIONS_DIR,
@@ -23,6 +17,7 @@ from core.storage import (
     params_to_dict,
     save_runtime_session,
 )
+from core.user_preferences import normalize_user_preferences
 
 logger = logging.getLogger(__name__)
 
@@ -265,76 +260,7 @@ def _iter_user_dict(raw: Any) -> list[tuple[int, Any]]:
 
 
 def _normalize_user_preferences(raw: Any) -> dict[str, Any]:
-    if not isinstance(raw, dict):
-        return {}
-
-    training_mode_raw = str(raw.get("training_mode", "simple")).strip().lower()
-    training_mode = training_mode_raw if training_mode_raw in {"simple", "advanced"} else "simple"
-    training_page_raw = raw.get("training_page", 0)
-    training_page = training_page_raw if isinstance(training_page_raw, int) else 0
-
-    normalized: dict[str, Any] = {
-        "pro_mode": bool(raw.get("pro_mode", False)),
-        "training_mode": training_mode,
-        "training_page": max(0, training_page),
-    }
-
-    int_fields = {
-        "gen_width": (64, 4096),
-        "gen_height": (64, 4096),
-        "gen_steps": (1, 200),
-        "gen_seed": (-1, 2**31 - 1),
-        "gen_batch": (1, 16),
-    }
-    for key, (min_v, max_v) in int_fields.items():
-        value = raw.get(key)
-        if isinstance(value, int):
-            normalized[key] = max(min_v, min(max_v, value))
-
-    float_fields = {
-        "gen_cfg": (0.0, 30.0),
-        "gen_denoise": (0.0, 1.0),
-    }
-    for key, (min_f, max_f) in float_fields.items():
-        value = raw.get(key)
-        if isinstance(value, (int, float)):
-            normalized[key] = max(min_f, min(max_f, float(value)))
-
-    for key in ("gen_sampler", "gen_scheduler"):
-        value = raw.get(key)
-        if isinstance(value, str) and value.strip():
-            normalized[key] = value.strip()
-
-    source = raw.get("dl_default_source")
-    if isinstance(source, str):
-        source_norm = normalize_download_source(source, default="")
-        if source_norm:
-            normalized["dl_default_source"] = source_norm
-
-    sort_code = raw.get("dl_default_sort")
-    if isinstance(sort_code, str):
-        sort_norm = normalize_download_sort_code(sort_code, default="")
-        if sort_norm:
-            normalized["dl_default_sort"] = sort_norm
-
-    period = raw.get("dl_default_period")
-    if isinstance(period, str):
-        period_norm = normalize_download_period_code(period, default="")
-        if period_norm:
-            normalized["dl_default_period"] = period_norm
-
-    base = raw.get("dl_default_base")
-    if isinstance(base, str):
-        base_norm = normalize_download_base_code(base, default="")
-        if base_norm:
-            normalized["dl_default_base"] = base_norm
-    if isinstance(raw.get("dl_default_nsfw"), bool):
-        normalized["dl_default_nsfw"] = raw.get("dl_default_nsfw")
-    author = raw.get("dl_default_author")
-    if isinstance(author, str):
-        normalized["dl_default_author"] = author.strip().replace("@", "")[:256]
-
-    return normalized
+    return normalize_user_preferences(raw)
 
 
 def get_user_pro_mode(runtime: RuntimeStore, uid: int) -> bool:

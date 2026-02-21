@@ -13,18 +13,13 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from core.callbacks import ValueSelectionCallback
-from core.download_filters import (
-    base_code_from_base_model,
-    normalize_download_base_code,
-    normalize_download_period_code,
-    normalize_download_sort_code,
-    normalize_download_source,
-)
+from core.download_filters import base_code_from_base_model
 from core.html_utils import h
 from core.interaction import require_callback_message
 from core.states import DownloadStates
 from core.ui_kit import back_button, build_keyboard
 from core.ui_kit.buttons import button, cancel_button, menu_root_button
+from core.user_preferences import read_download_defaults
 
 
 @dataclass
@@ -82,23 +77,14 @@ def register_download_flow_handlers(deps: DownloadFlowDeps) -> None:
 
     def _download_defaults_for_user(uid: int, *, inferred_base: str) -> dict[str, Any]:
         prefs = deps.runtime.user_preferences.get(uid, {})
-        source = normalize_download_source(str(prefs.get("dl_default_source", "all")))
-        sort_code = normalize_download_sort_code(str(prefs.get("dl_default_sort", "downloads")))
-        period = normalize_download_period_code(str(prefs.get("dl_default_period", "all")))
-        default_base = normalize_download_base_code(inferred_base)
-        base = normalize_download_base_code(
-            str(prefs.get("dl_default_base", default_base)),
-            default=default_base,
-        )
-        nsfw = bool(prefs.get("dl_default_nsfw", False))
-        author_raw = str(prefs.get("dl_default_author", "")).strip()
+        defaults = read_download_defaults(prefs, inferred_base=inferred_base)
         return {
-            "dl_source": source,
-            "dl_sort": sort_code,
-            "dl_period": period,
-            "dl_base": base,
-            "dl_nsfw": nsfw,
-            "dl_author": author_raw,
+            "dl_source": defaults["source"],
+            "dl_sort": defaults["sort"],
+            "dl_period": defaults["period"],
+            "dl_base": defaults["base"],
+            "dl_nsfw": defaults["nsfw"],
+            "dl_author": defaults["author"],
         }
 
     def _apply_profile(data: dict[str, Any], profile_code: str) -> dict[str, Any]:

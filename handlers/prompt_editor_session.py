@@ -15,6 +15,7 @@ from core.interaction import callback_message, edit_message_by_anchor, edit_or_a
 from core.models import GenerationParams
 from core.runtime import PromptRequest, RuntimeStore
 from core.telegram import callback_user_id, message_user_id
+from core.user_preferences import read_generation_defaults
 
 
 def remember_prompt_panel(runtime: RuntimeStore, req: PromptRequest, panel_msg: Message) -> None:
@@ -139,51 +140,25 @@ def build_default_params_for_user(cfg: Config, runtime: RuntimeStore, uid: int) 
     params = build_default_params(cfg)
     prefs = runtime.user_preferences.get(uid, {})
 
-    width_raw = prefs.get("gen_width", params.width)
-    height_raw = prefs.get("gen_height", params.height)
-    steps_raw = prefs.get("gen_steps", params.steps)
-    cfg_raw = prefs.get("gen_cfg", params.cfg)
-    denoise_raw = prefs.get("gen_denoise", params.denoise)
-    seed_raw = prefs.get("gen_seed", params.seed)
-    batch_raw = prefs.get("gen_batch", params.batch_size)
-    sampler_raw = prefs.get("gen_sampler", params.sampler)
-    scheduler_raw = prefs.get("gen_scheduler", params.scheduler)
-
-    try:
-        params.width = max(64, min(4096, int(width_raw)))
-    except (TypeError, ValueError):
-        pass
-    try:
-        params.height = max(64, min(4096, int(height_raw)))
-    except (TypeError, ValueError):
-        pass
-    try:
-        params.steps = max(1, min(200, int(steps_raw)))
-    except (TypeError, ValueError):
-        pass
-    try:
-        params.cfg = max(0.0, min(30.0, float(cfg_raw)))
-    except (TypeError, ValueError):
-        pass
-    try:
-        params.denoise = max(0.0, min(1.0, float(denoise_raw)))
-    except (TypeError, ValueError):
-        pass
-    try:
-        params.seed = max(-1, int(seed_raw))
-    except (TypeError, ValueError):
-        pass
-    try:
-        params.batch_size = max(1, min(16, int(batch_raw)))
-    except (TypeError, ValueError):
-        pass
-
-    sampler = str(sampler_raw).strip()
-    scheduler = str(scheduler_raw).strip()
-    if sampler:
-        params.sampler = sampler
-    if scheduler:
-        params.scheduler = scheduler
+    defaults = read_generation_defaults(
+        prefs,
+        default_width=params.width,
+        default_height=params.height,
+        default_steps=params.steps,
+        default_cfg=params.cfg,
+        default_denoise=params.denoise,
+        default_sampler=params.sampler,
+        default_scheduler=params.scheduler,
+    )
+    params.width = defaults["width"]
+    params.height = defaults["height"]
+    params.steps = defaults["steps"]
+    params.cfg = defaults["cfg"]
+    params.denoise = defaults["denoise"]
+    params.seed = defaults["seed"]
+    params.batch_size = defaults["batch"]
+    params.sampler = defaults["sampler"]
+    params.scheduler = defaults["scheduler"]
     return params
 
 

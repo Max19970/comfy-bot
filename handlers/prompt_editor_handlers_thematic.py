@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import cast
+from typing import Any, cast
 
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
@@ -41,6 +41,24 @@ class PromptEditorThematicHandlersDeps:
     cleanup_user_message: Callable[[Message], Awaitable[None]]
 
 
+@dataclass
+class ThematicScalarConfig:
+    open_callback: str
+    prefix: str
+    custom_state: Any
+    menu_text: str
+    custom_prompt: str
+    invalid_input_text: str
+    values_rows: list[list[str]]
+    back_callback: str
+    set_value: Callable[[GenerationParams, int | float], None]
+    parse_value: Callable[[str], int | float]
+    validate_value: Callable[[int | float], bool]
+    render_text: Callable[[GenerationParams], str]
+    render_keyboard: Callable[[GenerationParams], InlineKeyboardMarkup]
+    ack_text: Callable[[GenerationParams], str]
+
+
 def register_prompt_editor_thematic_handlers(
     router: Router,
     deps: PromptEditorThematicHandlersDeps,
@@ -66,6 +84,91 @@ def register_prompt_editor_thematic_handlers(
             await cb.answer("❌ Некорректный запрос.", show_alert=True)
             return None
         return parsed.value
+
+    def _scalar_kb(config: ThematicScalarConfig) -> InlineKeyboardMarkup:
+        rows = [
+            [
+                InlineKeyboardButton(text=value, callback_data=f"{config.prefix}:{value}")
+                for value in values_row
+            ]
+            for values_row in config.values_rows
+        ]
+        rows.append(custom_btn(f"{config.prefix}:custom"))
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text="⬅️ Назад",
+                    callback_data=config.back_callback,
+                )
+            ]
+        )
+        return InlineKeyboardMarkup(inline_keyboard=rows)
+
+    def _register_scalar_param(config: ThematicScalarConfig) -> None:
+        @router.callback_query(F.data == config.open_callback)
+        async def _open(cb: CallbackQuery):
+            await cast(Message, cb.message).edit_text(
+                config.menu_text,
+                reply_markup=_scalar_kb(config),
+            )
+            await cb.answer()
+
+        @router.callback_query(F.data.startswith(f"{config.prefix}:"))
+        async def _selected(cb: CallbackQuery, state: FSMContext):
+            payload = await deps.require_prompt_request_for_callback(cb)
+            if not payload:
+                return
+            _, req = payload
+            value = await _selected_value(cb, prefix=config.prefix)
+            if value is None:
+                return
+            if value == "custom":
+                await state.set_state(cast(Any, config.custom_state))
+                await cast(Message, cb.message).edit_text(
+                    config.custom_prompt,
+                    reply_markup=deps.back_keyboard(config.back_callback),
+                )
+                await cb.answer()
+                return
+
+            try:
+                parsed = config.parse_value(value)
+                if not config.validate_value(parsed):
+                    raise ValueError
+            except ValueError:
+                await cb.answer("❌ Некорректное значение.", show_alert=True)
+                return
+
+            config.set_value(req.params, parsed)
+            await cast(Message, cb.message).edit_text(
+                config.render_text(req.params),
+                reply_markup=config.render_keyboard(req.params),
+            )
+            await cb.answer(config.ack_text(req.params))
+
+        @router.message(cast(Any, config.custom_state), F.text)
+        async def _custom(msg: Message, state: FSMContext):
+            payload = await deps.require_prompt_request_for_message(msg, state)
+            if not payload:
+                return
+            _, req = payload
+            try:
+                parsed = config.parse_value((msg.text or "").strip())
+                if not config.validate_value(parsed):
+                    raise ValueError
+            except ValueError:
+                await msg.answer(config.invalid_input_text)
+                return
+
+            config.set_value(req.params, parsed)
+            await state.set_state(PromptEditorStates.editing)
+            await deps.cleanup_user_message(msg)
+            await _show_from_request_anchor(
+                msg,
+                req,
+                config.render_text(req.params),
+                config.render_keyboard(req.params),
+            )
 
     @router.callback_query(F.data == "pe:sub:more")
     async def pe_submenu_more(cb: CallbackQuery):
@@ -511,151 +614,43 @@ def register_prompt_editor_thematic_handlers(
         )
         await cb.answer(f"\U0001f527 Hi-res Fix {status}")
 
-    @router.callback_query(F.data == "pe:hires:scale")
-    async def pe_hires_scale(cb: CallbackQuery):
-        kb = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(text="1.25", callback_data="pe_hrs:1.25"),
-                    InlineKeyboardButton(text="1.5", callback_data="pe_hrs:1.5"),
-                    InlineKeyboardButton(text="2.0", callback_data="pe_hrs:2.0"),
-                ],
-                custom_btn("pe_hrs:custom"),
-                [
-                    InlineKeyboardButton(
-                        text="\u2b05\ufe0f \u041d\u0430\u0437\u0430\u0434",
-                        callback_data="pe:enh:hires",
-                    )
-                ],
-            ]
+    _register_scalar_param(
+        ThematicScalarConfig(
+            open_callback="pe:hires:scale",
+            prefix="pe_hrs",
+            custom_state=PromptEditorStates.entering_custom_hires_scale,
+            menu_text="Hi-res Fix scale (множитель, 1.0-3.0):",
+            custom_prompt="Hi-res scale (1.0-3.0):",
+            invalid_input_text="Число 1.0-3.0:",
+            values_rows=[["1.25", "1.5", "2.0"]],
+            back_callback="pe:enh:hires",
+            set_value=lambda params, value: setattr(params, "hires_scale", float(value)),
+            parse_value=lambda raw: float(raw),
+            validate_value=lambda value: 1.0 <= float(value) <= 3.0,
+            render_text=_hires_submenu_text,
+            render_keyboard=_hires_submenu_kb,
+            ack_text=lambda params: f"✅ Scale: x{params.hires_scale}",
         )
-        await cast(Message, cb.message).edit_text(
-            "Hi-res Fix scale (\u043c\u043d\u043e\u0436\u0438\u0442\u0435\u043b\u044c, 1.0\u20143.0):",
-            reply_markup=kb,
-        )
-        await cb.answer()
+    )
 
-    @router.callback_query(F.data.startswith("pe_hrs:"))
-    async def pe_hires_scale_chosen(cb: CallbackQuery, state: FSMContext):
-        payload = await deps.require_prompt_request_for_callback(cb)
-        if not payload:
-            return
-        uid, req = payload
-        value = await _selected_value(cb, prefix="pe_hrs")
-        if value is None:
-            return
-        if value == "custom":
-            await state.set_state(PromptEditorStates.entering_custom_hires_scale)
-            await cast(Message, cb.message).edit_text(
-                "Hi-res scale (1.0\u20143.0):",
-                reply_markup=deps.back_keyboard("pe:enh:hires"),
-            )
-            await cb.answer()
-            return
-        req.params.hires_scale = float(value)
-        await cast(Message, cb.message).edit_text(
-            _hires_submenu_text(req.params),
-            reply_markup=_hires_submenu_kb(req.params),
+    _register_scalar_param(
+        ThematicScalarConfig(
+            open_callback="pe:hires:denoise",
+            prefix="pe_hrd",
+            custom_state=PromptEditorStates.entering_custom_hires_denoise,
+            menu_text="Hi-res Fix denoise (0.0-1.0, меньше = ближе к оригиналу):",
+            custom_prompt="Hi-res denoise (0.0-1.0):",
+            invalid_input_text="Число 0.0-1.0:",
+            values_rows=[["0.3", "0.4", "0.5"], ["0.6", "0.7"]],
+            back_callback="pe:enh:hires",
+            set_value=lambda params, value: setattr(params, "hires_denoise", float(value)),
+            parse_value=lambda raw: float(raw),
+            validate_value=lambda value: 0.0 <= float(value) <= 1.0,
+            render_text=_hires_submenu_text,
+            render_keyboard=_hires_submenu_kb,
+            ack_text=lambda params: f"✅ Hi-res denoise: {params.hires_denoise}",
         )
-        await cb.answer(f"\u2705 Scale: \u00d7{req.params.hires_scale}")
-
-    @router.message(PromptEditorStates.entering_custom_hires_scale, F.text)
-    async def pe_custom_hires_scale(msg: Message, state: FSMContext):
-        payload = await deps.require_prompt_request_for_message(msg, state)
-        if not payload:
-            return
-        uid, req = payload
-        try:
-            value = float((msg.text or "").strip())
-            if not 1.0 <= value <= 3.0:
-                raise ValueError
-        except ValueError:
-            await msg.answer("\u0427\u0438\u0441\u043b\u043e 1.0\u20143.0:")
-            return
-        req.params.hires_scale = value
-        await state.set_state(PromptEditorStates.editing)
-        await deps.cleanup_user_message(msg)
-        await _show_from_request_anchor(
-            msg,
-            req,
-            _hires_submenu_text(req.params),
-            _hires_submenu_kb(req.params),
-        )
-
-    @router.callback_query(F.data == "pe:hires:denoise")
-    async def pe_hires_denoise(cb: CallbackQuery):
-        kb = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(text="0.3", callback_data="pe_hrd:0.3"),
-                    InlineKeyboardButton(text="0.4", callback_data="pe_hrd:0.4"),
-                    InlineKeyboardButton(text="0.5", callback_data="pe_hrd:0.5"),
-                ],
-                [
-                    InlineKeyboardButton(text="0.6", callback_data="pe_hrd:0.6"),
-                    InlineKeyboardButton(text="0.7", callback_data="pe_hrd:0.7"),
-                ],
-                custom_btn("pe_hrd:custom"),
-                [
-                    InlineKeyboardButton(
-                        text="\u2b05\ufe0f \u041d\u0430\u0437\u0430\u0434",
-                        callback_data="pe:enh:hires",
-                    )
-                ],
-            ]
-        )
-        await cast(Message, cb.message).edit_text(
-            "Hi-res Fix denoise (0.0\u20141.0, \u043c\u0435\u043d\u044c\u0448\u0435 = \u0431\u043b\u0438\u0436\u0435 \u043a \u043e\u0440\u0438\u0433\u0438\u043d\u0430\u043b\u0443):",
-            reply_markup=kb,
-        )
-        await cb.answer()
-
-    @router.callback_query(F.data.startswith("pe_hrd:"))
-    async def pe_hires_denoise_chosen(cb: CallbackQuery, state: FSMContext):
-        payload = await deps.require_prompt_request_for_callback(cb)
-        if not payload:
-            return
-        uid, req = payload
-        value = await _selected_value(cb, prefix="pe_hrd")
-        if value is None:
-            return
-        if value == "custom":
-            await state.set_state(PromptEditorStates.entering_custom_hires_denoise)
-            await cast(Message, cb.message).edit_text(
-                "Hi-res denoise (0.0\u20141.0):",
-                reply_markup=deps.back_keyboard("pe:enh:hires"),
-            )
-            await cb.answer()
-            return
-        req.params.hires_denoise = float(value)
-        await cast(Message, cb.message).edit_text(
-            _hires_submenu_text(req.params),
-            reply_markup=_hires_submenu_kb(req.params),
-        )
-        await cb.answer(f"\u2705 Hi-res denoise: {req.params.hires_denoise}")
-
-    @router.message(PromptEditorStates.entering_custom_hires_denoise, F.text)
-    async def pe_custom_hires_denoise(msg: Message, state: FSMContext):
-        payload = await deps.require_prompt_request_for_message(msg, state)
-        if not payload:
-            return
-        uid, req = payload
-        try:
-            value = float((msg.text or "").strip())
-            if not 0.0 <= value <= 1.0:
-                raise ValueError
-        except ValueError:
-            await msg.answer("\u0427\u0438\u0441\u043b\u043e 0.0\u20141.0:")
-            return
-        req.params.hires_denoise = value
-        await state.set_state(PromptEditorStates.editing)
-        await deps.cleanup_user_message(msg)
-        await _show_from_request_anchor(
-            msg,
-            req,
-            _hires_submenu_text(req.params),
-            _hires_submenu_kb(req.params),
-        )
+    )
 
     # --- FreeU submenu ---
 
@@ -880,80 +875,24 @@ def register_prompt_editor_thematic_handlers(
         )
         await cb.answer(f"\U0001f3af PAG {status_word}")
 
-    @router.callback_query(F.data == "pe:pag:scale")
-    async def pe_pag_scale(cb: CallbackQuery):
-        kb = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(text="1.0", callback_data="pe_pag:1.0"),
-                    InlineKeyboardButton(text="2.0", callback_data="pe_pag:2.0"),
-                    InlineKeyboardButton(text="3.0", callback_data="pe_pag:3.0"),
-                ],
-                [
-                    InlineKeyboardButton(text="4.0", callback_data="pe_pag:4.0"),
-                    InlineKeyboardButton(text="5.0", callback_data="pe_pag:5.0"),
-                ],
-                custom_btn("pe_pag:custom"),
-                [
-                    InlineKeyboardButton(
-                        text="\u2b05\ufe0f \u041d\u0430\u0437\u0430\u0434",
-                        callback_data="pe:enh:pag",
-                    )
-                ],
-            ]
+    _register_scalar_param(
+        ThematicScalarConfig(
+            open_callback="pe:pag:scale",
+            prefix="pe_pag",
+            custom_state=PromptEditorStates.entering_custom_pag_scale,
+            menu_text="PAG Scale (0.5-10.0):",
+            custom_prompt="PAG Scale (0.5-10.0):",
+            invalid_input_text="Число 0.5-10.0:",
+            values_rows=[["1.0", "2.0", "3.0"], ["4.0", "5.0"]],
+            back_callback="pe:enh:pag",
+            set_value=lambda params, value: setattr(params, "pag_scale", float(value)),
+            parse_value=lambda raw: float(raw),
+            validate_value=lambda value: 0.5 <= float(value) <= 10.0,
+            render_text=_pag_submenu_text,
+            render_keyboard=_pag_submenu_kb,
+            ack_text=lambda params: f"✅ PAG scale: {params.pag_scale}",
         )
-        await cast(Message, cb.message).edit_text(
-            "PAG Scale (0.5\u201410.0):",
-            reply_markup=kb,
-        )
-        await cb.answer()
-
-    @router.callback_query(F.data.startswith("pe_pag:"))
-    async def pe_pag_scale_chosen(cb: CallbackQuery, state: FSMContext):
-        payload = await deps.require_prompt_request_for_callback(cb)
-        if not payload:
-            return
-        uid, req = payload
-        value = await _selected_value(cb, prefix="pe_pag")
-        if value is None:
-            return
-        if value == "custom":
-            await state.set_state(PromptEditorStates.entering_custom_pag_scale)
-            await cast(Message, cb.message).edit_text(
-                "PAG Scale (0.5\u201410.0):",
-                reply_markup=deps.back_keyboard("pe:enh:pag"),
-            )
-            await cb.answer()
-            return
-        req.params.pag_scale = float(value)
-        await cast(Message, cb.message).edit_text(
-            _pag_submenu_text(req.params),
-            reply_markup=_pag_submenu_kb(req.params),
-        )
-        await cb.answer(f"\u2705 PAG scale: {req.params.pag_scale}")
-
-    @router.message(PromptEditorStates.entering_custom_pag_scale, F.text)
-    async def pe_custom_pag_scale(msg: Message, state: FSMContext):
-        payload = await deps.require_prompt_request_for_message(msg, state)
-        if not payload:
-            return
-        uid, req = payload
-        try:
-            value = float((msg.text or "").strip())
-            if not 0.5 <= value <= 10.0:
-                raise ValueError
-        except ValueError:
-            await msg.answer("\u0427\u0438\u0441\u043b\u043e 0.5\u201410.0:")
-            return
-        req.params.pag_scale = value
-        await state.set_state(PromptEditorStates.editing)
-        await deps.cleanup_user_message(msg)
-        await _show_from_request_anchor(
-            msg,
-            req,
-            _pag_submenu_text(req.params),
-            _pag_submenu_kb(req.params),
-        )
+    )
 
     # --- Upscaler submenu ---
 
@@ -1140,241 +1079,71 @@ def register_prompt_editor_thematic_handlers(
         )
         await cb.answer(f"\U0001f9e9 HyperTile {status_word}")
 
-    @router.callback_query(F.data == "pe:tiled:tile_size")
-    async def pe_tiled_tile_size(cb: CallbackQuery):
-        kb = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(text=str(v), callback_data=f"pe_ts:{v}")
-                    for v in (128, 192, 256)
-                ],
-                [
-                    InlineKeyboardButton(text=str(v), callback_data=f"pe_ts:{v}")
-                    for v in (384, 512, 768)
-                ],
-                custom_btn("pe_ts:custom"),
-                [
-                    InlineKeyboardButton(
-                        text="\u2b05\ufe0f \u041d\u0430\u0437\u0430\u0434",
-                        callback_data="pe:enh:tiled",
-                    )
-                ],
-            ]
+    _register_scalar_param(
+        ThematicScalarConfig(
+            open_callback="pe:tiled:tile_size",
+            prefix="pe_ts",
+            custom_state=PromptEditorStates.entering_custom_tile_size,
+            menu_text=(
+                "🧩 <b>Tile Size</b>\n\n"
+                "Размер тайла для HyperTile. Меньше = быстрее, больше = качественнее.\n\n"
+                "💡 Рекомендуется: 256."
+            ),
+            custom_prompt="Tile Size (64-1024):",
+            invalid_input_text="Целое число 64-1024:",
+            values_rows=[["128", "192", "256"], ["384", "512", "768"]],
+            back_callback="pe:enh:tiled",
+            set_value=lambda params, value: setattr(params, "tile_size", int(value)),
+            parse_value=lambda raw: int(raw),
+            validate_value=lambda value: 64 <= int(value) <= 1024,
+            render_text=_tiled_submenu_text,
+            render_keyboard=_tiled_submenu_kb,
+            ack_text=lambda params: f"Tile Size: {params.tile_size}",
         )
-        await cast(Message, cb.message).edit_text(
-            "\U0001f9e9 <b>Tile Size</b>\n\n"
-            "\u0420\u0430\u0437\u043c\u0435\u0440 \u0442\u0430\u0439\u043b\u0430 \u0434\u043b\u044f HyperTile. "
-            "\u041c\u0435\u043d\u044c\u0448\u0435 = \u0431\u044b\u0441\u0442\u0440\u0435\u0435, "
-            "\u0431\u043e\u043b\u044c\u0448\u0435 = \u043a\u0430\u0447\u0435\u0441\u0442\u0432\u0435\u043d\u043d\u0435\u0435.\n\n"
-            "\U0001f4a1 \u0420\u0435\u043a\u043e\u043c\u0435\u043d\u0434\u0443\u0435\u0442\u0441\u044f: 256.",
-            reply_markup=kb,
-        )
-        await cb.answer()
+    )
 
-    @router.callback_query(F.data.startswith("pe_ts:"))
-    async def pe_ts_chosen(cb: CallbackQuery, state: FSMContext):
-        payload = await deps.require_prompt_request_for_callback(cb)
-        if not payload:
-            return
-        _, req = payload
-        value = await _selected_value(cb, prefix="pe_ts")
-        if value is None:
-            return
-        if value == "custom":
-            await state.set_state(PromptEditorStates.entering_custom_tile_size)
-            await cast(Message, cb.message).edit_text(
-                "Tile Size (64\u20131024):",
-                reply_markup=deps.back_keyboard("pe:enh:tiled"),
-            )
-            await cb.answer()
-            return
-        req.params.tile_size = int(value)
-        await cast(Message, cb.message).edit_text(
-            _tiled_submenu_text(req.params),
-            reply_markup=_tiled_submenu_kb(req.params),
+    _register_scalar_param(
+        ThematicScalarConfig(
+            open_callback="pe:tiled:vae_tile",
+            prefix="pe_vt",
+            custom_state=PromptEditorStates.entering_custom_vae_tile_size,
+            menu_text=(
+                "🖼 <b>VAE Tile Size</b>\n\n"
+                "Размер тайла для VAE encode/decode.\n\n"
+                "💡 Рекомендуется: 512."
+            ),
+            custom_prompt="VAE Tile Size (128-4096):",
+            invalid_input_text="Целое число 128-4096:",
+            values_rows=[["256", "384", "512"], ["768", "1024", "2048"]],
+            back_callback="pe:enh:tiled",
+            set_value=lambda params, value: setattr(params, "vae_tile_size", int(value)),
+            parse_value=lambda raw: int(raw),
+            validate_value=lambda value: 128 <= int(value) <= 4096,
+            render_text=_tiled_submenu_text,
+            render_keyboard=_tiled_submenu_kb,
+            ack_text=lambda params: f"VAE Tile: {params.vae_tile_size}",
         )
-        await cb.answer(f"Tile Size: {value}")
+    )
 
-    @router.message(PromptEditorStates.entering_custom_tile_size, F.text)
-    async def pe_custom_tile_size(msg: Message, state: FSMContext):
-        payload = await deps.require_prompt_request_for_message(msg, state)
-        if not payload:
-            return
-        _, req = payload
-        try:
-            value = int((msg.text or "").strip())
-            if not 64 <= value <= 1024:
-                raise ValueError
-        except ValueError:
-            await msg.answer(
-                "\u0426\u0435\u043b\u043e\u0435 \u0447\u0438\u0441\u043b\u043e 64\u20131024:"
-            )
-            return
-        req.params.tile_size = value
-        await state.set_state(PromptEditorStates.editing)
-        await deps.cleanup_user_message(msg)
-        await _show_from_request_anchor(
-            msg,
-            req,
-            _tiled_submenu_text(req.params),
-            _tiled_submenu_kb(req.params),
+    _register_scalar_param(
+        ThematicScalarConfig(
+            open_callback="pe:tiled:overlap",
+            prefix="pe_tovlp",
+            custom_state=PromptEditorStates.entering_custom_tile_overlap,
+            menu_text=(
+                "🌀 <b>Overlap</b>\n\n"
+                "Перекрытие между тайлами VAE. Больше = меньше швов, но медленнее.\n\n"
+                "💡 Рекомендуется: 64."
+            ),
+            custom_prompt="Tile Overlap (0-2048):",
+            invalid_input_text="Целое число 0-2048:",
+            values_rows=[["32", "48", "64"], ["96", "128", "256"]],
+            back_callback="pe:enh:tiled",
+            set_value=lambda params, value: setattr(params, "tile_overlap", int(value)),
+            parse_value=lambda raw: int(raw),
+            validate_value=lambda value: 0 <= int(value) <= 2048,
+            render_text=_tiled_submenu_text,
+            render_keyboard=_tiled_submenu_kb,
+            ack_text=lambda params: f"Overlap: {params.tile_overlap}",
         )
-
-    @router.callback_query(F.data == "pe:tiled:vae_tile")
-    async def pe_tiled_vae_tile(cb: CallbackQuery):
-        kb = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(text=str(v), callback_data=f"pe_vt:{v}")
-                    for v in (256, 384, 512)
-                ],
-                [
-                    InlineKeyboardButton(text=str(v), callback_data=f"pe_vt:{v}")
-                    for v in (768, 1024, 2048)
-                ],
-                custom_btn("pe_vt:custom"),
-                [
-                    InlineKeyboardButton(
-                        text="\u2b05\ufe0f \u041d\u0430\u0437\u0430\u0434",
-                        callback_data="pe:enh:tiled",
-                    )
-                ],
-            ]
-        )
-        await cast(Message, cb.message).edit_text(
-            "\U0001f5bc <b>VAE Tile Size</b>\n\n"
-            "\u0420\u0430\u0437\u043c\u0435\u0440 \u0442\u0430\u0439\u043b\u0430 \u0434\u043b\u044f VAE "
-            "encode/decode.\n\n"
-            "\U0001f4a1 \u0420\u0435\u043a\u043e\u043c\u0435\u043d\u0434\u0443\u0435\u0442\u0441\u044f: 512.",
-            reply_markup=kb,
-        )
-        await cb.answer()
-
-    @router.callback_query(F.data.startswith("pe_vt:"))
-    async def pe_vt_chosen(cb: CallbackQuery, state: FSMContext):
-        payload = await deps.require_prompt_request_for_callback(cb)
-        if not payload:
-            return
-        _, req = payload
-        value = await _selected_value(cb, prefix="pe_vt")
-        if value is None:
-            return
-        if value == "custom":
-            await state.set_state(PromptEditorStates.entering_custom_vae_tile_size)
-            await cast(Message, cb.message).edit_text(
-                "VAE Tile Size (128\u20134096):",
-                reply_markup=deps.back_keyboard("pe:enh:tiled"),
-            )
-            await cb.answer()
-            return
-        req.params.vae_tile_size = int(value)
-        await cast(Message, cb.message).edit_text(
-            _tiled_submenu_text(req.params),
-            reply_markup=_tiled_submenu_kb(req.params),
-        )
-        await cb.answer(f"VAE Tile: {value}")
-
-    @router.message(PromptEditorStates.entering_custom_vae_tile_size, F.text)
-    async def pe_custom_vae_tile(msg: Message, state: FSMContext):
-        payload = await deps.require_prompt_request_for_message(msg, state)
-        if not payload:
-            return
-        _, req = payload
-        try:
-            value = int((msg.text or "").strip())
-            if not 128 <= value <= 4096:
-                raise ValueError
-        except ValueError:
-            await msg.answer(
-                "\u0426\u0435\u043b\u043e\u0435 \u0447\u0438\u0441\u043b\u043e 128\u20134096:"
-            )
-            return
-        req.params.vae_tile_size = value
-        await state.set_state(PromptEditorStates.editing)
-        await deps.cleanup_user_message(msg)
-        await _show_from_request_anchor(
-            msg,
-            req,
-            _tiled_submenu_text(req.params),
-            _tiled_submenu_kb(req.params),
-        )
-
-    @router.callback_query(F.data == "pe:tiled:overlap")
-    async def pe_tiled_overlap(cb: CallbackQuery):
-        kb = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(text=str(v), callback_data=f"pe_tovlp:{v}")
-                    for v in (32, 48, 64)
-                ],
-                [
-                    InlineKeyboardButton(text=str(v), callback_data=f"pe_tovlp:{v}")
-                    for v in (96, 128, 256)
-                ],
-                custom_btn("pe_tovlp:custom"),
-                [
-                    InlineKeyboardButton(
-                        text="\u2b05\ufe0f \u041d\u0430\u0437\u0430\u0434",
-                        callback_data="pe:enh:tiled",
-                    )
-                ],
-            ]
-        )
-        await cast(Message, cb.message).edit_text(
-            "\U0001f300 <b>Overlap</b>\n\n"
-            "\u041f\u0435\u0440\u0435\u043a\u0440\u044b\u0442\u0438\u0435 \u043c\u0435\u0436\u0434\u0443 \u0442\u0430\u0439\u043b\u0430\u043c\u0438 VAE. "
-            "\u0411\u043e\u043b\u044c\u0448\u0435 = \u043c\u0435\u043d\u044c\u0448\u0435 \u0448\u0432\u043e\u0432, "
-            "\u043d\u043e \u043c\u0435\u0434\u043b\u0435\u043d\u043d\u0435\u0435.\n\n"
-            "\U0001f4a1 \u0420\u0435\u043a\u043e\u043c\u0435\u043d\u0434\u0443\u0435\u0442\u0441\u044f: 64.",
-            reply_markup=kb,
-        )
-        await cb.answer()
-
-    @router.callback_query(F.data.startswith("pe_tovlp:"))
-    async def pe_tovlp_chosen(cb: CallbackQuery, state: FSMContext):
-        payload = await deps.require_prompt_request_for_callback(cb)
-        if not payload:
-            return
-        _, req = payload
-        value = await _selected_value(cb, prefix="pe_tovlp")
-        if value is None:
-            return
-        if value == "custom":
-            await state.set_state(PromptEditorStates.entering_custom_tile_overlap)
-            await cast(Message, cb.message).edit_text(
-                "Tile Overlap (0\u20132048):",
-                reply_markup=deps.back_keyboard("pe:enh:tiled"),
-            )
-            await cb.answer()
-            return
-        req.params.tile_overlap = int(value)
-        await cast(Message, cb.message).edit_text(
-            _tiled_submenu_text(req.params),
-            reply_markup=_tiled_submenu_kb(req.params),
-        )
-        await cb.answer(f"Overlap: {value}")
-
-    @router.message(PromptEditorStates.entering_custom_tile_overlap, F.text)
-    async def pe_custom_tile_overlap(msg: Message, state: FSMContext):
-        payload = await deps.require_prompt_request_for_message(msg, state)
-        if not payload:
-            return
-        _, req = payload
-        try:
-            value = int((msg.text or "").strip())
-            if not 0 <= value <= 2048:
-                raise ValueError
-        except ValueError:
-            await msg.answer(
-                "\u0426\u0435\u043b\u043e\u0435 \u0447\u0438\u0441\u043b\u043e 0\u20132048:"
-            )
-            return
-        req.params.tile_overlap = value
-        await state.set_state(PromptEditorStates.editing)
-        await deps.cleanup_user_message(msg)
-        await _show_from_request_anchor(
-            msg,
-            req,
-            _tiled_submenu_text(req.params),
-            _tiled_submenu_kb(req.params),
-        )
+    )

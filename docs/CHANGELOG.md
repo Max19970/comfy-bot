@@ -1,5 +1,37 @@
 # Changelog
 
+## 2026-02-21 - Рефакторинг дублирования (этапы 1-8)
+
+### Централизация фильтров и пользовательских дефолтов
+
+- Вынесены единые справочники и нормализация download-фильтров (`source/sort/period/base`, профили) в `core/download_filters.py`.
+- Объединена логика чтения и нормализации пользовательских дефолтов в `core/user_preferences.py`.
+- Runtime и handlers переведены на единый слой дефолтов, чтобы убрать расхождения между `/download`, настройками и prompt editor.
+
+### Prompt editor: удаление дублирующихся handler-flow
+
+- Параметризованы повторяющиеся edit/thematic ветки выбора значений и custom input.
+- Вынесены общие контролы улучшений (`Hi-res/PAG`) в `core/prompt_enhancements.py` и подключены как в главном редакторе, так и в меню улучшения готовой картинки.
+- Добавлены общие helper-модули `prompt_editor_selection_utils.py` и `prompt_editor_enhancements.py` для единообразного парсинга callback-выборов и отображения счётчика улучшений.
+
+### Декомпозиция крупных handler-модулей
+
+- Из крупных файлов вынесены utility-слои:
+  - `handlers/common_core_utils.py`,
+  - `handlers/download_flow_utils.py`,
+  - `handlers/prompt_editor_send_menu_utils.py`.
+- Сохранено прежнее поведение пользовательских сценариев при уменьшении копипаста и связности.
+
+### Исправления регрессий в процессе рефакторинга
+
+- Исправлен callback-timeout в `Продолжить поиск` (раннее подтверждение callback + безопасное уведомление через UI).
+- Восстановлено прежнее поведение запуска улучшения готовой картинки: все улучшения снова полностью опциональны.
+
+### Тесты
+
+- Добавлены тесты для новых utility-слоёв (`user_preferences`, `prompt_enhancements`, `download_flow_utils`, `prompt_editor_send_menu_utils`, selection/enhancements helpers prompt editor).
+- Актуальный baseline после изменений: `python -m pytest` проходит.
+
 ## 2026-02-20 - Меню улучшения и потоковая выдача батча
 
 ### Улучшение сгенерированных изображений

@@ -31,6 +31,7 @@
 - `core/*`
   - `core/states.py` — FSM-состояния.
   - `core/runtime.py` — runtime-хранилище (`RuntimeStore`) и структуры активных задач.
+  - `core/user_preferences.py` — единый слой чтения и нормализации пользовательских дефолтов.
   - `core/storage.py` — сериализация параметров и пресеты.
   - `core/html_utils.py` — безопасное форматирование и компактные представления текста.
   - `core/ui.py` — совместимый UI helper-слой (summary/пагинация).
@@ -38,7 +39,8 @@
   - `core/interaction.py` — единый callback/message interaction flow.
   - `core/callbacks.py` — типизированные callback-схемы.
   - `core/panels.py` — централизованный рендер пользовательских панелей.
-  - `core/download_filters.py` — общие helper-правила фильтрации base-моделей.
+  - `core/download_filters.py` — каталог download-фильтров, профилей и нормализация кодов.
+  - `core/prompt_enhancements.py` — общие контролы/диапазоны enhancement-параметров (Hi-res/PAG).
   - `core/image_utils.py` — подготовка изображений под ограничения Telegram.
   - `core/telegram.py` — утилиты для извлечения user id из Message/Callback.
 
@@ -66,6 +68,10 @@
 - `handlers/common.py`
   - Общие команды (`/start`, `/help`, `/models`, `/queue`, `/settings`, `/cancel`).
   - Whitelist middleware.
+  - Оркестрация и регистрация специализированных common-модулей.
+
+- `handlers/common_core_utils.py`
+  - Shared helper-логика для `common_core_handlers` (training pages/mode/page, операции с prefs).
 
 - `handlers/registry.py`
   - Единая точка регистрации всех handler-модулей.
@@ -81,7 +87,13 @@
   - `prompt_editor_lora.py` — helper-логика LoRA и рендер LoRA-меню.
   - `prompt_editor_references.py` — helper-логика референсов и рендер меню.
   - `prompt_editor_send.py` — отправка превью/PNG и клавиатура действий.
+  - `prompt_editor_send_menu_utils.py` — reusable клавиатуры/валидация для меню улучшения готовой картинки.
+  - `prompt_editor_selection_utils.py` — общий парсинг selection-callback и сборка scalar-choice клавиатур.
+  - `prompt_editor_enhancements.py` — единый расчёт/лейблы счётчика улучшений.
   - Используются `prompt_editor.py` как подмодули без изменения поведения сценариев.
+
+- `handlers/download_flow_utils.py`
+  - Shared helper-логика для `/download` flow (дефолты пользователя, профили фильтров, парсинг author filters).
 
 - `handlers/presets.py`
   - CRUD пресетов пользователя.

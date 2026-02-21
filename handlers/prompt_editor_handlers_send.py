@@ -7,7 +7,6 @@ import time
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass
-from typing import cast
 
 import aiohttp
 from aiogram import F, Router
@@ -23,6 +22,7 @@ from aiogram.types import (
 from comfyui_client import ComfyUIClient
 from core.html_utils import h
 from core.image_utils import image_dimensions, resize_image_by_percent, shrink_image_to_box
+from core.interaction import callback_message as interaction_callback_message
 from core.models import GenerationParams
 from core.runtime import ActiveGeneration, PreviewArtifact, PromptRequest, RuntimeStore
 from core.ui_copy import START_TEXT, main_menu_keyboard
@@ -46,11 +46,7 @@ def register_prompt_editor_send_handlers(
     router: Router,
     deps: PromptEditorSendHandlersDeps,
 ) -> None:
-    def _callback_message(cb: CallbackQuery) -> Message | None:
-        message = cb.message
-        if message is None or not hasattr(message, "answer"):
-            return None
-        return cast(Message, message)
+    _callback_message = interaction_callback_message
 
     def _user_artifact(uid: int, artifact_id: str) -> PreviewArtifact | None:
         artifact = deps.runtime.preview_artifacts.get(artifact_id)

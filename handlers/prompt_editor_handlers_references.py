@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import cast
 
 from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
@@ -14,6 +13,7 @@ from aiogram.types import (
     Message,
 )
 
+from core.interaction import callback_message as interaction_callback_message
 from core.runtime import PromptRequest, RuntimeStore
 from core.states import PromptEditorStates
 
@@ -38,10 +38,7 @@ def register_prompt_editor_reference_handlers(
     router: Router,
     deps: PromptEditorReferenceHandlersDeps,
 ) -> None:
-    def _callback_message(cb: CallbackQuery) -> Message | None:
-        if cb.message is None or not hasattr(cb.message, "edit_text"):
-            return None
-        return cast(Message, cb.message)
+    _callback_message = interaction_callback_message
 
     @router.callback_query(F.data == "pe:edit:refs")
     async def pe_edit_refs(cb: CallbackQuery, state: FSMContext):

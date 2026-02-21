@@ -11,6 +11,7 @@ from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 from comfyui_client import ComfyUIClient
 from config import Config
 from core.html_utils import h
+from core.interaction import callback_message, edit_message_by_anchor, edit_or_answer
 from core.models import GenerationParams
 from core.runtime import PromptRequest, RuntimeStore
 from core.telegram import callback_user_id, message_user_id
@@ -41,26 +42,17 @@ async def edit_prompt_panel_by_anchor(
     text: str,
     reply_markup: InlineKeyboardMarkup | None,
 ) -> Message | None:
-    if req.ui_chat_id is None or req.ui_message_id is None:
-        return None
-
-    bot = source_message.bot
-    if bot is None:
-        return None
-
-    try:
-        edited = await bot.edit_message_text(
-            text=text,
-            chat_id=req.ui_chat_id,
-            message_id=req.ui_message_id,
-            reply_markup=reply_markup,
-        )
-        if isinstance(edited, Message):
-            remember_prompt_panel(runtime, req, edited)
-            return edited
-    except TelegramBadRequest:
-        return None
-    return None
+    edited = await edit_message_by_anchor(
+        source_message,
+        chat_id=req.ui_chat_id,
+        message_id=req.ui_message_id,
+        text=text,
+        reply_markup=reply_markup,
+        not_modified_fallback=source_message,
+    )
+    if edited is not None:
+        remember_prompt_panel(runtime, req, edited)
+    return edited
 
 
 async def show_prompt_panel(
@@ -75,19 +67,14 @@ async def show_prompt_panel(
     anchored = await edit_prompt_panel_by_anchor(runtime, req, message, text, reply_markup)
     if anchored is not None:
         return anchored
-
-    if prefer_edit:
-        try:
-            edited = await message.edit_text(text, reply_markup=reply_markup)
-            if isinstance(edited, Message):
-                remember_prompt_panel(runtime, req, edited)
-                return edited
-        except TelegramBadRequest:
-            pass
-
-    sent = await message.answer(text, reply_markup=reply_markup)
-    remember_prompt_panel(runtime, req, sent)
-    return sent
+    panel_msg = await edit_or_answer(
+        message,
+        text=text,
+        reply_markup=reply_markup,
+        prefer_edit=prefer_edit,
+    )
+    remember_prompt_panel(runtime, req, panel_msg)
+    return panel_msg
 
 
 async def move_prompt_panel_to_bottom(
@@ -278,6 +265,11 @@ async def require_prompt_request_for_callback(
     runtime: RuntimeStore,
     cb: CallbackQuery,
 ) -> tuple[int, PromptRequest] | None:
+    message = callback_message(cb)
+    if message is None:
+        await cb.answer("⚠️ Сообщение недоступно.", show_alert=True)
+        return None
+
     uid = callback_user_id(cb)
     req = runtime.active_prompt_requests.get(uid)
     if req:

@@ -3,7 +3,6 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from io import BytesIO
-from typing import cast
 
 from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
@@ -17,6 +16,7 @@ from aiogram.types import (
 )
 
 from core.html_utils import h, truncate
+from core.interaction import callback_message as interaction_callback_message
 from core.models import GenerationParams
 from core.prompt_exchange import (
     PROMPT_EXCHANGE_PREFIX,
@@ -111,10 +111,7 @@ def register_prompt_editor_exchange_handlers(
     router: Router,
     deps: PromptEditorExchangeHandlersDeps,
 ) -> None:
-    def _callback_message(cb: CallbackQuery) -> Message | None:
-        if cb.message is None or not hasattr(cb.message, "edit_text"):
-            return None
-        return cast(Message, cb.message)
+    _callback_message = interaction_callback_message
 
     async def _apply_import_from_text(
         message: Message,

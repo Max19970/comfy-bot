@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass
-from typing import cast
 
 from aiogram import F, Router
 from aiogram.filters import Command
@@ -16,6 +15,7 @@ from aiogram.types import (
 )
 
 from comfyui_client import ComfyUIClient
+from core.interaction import callback_message as interaction_callback_message
 from core.models import GenerationParams
 from core.runtime import PromptRequest, RuntimeStore
 
@@ -41,10 +41,7 @@ def register_prompt_editor_flow_handlers(
     router: Router,
     deps: PromptEditorFlowHandlersDeps,
 ) -> None:
-    def _callback_message(cb: CallbackQuery) -> Message | None:
-        if cb.message is None or not hasattr(cb.message, "edit_text"):
-            return None
-        return cast(Message, cb.message)
+    _callback_message = interaction_callback_message
 
     def _latest_user_generation(uid: int):
         candidates = [

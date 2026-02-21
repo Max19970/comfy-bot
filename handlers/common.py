@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable
-from typing import Any, cast
+from typing import Any
 
 from aiogram import Router
 from aiogram.exceptions import TelegramBadRequest
@@ -17,6 +17,7 @@ from aiogram.types.base import TelegramObject
 from comfyui_client import ComfyUIClient
 from config import Config
 from core.html_utils import h, truncate
+from core.interaction import callback_message as interaction_callback_message
 from core.panels import render_user_panel
 from core.queue_utils import queue_item_prompt_id
 from core.runtime import RuntimeStore
@@ -390,10 +391,7 @@ def register_common_handlers(
     router.message.outer_middleware(wl_msg)
     router.callback_query.outer_middleware(wl_cb)
 
-    def _callback_message(cb: CallbackQuery) -> Message | None:
-        if cb.message is None or not hasattr(cb.message, "edit_text"):
-            return None
-        return cast(Message, cb.message)
+    _callback_message = interaction_callback_message
 
     register_common_core_handlers(
         CommonCoreDeps(

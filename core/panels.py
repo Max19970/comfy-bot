@@ -5,6 +5,7 @@ import logging
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import InlineKeyboardMarkup, Message
 
+from core.interaction import edit_message_by_anchor, is_message_not_modified_error
 from core.runtime import RuntimeStore
 
 logger = logging.getLogger(__name__)
@@ -32,22 +33,18 @@ async def render_user_panel(
     chat_id = anchor.get("chat_id")
     message_id = anchor.get("message_id")
 
-    if isinstance(chat_id, int) and isinstance(message_id, int) and message.bot:
-        try:
-            edited = await message.bot.edit_message_text(
-                text=text,
-                chat_id=chat_id,
-                message_id=message_id,
-                reply_markup=reply_markup,
-            )
-            if isinstance(edited, Message):
-                remember_user_panel(runtime, uid, edited)
-                return edited
-        except TelegramBadRequest as exc:
-            if "message is not modified" in str(exc).lower():
-                remember_user_panel(runtime, uid, message)
-                return message
-            logger.debug("Failed to edit anchored panel", exc_info=True)
+    if isinstance(chat_id, int) and isinstance(message_id, int):
+        edited_by_anchor = await edit_message_by_anchor(
+            message,
+            chat_id=chat_id,
+            message_id=message_id,
+            text=text,
+            reply_markup=reply_markup,
+            not_modified_fallback=message,
+        )
+        if edited_by_anchor is not None:
+            remember_user_panel(runtime, uid, edited_by_anchor)
+            return edited_by_anchor
 
     if prefer_edit:
         try:
@@ -56,7 +53,7 @@ async def render_user_panel(
                 remember_user_panel(runtime, uid, edited)
                 return edited
         except TelegramBadRequest as exc:
-            if "message is not modified" in str(exc).lower():
+            if is_message_not_modified_error(exc):
                 remember_user_panel(runtime, uid, message)
                 return message
             logger.debug("Failed to edit current panel", exc_info=True)

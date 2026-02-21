@@ -4,7 +4,6 @@ import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import cast
 
 from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
@@ -17,6 +16,7 @@ from aiogram.types import (
 )
 
 from core.html_utils import h
+from core.interaction import callback_message as interaction_callback_message
 from core.runtime import PromptRequest
 from core.states import PromptEditorStates
 from smart_prompt import SmartPromptError, SmartPromptService
@@ -49,10 +49,7 @@ def register_prompt_editor_smart_handlers(
     router: Router,
     deps: PromptEditorSmartHandlersDeps,
 ) -> None:
-    def _callback_message(cb: CallbackQuery) -> Message | None:
-        if cb.message is None or not hasattr(cb.message, "edit_text"):
-            return None
-        return cast(Message, cb.message)
+    _callback_message = interaction_callback_message
 
     @router.callback_query(F.data == "pe:smart:start")
     async def pe_smart_prompt_start(cb: CallbackQuery, state: FSMContext):

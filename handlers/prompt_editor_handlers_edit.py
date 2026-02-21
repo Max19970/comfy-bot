@@ -14,12 +14,17 @@ from aiogram.types import (
 )
 
 from comfyui_client import ComfyUIClient
-from core.callbacks import IndexedSelectionCallback, ValueSelectionCallback
 from core.interaction import require_callback_message
 from core.models import GenerationParams
 from core.runtime import PromptRequest, RuntimeStore
 from core.states import PromptEditorStates
 from core.ui import custom_btn
+
+from .prompt_editor_selection_utils import (
+    parse_indexed_selection,
+    parse_value_selection,
+    scalar_choice_keyboard,
+)
 
 
 @dataclass
@@ -77,32 +82,6 @@ def register_prompt_editor_edit_handlers(
     router: Router,
     deps: PromptEditorEditHandlersDeps,
 ) -> None:
-    async def _selected_index(cb: CallbackQuery, *, prefix: str) -> int | None:
-        parsed = IndexedSelectionCallback.parse(cb.data or "", prefix=prefix)
-        if parsed is None:
-            await cb.answer("❌ Некорректный запрос.", show_alert=True)
-            return None
-        return parsed.index
-
-    async def _selected_value(cb: CallbackQuery, *, prefix: str) -> str | None:
-        parsed = ValueSelectionCallback.parse(cb.data or "", prefix=prefix)
-        if parsed is None:
-            await cb.answer("❌ Некорректный запрос.", show_alert=True)
-            return None
-        return parsed.value
-
-    def _build_scalar_keyboard(config: ScalarParamConfig) -> InlineKeyboardMarkup:
-        rows = [
-            [
-                InlineKeyboardButton(text=value, callback_data=f"{config.prefix}:{value}")
-                for value in values_row
-            ]
-            for values_row in config.values_rows
-        ]
-        rows.append(custom_btn(f"{config.prefix}:custom"))
-        rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="pe:back")])
-        return InlineKeyboardMarkup(inline_keyboard=rows)
-
     def _register_paginated_param(config: PaginatedParamConfig) -> None:
         @router.callback_query(F.data == config.open_callback)
         async def _open(cb: CallbackQuery):
@@ -123,7 +102,7 @@ def register_prompt_editor_edit_handlers(
 
         @router.callback_query(F.data.startswith(f"{config.prefix}:"))
         async def _chosen(cb: CallbackQuery, state: FSMContext):
-            idx = await _selected_index(cb, prefix=config.prefix)
+            idx = await parse_indexed_selection(cb, prefix=config.prefix)
             if idx is None:
                 return
             items = config.items_getter()
@@ -146,7 +125,11 @@ def register_prompt_editor_edit_handlers(
                 return
             await message.edit_text(
                 config.menu_text,
-                reply_markup=_build_scalar_keyboard(config),
+                reply_markup=scalar_choice_keyboard(
+                    prefix=config.prefix,
+                    values_rows=config.values_rows,
+                    back_callback="pe:back",
+                ),
             )
             await cb.answer()
 
@@ -160,7 +143,7 @@ def register_prompt_editor_edit_handlers(
                 return
 
             uid, req = payload
-            raw_value = await _selected_value(cb, prefix=config.prefix)
+            raw_value = await parse_value_selection(cb, prefix=config.prefix)
             if raw_value is None:
                 return
 
@@ -292,7 +275,7 @@ def register_prompt_editor_edit_handlers(
 
     @router.callback_query(F.data.startswith("pe_ckpt:"))
     async def pe_ckpt_chosen(cb: CallbackQuery, state: FSMContext):
-        idx = await _selected_index(cb, prefix="pe_ckpt")
+        idx = await parse_indexed_selection(cb, prefix="pe_ckpt")
         if idx is None:
             return
         items = deps.client.info.checkpoints
@@ -440,11 +423,10 @@ def register_prompt_editor_edit_handlers(
             return
 
         uid, req = payload
-        parsed = ValueSelectionCallback.parse(cb.data or "", prefix="pe_size")
-        if parsed is None:
-            await cb.answer("❌ Некорректный запрос.", show_alert=True)
+        value = await parse_value_selection(cb, prefix="pe_size")
+        if value is None:
             return
-        if parsed.value == "custom":
+        if value == "custom":
             await state.set_state(PromptEditorStates.entering_custom_size)
             await message.edit_text(
                 "Введите размер ШИРИНАxВЫСОТА (например 640x960):",
@@ -453,7 +435,7 @@ def register_prompt_editor_edit_handlers(
             await cb.answer()
             return
 
-        size_parts = parsed.value.split(":", 1)
+        size_parts = value.split(":", 1)
         if len(size_parts) != 2:
             await cb.answer("❌ Некорректный размер.", show_alert=True)
             return
@@ -592,7 +574,7 @@ def register_prompt_editor_edit_handlers(
             return
 
         uid, req = payload
-        value = await _selected_value(cb, prefix="pe_seed")
+        value = await parse_value_selection(cb, prefix="pe_seed")
         if value is None:
             return
         if value == "custom":

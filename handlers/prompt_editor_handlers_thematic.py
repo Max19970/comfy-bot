@@ -13,7 +13,6 @@ from aiogram.types import (
     Message,
 )
 
-from core.callbacks import ValueSelectionCallback
 from core.html_utils import h, truncate
 from core.models import GenerationParams
 from core.prompt_enhancements import (
@@ -23,8 +22,9 @@ from core.prompt_enhancements import (
 )
 from core.runtime import PromptRequest, RuntimeStore
 from core.states import PromptEditorStates
-from core.ui import custom_btn
 
+from .prompt_editor_enhancements import enhancements_menu_label
+from .prompt_editor_selection_utils import parse_value_selection, scalar_choice_keyboard
 from .prompt_editor_session import show_prompt_panel
 
 
@@ -83,44 +83,22 @@ def register_prompt_editor_thematic_handlers(
             prefer_edit=False,
         )
 
-    async def _selected_value(cb: CallbackQuery, *, prefix: str) -> str | None:
-        parsed = ValueSelectionCallback.parse(cb.data or "", prefix=prefix)
-        if parsed is None:
-            await cb.answer("❌ Некорректный запрос.", show_alert=True)
-            return None
-        return parsed.value
-
     def _control_bounds(field: str) -> tuple[float, float]:
         control = numeric_enhancement_control(field)
         if control is None:
             raise ValueError(f"Unknown enhancement control: {field}")
         return control.min_value, control.max_value
 
-    def _scalar_kb(config: ThematicScalarConfig) -> InlineKeyboardMarkup:
-        rows = [
-            [
-                InlineKeyboardButton(text=value, callback_data=f"{config.prefix}:{value}")
-                for value in values_row
-            ]
-            for values_row in config.values_rows
-        ]
-        rows.append(custom_btn(f"{config.prefix}:custom"))
-        rows.append(
-            [
-                InlineKeyboardButton(
-                    text="⬅️ Назад",
-                    callback_data=config.back_callback,
-                )
-            ]
-        )
-        return InlineKeyboardMarkup(inline_keyboard=rows)
-
     def _register_scalar_param(config: ThematicScalarConfig) -> None:
         @router.callback_query(F.data == config.open_callback)
         async def _open(cb: CallbackQuery):
             await cast(Message, cb.message).edit_text(
                 config.menu_text,
-                reply_markup=_scalar_kb(config),
+                reply_markup=scalar_choice_keyboard(
+                    prefix=config.prefix,
+                    values_rows=config.values_rows,
+                    back_callback=config.back_callback,
+                ),
             )
             await cb.answer()
 
@@ -130,7 +108,7 @@ def register_prompt_editor_thematic_handlers(
             if not payload:
                 return
             _, req = payload
-            value = await _selected_value(cb, prefix=config.prefix)
+            value = await parse_value_selection(cb, prefix=config.prefix)
             if value is None:
                 return
             if value == "custom":
@@ -190,20 +168,7 @@ def register_prompt_editor_thematic_handlers(
         _, req = payload
         params = req.params
 
-        enh_count = sum(
-            [
-                params.enable_hires_fix,
-                params.enable_freeu,
-                params.enable_pag,
-                bool(params.upscale_model),
-                params.enable_tiled_diffusion,
-            ]
-        )
-        enh_label = (
-            f"\u2728 \u0423\u043b\u0443\u0447\u0448\u0435\u043d\u0438\u044f ({enh_count})"
-            if enh_count
-            else "\u2728 \u0423\u043b\u0443\u0447\u0448\u0435\u043d\u0438\u044f"
-        )
+        enh_label = enhancements_menu_label(params)
 
         kb = InlineKeyboardMarkup(
             inline_keyboard=[

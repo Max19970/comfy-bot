@@ -9,6 +9,8 @@ from core.runtime import PromptRequest
 from core.ui_kit import MenuNavSpec, back_button, build_keyboard, build_row, menu_nav_row
 from core.ui_kit.buttons import button, cancel_button
 
+from .prompt_editor_enhancements import enhancements_menu_label
+
 
 @dataclass(frozen=True)
 class PromptEditorShell:
@@ -77,16 +79,7 @@ def editor_keyboard(
     params = req.params
     smart_label = "🧠 Smart" if smart_prompt_enabled else "🧠 Smart (off)"
 
-    enh_count = sum(
-        [
-            params.enable_hires_fix,
-            params.enable_freeu,
-            params.enable_pag,
-            bool(params.upscale_model),
-            params.enable_tiled_diffusion,
-        ]
-    )
-    enh_label = f"✨ Улучшения ({enh_count})" if enh_count else "✨ Улучшения"
+    enh_label = enhancements_menu_label(params)
 
     mode_btn_text = "🟢 Простой" if pro_mode else "🔧 Про"
     rows = _editor_header_rows(lora_count=len(params.loras), smart_label=smart_label)

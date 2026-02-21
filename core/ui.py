@@ -1,10 +1,15 @@
 from __future__ import annotations
 
-import math
-
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from core.models import GenerationParams
+from core.ui_kit import (
+    build_keyboard,
+    build_page_window,
+    custom_value_button,
+    item_callback,
+    page_nav_row,
+)
 
 from .html_utils import h, truncate
 
@@ -31,41 +36,28 @@ def paginated_keyboard(
     *,
     extra: list[list[InlineKeyboardButton]] | None = None,
 ) -> InlineKeyboardMarkup:
-    total_pages = max(1, math.ceil(len(items) / PAGE_SIZE))
-    page = max(0, min(page, total_pages - 1))
-    start = page * PAGE_SIZE
+    window = build_page_window(items, page, PAGE_SIZE)
 
     rows: list[list[InlineKeyboardButton]] = []
-    for i, item in enumerate(items[start : start + PAGE_SIZE]):
+    for i, item in enumerate(window.items):
         short = item if len(item) <= 40 else item[:37] + "..."
-        rows.append([InlineKeyboardButton(text=short, callback_data=f"{prefix}:{start + i}")])
-
-    nav: list[InlineKeyboardButton] = []
-    if page > 0:
-        nav.append(
-            InlineKeyboardButton(text="\u25c0\ufe0f", callback_data=f"{prefix}_page:{page - 1}")
-        )
-    nav.append(
-        InlineKeyboardButton(text=f"\u00b7 {page + 1}/{total_pages} \u00b7", callback_data="noop")
-    )
-    if page < total_pages - 1:
-        nav.append(
-            InlineKeyboardButton(text="\u25b6\ufe0f", callback_data=f"{prefix}_page:{page + 1}")
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=short,
+                    callback_data=item_callback(prefix, window.start_index + i),
+                )
+            ]
         )
 
-    rows.append(nav)
+    rows.append(page_nav_row(prefix, window.page, window.total_pages))
     if extra:
         rows.extend(extra)
-    return InlineKeyboardMarkup(inline_keyboard=rows)
+    return build_keyboard(rows)
 
 
 def custom_btn(callback_data: str) -> list[InlineKeyboardButton]:
-    return [
-        InlineKeyboardButton(
-            text="\u270f\ufe0f \u0412\u0432\u0435\u0441\u0442\u0438 \u0441\u0432\u043e\u0451 \u0437\u043d\u0430\u0447\u0435\u043d\u0438\u0435",
-            callback_data=callback_data,
-        )
-    ]
+    return [custom_value_button(callback_data)]
 
 
 def loras_text(loras: list[tuple[str, float]]) -> str:

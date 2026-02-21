@@ -33,7 +33,12 @@
   - `core/runtime.py` — runtime-хранилище (`RuntimeStore`) и структуры активных задач.
   - `core/storage.py` — сериализация параметров и пресеты.
   - `core/html_utils.py` — безопасное форматирование и компактные представления текста.
-  - `core/ui.py` — UI-константы и рендер summary/пагинации.
+  - `core/ui.py` — совместимый UI helper-слой (summary/пагинация).
+  - `core/ui_kit/*` — shared UI builders (кнопки, навигация, диалоги, пагинация).
+  - `core/interaction.py` — единый callback/message interaction flow.
+  - `core/callbacks.py` — типизированные callback-схемы.
+  - `core/panels.py` — централизованный рендер пользовательских панелей.
+  - `core/download_filters.py` — общие helper-правила фильтрации base-моделей.
   - `core/image_utils.py` — подготовка изображений под ограничения Telegram.
   - `core/telegram.py` — утилиты для извлечения user id из Message/Callback.
 
@@ -136,3 +141,5 @@
 - Callback-контракты описываются схемами, а не ручным парсингом строк.
 - Каждый этап миграции выполняется инкрементально по протоколу: изменения -> уведомление ->
   ручная проверка -> commit.
+
+Текущий статус: этапы 0-10 завершены, выполняется финализация (этап 11).

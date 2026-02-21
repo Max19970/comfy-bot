@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Any, cast
 
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
@@ -45,6 +46,33 @@ class PromptEditorEditHandlersDeps:
     cleanup_user_message: Callable[[Message], Awaitable[None]]
 
 
+@dataclass
+class PaginatedParamConfig:
+    open_callback: str
+    prefix: str
+    title: str
+    field: str
+    notice: str
+    items_getter: Callable[[], list[str]]
+    transform_value: Callable[[str], str] = lambda value: value
+
+
+@dataclass
+class ScalarParamConfig:
+    open_callback: str
+    prefix: str
+    custom_state: Any
+    menu_text: str
+    custom_prompt: str
+    invalid_input_text: str
+    notice: str
+    values_rows: list[list[str]]
+    set_value: Callable[[GenerationParams, int | float], None]
+    parse_value: Callable[[str], int | float]
+    validate_value: Callable[[int | float], bool]
+    value_aliases: dict[str, int | float] = field(default_factory=dict)
+
+
 def register_prompt_editor_edit_handlers(
     router: Router,
     deps: PromptEditorEditHandlersDeps,
@@ -62,6 +90,127 @@ def register_prompt_editor_edit_handlers(
             await cb.answer("❌ Некорректный запрос.", show_alert=True)
             return None
         return parsed.value
+
+    def _build_scalar_keyboard(config: ScalarParamConfig) -> InlineKeyboardMarkup:
+        rows = [
+            [
+                InlineKeyboardButton(text=value, callback_data=f"{config.prefix}:{value}")
+                for value in values_row
+            ]
+            for values_row in config.values_rows
+        ]
+        rows.append(custom_btn(f"{config.prefix}:custom"))
+        rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="pe:back")])
+        return InlineKeyboardMarkup(inline_keyboard=rows)
+
+    def _register_paginated_param(config: PaginatedParamConfig) -> None:
+        @router.callback_query(F.data == config.open_callback)
+        async def _open(cb: CallbackQuery):
+            await deps.open_paginated_choice(
+                cb,
+                title=config.title,
+                items=config.items_getter(),
+                prefix=config.prefix,
+            )
+
+        @router.callback_query(F.data.startswith(f"{config.prefix}_page:"))
+        async def _page(cb: CallbackQuery):
+            await deps.change_paginated_choice_page(
+                cb,
+                items=config.items_getter(),
+                prefix=config.prefix,
+            )
+
+        @router.callback_query(F.data.startswith(f"{config.prefix}:"))
+        async def _chosen(cb: CallbackQuery, state: FSMContext):
+            idx = await _selected_index(cb, prefix=config.prefix)
+            if idx is None:
+                return
+            items = config.items_getter()
+            if idx < 0 or idx >= len(items):
+                await cb.answer("❌ Неверный индекс.", show_alert=True)
+                return
+            await deps.set_prompt_param_from_callback(
+                cb,
+                state,
+                field=config.field,
+                value=config.transform_value(items[idx]),
+                notice=config.notice,
+            )
+
+    def _register_scalar_param(config: ScalarParamConfig) -> None:
+        @router.callback_query(F.data == config.open_callback)
+        async def _open(cb: CallbackQuery):
+            message = await require_callback_message(cb)
+            if message is None:
+                return
+            await message.edit_text(
+                config.menu_text,
+                reply_markup=_build_scalar_keyboard(config),
+            )
+            await cb.answer()
+
+        @router.callback_query(F.data.startswith(f"{config.prefix}:"))
+        async def _selected(cb: CallbackQuery, state: FSMContext):
+            message = await require_callback_message(cb)
+            if message is None:
+                return
+            payload = await deps.require_prompt_request_for_callback(cb)
+            if not payload:
+                return
+
+            uid, req = payload
+            raw_value = await _selected_value(cb, prefix=config.prefix)
+            if raw_value is None:
+                return
+
+            if raw_value == "custom":
+                await state.set_state(cast(Any, config.custom_state))
+                await message.edit_text(
+                    config.custom_prompt,
+                    reply_markup=deps.back_keyboard(),
+                )
+                await cb.answer()
+                return
+
+            try:
+                parsed = config.value_aliases.get(raw_value)
+                if parsed is None:
+                    parsed = config.parse_value(raw_value)
+                if not config.validate_value(parsed):
+                    raise ValueError
+            except ValueError:
+                await cb.answer("❌ Некорректное значение.", show_alert=True)
+                return
+
+            config.set_value(req.params, parsed)
+            await deps.show_prompt_editor(
+                message,
+                state,
+                uid,
+                edit=True,
+                notice=config.notice,
+            )
+            await cb.answer()
+
+        @router.message(cast(Any, config.custom_state), F.text)
+        async def _custom(msg: Message, state: FSMContext):
+            payload = await deps.require_prompt_request_for_message(msg, state)
+            if not payload:
+                return
+
+            uid, req = payload
+            try:
+                parsed = config.parse_value((msg.text or "").strip())
+                if not config.validate_value(parsed):
+                    raise ValueError
+            except ValueError:
+                await msg.answer(config.invalid_input_text)
+                return
+
+            config.set_value(req.params, parsed)
+            await deps.cleanup_user_message(msg)
+            await deps.show_prompt_editor(msg, state, uid, notice=config.notice)
 
     @router.callback_query(F.data == "pe:edit:positive")
     async def pe_edit_positive(cb: CallbackQuery, state: FSMContext):
@@ -171,297 +320,86 @@ def register_prompt_editor_edit_handlers(
         await deps.show_prompt_editor(message, state, uid, edit=True, notice=notice)
         await cb.answer()
 
-    @router.callback_query(F.data == "pe:edit:sampler")
-    async def pe_edit_sampler(cb: CallbackQuery):
-        await deps.open_paginated_choice(
-            cb,
+    _register_paginated_param(
+        PaginatedParamConfig(
+            open_callback="pe:edit:sampler",
+            prefix="pe_smpl",
             title="Выберите sampler:",
-            items=deps.client.info.samplers or ["euler"],
-            prefix="pe_smpl",
-        )
-
-    @router.callback_query(F.data.startswith("pe_smpl_page:"))
-    async def pe_sampler_page(cb: CallbackQuery):
-        await deps.change_paginated_choice_page(
-            cb,
-            items=deps.client.info.samplers or ["euler"],
-            prefix="pe_smpl",
-        )
-
-    @router.callback_query(F.data.startswith("pe_smpl:"))
-    async def pe_sampler_chosen(cb: CallbackQuery, state: FSMContext):
-        idx = await _selected_index(cb, prefix="pe_smpl")
-        if idx is None:
-            return
-        items = deps.client.info.samplers or ["euler"]
-        if idx < 0 or idx >= len(items):
-            await cb.answer("❌ Неверный индекс.", show_alert=True)
-            return
-        await deps.set_prompt_param_from_callback(
-            cb,
-            state,
             field="sampler",
-            value=items[idx],
             notice="✅ Sampler обновлён.",
+            items_getter=lambda: deps.client.info.samplers or ["euler"],
         )
-
-    @router.callback_query(F.data == "pe:edit:scheduler")
-    async def pe_edit_scheduler(cb: CallbackQuery):
-        await deps.open_paginated_choice(
-            cb,
+    )
+    _register_paginated_param(
+        PaginatedParamConfig(
+            open_callback="pe:edit:scheduler",
+            prefix="pe_sched",
             title="Выберите scheduler:",
-            items=deps.client.info.schedulers or ["normal"],
-            prefix="pe_sched",
-        )
-
-    @router.callback_query(F.data.startswith("pe_sched_page:"))
-    async def pe_sched_page(cb: CallbackQuery):
-        await deps.change_paginated_choice_page(
-            cb,
-            items=deps.client.info.schedulers or ["normal"],
-            prefix="pe_sched",
-        )
-
-    @router.callback_query(F.data.startswith("pe_sched:"))
-    async def pe_sched_chosen(cb: CallbackQuery, state: FSMContext):
-        idx = await _selected_index(cb, prefix="pe_sched")
-        if idx is None:
-            return
-        items = deps.client.info.schedulers or ["normal"]
-        if idx < 0 or idx >= len(items):
-            await cb.answer("❌ Неверный индекс.", show_alert=True)
-            return
-        await deps.set_prompt_param_from_callback(
-            cb,
-            state,
             field="scheduler",
-            value=items[idx],
             notice="✅ Scheduler обновлён.",
+            items_getter=lambda: deps.client.info.schedulers or ["normal"],
         )
-
-    @router.callback_query(F.data == "pe:edit:upscaler")
-    async def pe_edit_upscaler(cb: CallbackQuery):
-        await deps.open_paginated_choice(
-            cb,
+    )
+    _register_paginated_param(
+        PaginatedParamConfig(
+            open_callback="pe:edit:upscaler",
+            prefix="pe_upsc",
             title="Выберите upscaler:",
-            items=["(без апскейла)"] + deps.client.info.upscale_models,
-            prefix="pe_upsc",
-        )
-
-    @router.callback_query(F.data.startswith("pe_upsc_page:"))
-    async def pe_upsc_page(cb: CallbackQuery):
-        await deps.change_paginated_choice_page(
-            cb,
-            items=["(без апскейла)"] + deps.client.info.upscale_models,
-            prefix="pe_upsc",
-        )
-
-    @router.callback_query(F.data.startswith("pe_upsc:"))
-    async def pe_upsc_chosen(cb: CallbackQuery, state: FSMContext):
-        idx = await _selected_index(cb, prefix="pe_upsc")
-        if idx is None:
-            return
-        items = ["(без апскейла)"] + deps.client.info.upscale_models
-        if idx < 0 or idx >= len(items):
-            await cb.answer("❌ Неверный индекс.", show_alert=True)
-            return
-        chosen = items[idx]
-        await deps.set_prompt_param_from_callback(
-            cb,
-            state,
             field="upscale_model",
-            value="" if chosen == "(без апскейла)" else chosen,
             notice="✅ Upscaler обновлён.",
+            items_getter=lambda: ["(без апскейла)"] + deps.client.info.upscale_models,
+            transform_value=lambda value: "" if value == "(без апскейла)" else value,
         )
-
-    @router.callback_query(F.data == "pe:edit:vae")
-    async def pe_edit_vae(cb: CallbackQuery):
-        await deps.open_paginated_choice(
-            cb,
+    )
+    _register_paginated_param(
+        PaginatedParamConfig(
+            open_callback="pe:edit:vae",
+            prefix="pe_vae",
             title="Выберите VAE:",
-            items=["(из checkpoint)"] + deps.client.info.vaes,
-            prefix="pe_vae",
-        )
-
-    @router.callback_query(F.data.startswith("pe_vae_page:"))
-    async def pe_vae_page(cb: CallbackQuery):
-        await deps.change_paginated_choice_page(
-            cb,
-            items=["(из checkpoint)"] + deps.client.info.vaes,
-            prefix="pe_vae",
-        )
-
-    @router.callback_query(F.data.startswith("pe_vae:"))
-    async def pe_vae_chosen(cb: CallbackQuery, state: FSMContext):
-        idx = await _selected_index(cb, prefix="pe_vae")
-        if idx is None:
-            return
-        items = ["(из checkpoint)"] + deps.client.info.vaes
-        if idx < 0 or idx >= len(items):
-            await cb.answer("❌ Неверный индекс.", show_alert=True)
-            return
-        chosen = items[idx]
-        await deps.set_prompt_param_from_callback(
-            cb,
-            state,
             field="vae_name",
-            value="" if chosen == "(из checkpoint)" else chosen,
             notice="✅ VAE обновлён.",
+            items_getter=lambda: ["(из checkpoint)"] + deps.client.info.vaes,
+            transform_value=lambda value: "" if value == "(из checkpoint)" else value,
         )
-
-    @router.callback_query(F.data == "pe:edit:controlnet")
-    async def pe_edit_controlnet(cb: CallbackQuery):
-        await deps.open_paginated_choice(
-            cb,
+    )
+    _register_paginated_param(
+        PaginatedParamConfig(
+            open_callback="pe:edit:controlnet",
+            prefix="pe_cn",
             title="Выберите ControlNet:",
-            items=["(выкл)"] + deps.client.info.controlnets,
-            prefix="pe_cn",
-        )
-
-    @router.callback_query(F.data.startswith("pe_cn_page:"))
-    async def pe_cn_page(cb: CallbackQuery):
-        await deps.change_paginated_choice_page(
-            cb,
-            items=["(выкл)"] + deps.client.info.controlnets,
-            prefix="pe_cn",
-        )
-
-    @router.callback_query(F.data.startswith("pe_cn:"))
-    async def pe_cn_chosen(cb: CallbackQuery, state: FSMContext):
-        idx = await _selected_index(cb, prefix="pe_cn")
-        if idx is None:
-            return
-        items = ["(выкл)"] + deps.client.info.controlnets
-        if idx < 0 or idx >= len(items):
-            await cb.answer("❌ Неверный индекс.", show_alert=True)
-            return
-        chosen = items[idx]
-        await deps.set_prompt_param_from_callback(
-            cb,
-            state,
             field="controlnet_name",
-            value="" if chosen == "(выкл)" else chosen,
             notice="✅ ControlNet обновлён.",
+            items_getter=lambda: ["(выкл)"] + deps.client.info.controlnets,
+            transform_value=lambda value: "" if value == "(выкл)" else value,
         )
-
-    @router.callback_query(F.data == "pe:edit:embedding")
-    async def pe_edit_embedding(cb: CallbackQuery):
-        await deps.open_paginated_choice(
-            cb,
+    )
+    _register_paginated_param(
+        PaginatedParamConfig(
+            open_callback="pe:edit:embedding",
+            prefix="pe_emb",
             title="Выберите embedding:",
-            items=["(без embedding)"] + deps.client.info.embeddings,
-            prefix="pe_emb",
-        )
-
-    @router.callback_query(F.data.startswith("pe_emb_page:"))
-    async def pe_emb_page(cb: CallbackQuery):
-        await deps.change_paginated_choice_page(
-            cb,
-            items=["(без embedding)"] + deps.client.info.embeddings,
-            prefix="pe_emb",
-        )
-
-    @router.callback_query(F.data.startswith("pe_emb:"))
-    async def pe_emb_chosen(cb: CallbackQuery, state: FSMContext):
-        idx = await _selected_index(cb, prefix="pe_emb")
-        if idx is None:
-            return
-        items = ["(без embedding)"] + deps.client.info.embeddings
-        if idx < 0 or idx >= len(items):
-            await cb.answer("❌ Неверный индекс.", show_alert=True)
-            return
-        chosen = items[idx]
-        await deps.set_prompt_param_from_callback(
-            cb,
-            state,
             field="embedding_name",
-            value="" if chosen == "(без embedding)" else chosen,
             notice="✅ Embedding обновлён.",
+            items_getter=lambda: ["(без embedding)"] + deps.client.info.embeddings,
+            transform_value=lambda value: "" if value == "(без embedding)" else value,
         )
+    )
 
-    @router.callback_query(F.data == "pe:edit:controlnet_strength")
-    async def pe_edit_controlnet_strength(cb: CallbackQuery):
-        message = await require_callback_message(cb)
-        if message is None:
-            return
-        kb = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(text="0.4", callback_data="pe_cns:0.4"),
-                    InlineKeyboardButton(text="0.7", callback_data="pe_cns:0.7"),
-                    InlineKeyboardButton(text="1.0", callback_data="pe_cns:1.0"),
-                ],
-                [
-                    InlineKeyboardButton(text="1.2", callback_data="pe_cns:1.2"),
-                    InlineKeyboardButton(text="1.5", callback_data="pe_cns:1.5"),
-                ],
-                custom_btn("pe_cns:custom"),
-                [
-                    InlineKeyboardButton(
-                        text="⬅️ Назад",
-                        callback_data="pe:back",
-                    )
-                ],
-            ]
-        )
-        await message.edit_text("ControlNet strength (0.0-2.0):", reply_markup=kb)
-        await cb.answer()
-
-    @router.callback_query(F.data.startswith("pe_cns:"))
-    async def pe_controlnet_strength_chosen(cb: CallbackQuery, state: FSMContext):
-        message = await require_callback_message(cb)
-        if message is None:
-            return
-        payload = await deps.require_prompt_request_for_callback(cb)
-        if not payload:
-            return
-
-        uid, req = payload
-        value = await _selected_value(cb, prefix="pe_cns")
-        if value is None:
-            return
-        if value == "custom":
-            await state.set_state(PromptEditorStates.entering_custom_controlnet_strength)
-            await message.edit_text(
-                "ControlNet strength (0.0-2.0):",
-                reply_markup=deps.back_keyboard(),
-            )
-            await cb.answer()
-            return
-
-        req.params.controlnet_strength = float(value)
-        await deps.show_prompt_editor(
-            message,
-            state,
-            uid,
-            edit=True,
+    _register_scalar_param(
+        ScalarParamConfig(
+            open_callback="pe:edit:controlnet_strength",
+            prefix="pe_cns",
+            custom_state=PromptEditorStates.entering_custom_controlnet_strength,
+            menu_text="ControlNet strength (0.0-2.0):",
+            custom_prompt="ControlNet strength (0.0-2.0):",
+            invalid_input_text="Число 0.0-2.0:",
             notice="✅ ControlNet strength обновлён.",
+            values_rows=[["0.4", "0.7", "1.0"], ["1.2", "1.5"]],
+            set_value=lambda params, value: setattr(params, "controlnet_strength", float(value)),
+            parse_value=lambda raw: float(raw),
+            validate_value=lambda value: 0.0 <= float(value) <= 2.0,
         )
-        await cb.answer()
-
-    @router.message(PromptEditorStates.entering_custom_controlnet_strength, F.text)
-    async def pe_custom_controlnet_strength(msg: Message, state: FSMContext):
-        payload = await deps.require_prompt_request_for_message(msg, state)
-        if not payload:
-            return
-
-        uid, req = payload
-        try:
-            value = float((msg.text or "").strip())
-            if not 0.0 <= value <= 2.0:
-                raise ValueError
-        except ValueError:
-            await msg.answer("Число 0.0-2.0:")
-            return
-
-        req.params.controlnet_strength = value
-        await deps.cleanup_user_message(msg)
-        await deps.show_prompt_editor(
-            msg,
-            state,
-            uid,
-            notice="✅ ControlNet strength обновлён.",
-        )
+    )
 
     @router.callback_query(F.data == "pe:edit:size")
     async def pe_edit_size(cb: CallbackQuery):
@@ -552,319 +490,77 @@ def register_prompt_editor_edit_handlers(
         await deps.cleanup_user_message(msg)
         await deps.show_prompt_editor(msg, state, uid, notice="✅ Размер обновлён.")
 
-    @router.callback_query(F.data == "pe:edit:steps")
-    async def pe_edit_steps(cb: CallbackQuery):
-        message = await require_callback_message(cb)
-        if message is None:
-            return
-        kb = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(text=str(value), callback_data=f"pe_steps:{value}")
-                    for value in (10, 15, 20)
-                ],
-                [
-                    InlineKeyboardButton(text=str(value), callback_data=f"pe_steps:{value}")
-                    for value in (25, 30, 40)
-                ],
-                [
-                    InlineKeyboardButton(text=str(value), callback_data=f"pe_steps:{value}")
-                    for value in (50, 60, 80)
-                ],
-                custom_btn("pe_steps:custom"),
-                [
-                    InlineKeyboardButton(
-                        text="\u2b05\ufe0f \u041d\u0430\u0437\u0430\u0434",
-                        callback_data="pe:back",
-                    )
-                ],
-            ]
+    _register_scalar_param(
+        ScalarParamConfig(
+            open_callback="pe:edit:steps",
+            prefix="pe_steps",
+            custom_state=PromptEditorStates.entering_custom_steps,
+            menu_text="Steps:",
+            custom_prompt="Steps (1-200):",
+            invalid_input_text="Целое число 1-200:",
+            notice="✅ Steps обновлён.",
+            values_rows=[["10", "15", "20"], ["25", "30", "40"], ["50", "60", "80"]],
+            set_value=lambda params, value: setattr(params, "steps", int(value)),
+            parse_value=lambda raw: int(raw),
+            validate_value=lambda value: 1 <= int(value) <= 200,
         )
-        await message.edit_text("Steps:", reply_markup=kb)
-        await cb.answer()
+    )
 
-    @router.callback_query(F.data.startswith("pe_steps:"))
-    async def pe_steps_chosen(cb: CallbackQuery, state: FSMContext):
-        message = await require_callback_message(cb)
-        if message is None:
-            return
-        payload = await deps.require_prompt_request_for_callback(cb)
-        if not payload:
-            return
-
-        uid, req = payload
-        value = await _selected_value(cb, prefix="pe_steps")
-        if value is None:
-            return
-        if value == "custom":
-            await state.set_state(PromptEditorStates.entering_custom_steps)
-            await message.edit_text(
-                "Steps (1-200):",
-                reply_markup=deps.back_keyboard(),
-            )
-            await cb.answer()
-            return
-
-        req.params.steps = int(value)
-        await deps.show_prompt_editor(message, state, uid, edit=True, notice="✅ Steps обновлён.")
-        await cb.answer()
-
-    @router.message(PromptEditorStates.entering_custom_steps, F.text)
-    async def pe_custom_steps(msg: Message, state: FSMContext):
-        payload = await deps.require_prompt_request_for_message(msg, state)
-        if not payload:
-            return
-
-        uid, req = payload
-        try:
-            value = int((msg.text or "").strip())
-            if not 1 <= value <= 200:
-                raise ValueError
-        except ValueError:
-            await msg.answer("Целое число 1-200:")
-            return
-
-        req.params.steps = value
-        await deps.cleanup_user_message(msg)
-        await deps.show_prompt_editor(msg, state, uid, notice="✅ Steps обновлён.")
-
-    @router.callback_query(F.data == "pe:edit:cfg")
-    async def pe_edit_cfg(cb: CallbackQuery):
-        message = await require_callback_message(cb)
-        if message is None:
-            return
-        kb = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(text=str(value), callback_data=f"pe_cfg:{value}")
-                    for value in (1.0, 3.0, 5.0)
-                ],
-                [
-                    InlineKeyboardButton(text=str(value), callback_data=f"pe_cfg:{value}")
-                    for value in (7.0, 7.5, 8.0)
-                ],
-                [
-                    InlineKeyboardButton(text=str(value), callback_data=f"pe_cfg:{value}")
-                    for value in (10.0, 12.0, 15.0)
-                ],
-                custom_btn("pe_cfg:custom"),
-                [
-                    InlineKeyboardButton(
-                        text="\u2b05\ufe0f \u041d\u0430\u0437\u0430\u0434",
-                        callback_data="pe:back",
-                    )
-                ],
-            ]
+    _register_scalar_param(
+        ScalarParamConfig(
+            open_callback="pe:edit:cfg",
+            prefix="pe_cfg",
+            custom_state=PromptEditorStates.entering_custom_cfg,
+            menu_text="CFG:",
+            custom_prompt="CFG (0.0-30.0):",
+            invalid_input_text="Число 0.0-30.0:",
+            notice="✅ CFG обновлён.",
+            values_rows=[["1.0", "3.0", "5.0"], ["7.0", "7.5", "8.0"], ["10.0", "12.0", "15.0"]],
+            set_value=lambda params, value: setattr(params, "cfg", float(value)),
+            parse_value=lambda raw: float(raw),
+            validate_value=lambda value: 0.0 <= float(value) <= 30.0,
         )
-        await message.edit_text("CFG:", reply_markup=kb)
-        await cb.answer()
+    )
 
-    @router.callback_query(F.data.startswith("pe_cfg:"))
-    async def pe_cfg_chosen(cb: CallbackQuery, state: FSMContext):
-        message = await require_callback_message(cb)
-        if message is None:
-            return
-        payload = await deps.require_prompt_request_for_callback(cb)
-        if not payload:
-            return
-
-        uid, req = payload
-        value = await _selected_value(cb, prefix="pe_cfg")
-        if value is None:
-            return
-        if value == "custom":
-            await state.set_state(PromptEditorStates.entering_custom_cfg)
-            await message.edit_text(
-                "CFG (0.0-30.0):",
-                reply_markup=deps.back_keyboard(),
-            )
-            await cb.answer()
-            return
-
-        req.params.cfg = float(value)
-        await deps.show_prompt_editor(message, state, uid, edit=True, notice="✅ CFG обновлён.")
-        await cb.answer()
-
-    @router.message(PromptEditorStates.entering_custom_cfg, F.text)
-    async def pe_custom_cfg(msg: Message, state: FSMContext):
-        payload = await deps.require_prompt_request_for_message(msg, state)
-        if not payload:
-            return
-
-        uid, req = payload
-        try:
-            value = float((msg.text or "").strip())
-            if not 0.0 <= value <= 30.0:
-                raise ValueError
-        except ValueError:
-            await msg.answer("Число 0.0-30.0:")
-            return
-
-        req.params.cfg = value
-        await deps.cleanup_user_message(msg)
-        await deps.show_prompt_editor(msg, state, uid, notice="✅ CFG обновлён.")
-
-    @router.callback_query(F.data == "pe:edit:denoise")
-    async def pe_edit_denoise(cb: CallbackQuery):
-        message = await require_callback_message(cb)
-        if message is None:
-            return
-        kb = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(text=str(value), callback_data=f"pe_dn:{value}")
-                    for value in (0.3, 0.5, 0.7)
-                ],
-                [
-                    InlineKeyboardButton(text=str(value), callback_data=f"pe_dn:{value}")
-                    for value in (0.8, 0.9, 1.0)
-                ],
-                custom_btn("pe_dn:custom"),
-                [
-                    InlineKeyboardButton(
-                        text="\u2b05\ufe0f \u041d\u0430\u0437\u0430\u0434",
-                        callback_data="pe:back",
-                    )
-                ],
-            ]
+    _register_scalar_param(
+        ScalarParamConfig(
+            open_callback="pe:edit:denoise",
+            prefix="pe_dn",
+            custom_state=PromptEditorStates.entering_custom_denoise,
+            menu_text="Denoise:",
+            custom_prompt="Denoise (0.0-1.0):",
+            invalid_input_text="Число 0.0-1.0:",
+            notice="✅ Denoise обновлён.",
+            values_rows=[["0.3", "0.5", "0.7"], ["0.8", "0.9", "1.0"]],
+            set_value=lambda params, value: setattr(params, "denoise", float(value)),
+            parse_value=lambda raw: float(raw),
+            validate_value=lambda value: 0.0 <= float(value) <= 1.0,
         )
-        await message.edit_text("Denoise:", reply_markup=kb)
-        await cb.answer()
+    )
 
-    @router.callback_query(F.data.startswith("pe_dn:"))
-    async def pe_dn_chosen(cb: CallbackQuery, state: FSMContext):
-        message = await require_callback_message(cb)
-        if message is None:
-            return
-        payload = await deps.require_prompt_request_for_callback(cb)
-        if not payload:
-            return
-
-        uid, req = payload
-        value = await _selected_value(cb, prefix="pe_dn")
-        if value is None:
-            return
-        if value == "custom":
-            await state.set_state(PromptEditorStates.entering_custom_denoise)
-            await message.edit_text(
-                "Denoise (0.0-1.0):",
-                reply_markup=deps.back_keyboard(),
-            )
-            await cb.answer()
-            return
-
-        req.params.denoise = float(value)
-        await deps.show_prompt_editor(message, state, uid, edit=True, notice="✅ Denoise обновлён.")
-        await cb.answer()
-
-    @router.message(PromptEditorStates.entering_custom_denoise, F.text)
-    async def pe_custom_dn(msg: Message, state: FSMContext):
-        payload = await deps.require_prompt_request_for_message(msg, state)
-        if not payload:
-            return
-
-        uid, req = payload
-        try:
-            value = float((msg.text or "").strip())
-            if not 0.0 <= value <= 1.0:
-                raise ValueError
-        except ValueError:
-            await msg.answer("Число 0.0-1.0:")
-            return
-
-        req.params.denoise = value
-        await deps.cleanup_user_message(msg)
-        await deps.show_prompt_editor(msg, state, uid, notice="✅ Denoise обновлён.")
-
-    @router.callback_query(F.data == "pe:edit:ref_strength")
-    async def pe_edit_ref_strength(cb: CallbackQuery):
-        message = await require_callback_message(cb)
-        if message is None:
-            return
-        kb = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(text="0.3", callback_data="pe_rstr:0.3"),
-                    InlineKeyboardButton(text="0.5", callback_data="pe_rstr:0.5"),
-                    InlineKeyboardButton(text="0.7", callback_data="pe_rstr:0.7"),
-                ],
-                [
-                    InlineKeyboardButton(text="0.9", callback_data="pe_rstr:0.9"),
-                    InlineKeyboardButton(text="1.0", callback_data="pe_rstr:1.0"),
-                    InlineKeyboardButton(text="1.2", callback_data="pe_rstr:1.2"),
-                ],
-                [
-                    InlineKeyboardButton(text="1.5", callback_data="pe_rstr:1.5"),
-                    InlineKeyboardButton(text="1.8", callback_data="pe_rstr:1.8"),
-                    InlineKeyboardButton(text="2.0", callback_data="pe_rstr:2.0"),
-                ],
-                custom_btn("pe_rstr:custom"),
-                [
-                    InlineKeyboardButton(
-                        text="\u2b05\ufe0f \u041d\u0430\u0437\u0430\u0434",
-                        callback_data="pe:back",
-                    )
-                ],
-            ]
-        )
-        await message.edit_text(
-            "Сила референса (0.0-2.0):\n"
-            "- Для IP-Adapter: больше = сильнее похожесть\n"
-            "- Для img2img fallback: больше = ниже denoise",
-            reply_markup=kb,
-        )
-        await cb.answer()
-
-    @router.callback_query(F.data.startswith("pe_rstr:"))
-    async def pe_ref_strength_chosen(cb: CallbackQuery, state: FSMContext):
-        message = await require_callback_message(cb)
-        if message is None:
-            return
-        payload = await deps.require_prompt_request_for_callback(cb)
-        if not payload:
-            return
-
-        uid, req = payload
-        value = await _selected_value(cb, prefix="pe_rstr")
-        if value is None:
-            return
-        if value == "custom":
-            await state.set_state(PromptEditorStates.entering_custom_reference_strength)
-            await message.edit_text(
-                "Сила референса (0.0-2.0):",
-                reply_markup=deps.back_keyboard(),
-            )
-            await cb.answer()
-            return
-
-        req.params.reference_strength = float(value)
-        await deps.show_prompt_editor(
-            message,
-            state,
-            uid,
-            edit=True,
+    _register_scalar_param(
+        ScalarParamConfig(
+            open_callback="pe:edit:ref_strength",
+            prefix="pe_rstr",
+            custom_state=PromptEditorStates.entering_custom_reference_strength,
+            menu_text=(
+                "Сила референса (0.0-2.0):\n"
+                "- Для IP-Adapter: больше = сильнее похожесть\n"
+                "- Для img2img fallback: больше = ниже denoise"
+            ),
+            custom_prompt="Сила референса (0.0-2.0):",
+            invalid_input_text="Число 0.0-2.0:",
             notice="✅ Сила референса обновлена.",
+            values_rows=[
+                ["0.3", "0.5", "0.7"],
+                ["0.9", "1.0", "1.2"],
+                ["1.5", "1.8", "2.0"],
+            ],
+            set_value=lambda params, value: setattr(params, "reference_strength", float(value)),
+            parse_value=lambda raw: float(raw),
+            validate_value=lambda value: 0.0 <= float(value) <= 2.0,
         )
-        await cb.answer()
-
-    @router.message(PromptEditorStates.entering_custom_reference_strength, F.text)
-    async def pe_custom_ref_strength(msg: Message, state: FSMContext):
-        payload = await deps.require_prompt_request_for_message(msg, state)
-        if not payload:
-            return
-
-        uid, req = payload
-        try:
-            value = float((msg.text or "").strip())
-            if not 0.0 <= value <= 2.0:
-                raise ValueError
-        except ValueError:
-            await msg.answer("Число 0.0-2.0:")
-            return
-
-        req.params.reference_strength = value
-        await deps.cleanup_user_message(msg)
-        await deps.show_prompt_editor(msg, state, uid, notice="✅ Сила референса обновлена.")
+    )
 
     @router.callback_query(F.data == "pe:edit:seed")
     async def pe_edit_seed(cb: CallbackQuery):
@@ -931,78 +627,21 @@ def register_prompt_editor_edit_handlers(
         await deps.cleanup_user_message(msg)
         await deps.show_prompt_editor(msg, state, uid, notice="✅ Seed обновлён.")
 
-    @router.callback_query(F.data == "pe:edit:batch")
-    async def pe_edit_batch(cb: CallbackQuery):
-        message = await require_callback_message(cb)
-        if message is None:
-            return
-        kb = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(text=str(value), callback_data=f"pe_batch:{value}")
-                    for value in (1, 2, 3, 4)
-                ],
-                custom_btn("pe_batch:custom"),
-                [
-                    InlineKeyboardButton(
-                        text="\u2b05\ufe0f \u041d\u0430\u0437\u0430\u0434",
-                        callback_data="pe:back",
-                    )
-                ],
-            ]
+    _register_scalar_param(
+        ScalarParamConfig(
+            open_callback="pe:edit:batch",
+            prefix="pe_batch",
+            custom_state=PromptEditorStates.entering_custom_batch,
+            menu_text="Batch size:",
+            custom_prompt="Batch (1-16):",
+            invalid_input_text="Число 1-16:",
+            notice="✅ Batch обновлён.",
+            values_rows=[["1", "2", "3", "4"]],
+            set_value=lambda params, value: setattr(params, "batch_size", int(value)),
+            parse_value=lambda raw: int(raw),
+            validate_value=lambda value: 1 <= int(value) <= 16,
         )
-        await message.edit_text("Batch size:", reply_markup=kb)
-        await cb.answer()
-
-    @router.callback_query(F.data.startswith("pe_batch:"))
-    async def pe_batch_chosen(cb: CallbackQuery, state: FSMContext):
-        message = await require_callback_message(cb)
-        if message is None:
-            return
-        payload = await deps.require_prompt_request_for_callback(cb)
-        if not payload:
-            return
-
-        uid, req = payload
-        value = await _selected_value(cb, prefix="pe_batch")
-        if value is None:
-            return
-        if value == "custom":
-            await state.set_state(PromptEditorStates.entering_custom_batch)
-            await message.edit_text(
-                "Batch (1-16):",
-                reply_markup=deps.back_keyboard(),
-            )
-            await cb.answer()
-            return
-
-        req.params.batch_size = int(value)
-        await deps.show_prompt_editor(message, state, uid, edit=True, notice="✅ Batch обновлён.")
-        await cb.answer()
-
-    @router.message(PromptEditorStates.entering_custom_batch, F.text)
-    async def pe_custom_batch(msg: Message, state: FSMContext):
-        payload = await deps.require_prompt_request_for_message(msg, state)
-        if not payload:
-            return
-
-        uid, req = payload
-        try:
-            value = int((msg.text or "").strip())
-            if not 1 <= value <= 16:
-                raise ValueError
-        except ValueError:
-            await msg.answer("Число 1-16:")
-            return
-
-        req.params.batch_size = value
-        await deps.cleanup_user_message(msg)
-        await deps.show_prompt_editor(
-            msg,
-            state,
-            uid,
-            notice="\u2705 Batch \u043e\u0431\u043d\u043e\u0432\u043b\u0451\u043d.",
-        )
+    )
 
     # ------------------------------------------------------------------
     # Mode toggle

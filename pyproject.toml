@@ -52,3 +52,14 @@ files = [
   "tests",
 ]
 exclude = ["test_smart_prompt.py"]
+
+[[tool.mypy.overrides]]
+module = [
+  "application.*",
+  "domain.*",
+  "infrastructure.*",
+]
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+warn_return_any = true
+disallow_any_generics = true

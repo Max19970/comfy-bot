@@ -248,6 +248,20 @@ Handler-модули `handlers/prompt_editor_generation.py` и
 
 Формат сохранения остается backward-compatible для существующих `sessions/runtime.json`.
 
+### Final hardening (Stage 8)
+
+Финальный этап фокусируется на зачистке legacy-зависимостей и контрольных
+ограничениях архитектуры:
+
+- `application/download_search_use_case.py` больше не зависит от
+  `core.download_filters`; маппинг base-code перенесен в `domain/base_model_policy.py`.
+- `core/download_filters.py` сохраняет backward-compatible API, но делегирует
+  базовую эвристику в domain policy.
+- `tests/test_architecture_boundaries.py` расширен проверкой запрещенных
+  абсолютных импортов для новых слоев.
+- В `pyproject.toml` добавлены stricter mypy-правила для
+  `application/*`, `domain/*`, `infrastructure/*`.
+
 ## UI-архитектура
 
 Подробные правила интерфейсного слоя и шаблон расширения описаны в

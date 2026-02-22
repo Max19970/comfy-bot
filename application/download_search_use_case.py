@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-from core.download_filters import base_code_from_base_model
+from domain.base_model_policy import BaseModelPolicy
 
 
 class ModelMetadataLookup(Protocol):
@@ -40,6 +40,7 @@ class DownloadSearchUseCase:
     period_code_to_api: dict[str, str]
     supports_base_filter: Callable[..., bool]
     supports_nsfw_filter: Callable[[str], bool]
+    base_model_policy: BaseModelPolicy = field(default_factory=BaseModelPolicy)
 
     def build_search_criteria(
         self,
@@ -93,7 +94,7 @@ class DownloadSearchUseCase:
         base_model = str(metadata.get("base_model") if metadata else "").strip()
         if not base_model:
             base_model = infer_base_model(name)
-        code = base_code_from_base_model(base_model)
+        code = self.base_model_policy.download_base_code(base_model)
         return code or default
 
     @staticmethod

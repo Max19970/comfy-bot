@@ -35,7 +35,7 @@ def build_comfy_workflow(
     workflow: dict[str, Any] = {}
     next_id = 1
 
-    def _node(class_type: str, inputs: dict) -> str:
+    def _node(class_type: str, inputs: dict[str, Any]) -> str:
         nonlocal next_id
         nid = str(next_id)
         next_id += 1

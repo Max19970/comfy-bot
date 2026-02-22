@@ -19,3 +19,13 @@ def test_base_models_compatible_handles_related_families() -> None:
     assert policy.base_models_compatible("SDXL", "Illustrious") is True
     assert policy.base_models_compatible("Flux", "Flux") is True
     assert policy.base_models_compatible("SDXL", "Flux") is False
+
+
+def test_download_base_code_mapping() -> None:
+    policy = BaseModelPolicy()
+
+    assert policy.download_base_code("Illustrious") == "illustrious"
+    assert policy.download_base_code("NoobAI") == "noobai"
+    assert policy.download_base_code("Flux.1 D") == "flux"
+    assert policy.download_base_code("SDXL 1.0") == "sdxl"
+    assert policy.download_base_code("") == "all"

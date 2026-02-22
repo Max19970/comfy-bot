@@ -141,6 +141,22 @@
 - Новые пользовательские команды: `handlers/common.py`.
 - Новый параметр генерации: `GenerationParams` + UI в `handlers/prompt_editor.py` + сборка workflow в `comfyui_client.py`.
 
+## Целевая архитектура миграции
+
+Проект находится в инкрементной миграции к layered architecture.
+
+Новые модули добавляются в пакеты:
+
+- `domain/` — типизированные сущности и value objects.
+- `application/` — use-cases и сервисы orchestration.
+- `infrastructure/` — адаптеры внешних API/FS.
+- `presentation/` — транспорт и UI-адаптеры.
+
+Текущие `core/*`, `handlers/*` и корневые сервисы остаются legacy-слоем до
+полной декомпозиции.
+
+Правила безопасной миграции и quality gate описаны в `docs/REFACTOR_GUARDRAILS.md`.
+
 ## UI-архитектура
 
 Подробные правила интерфейсного слоя и шаблон расширения описаны в

@@ -28,6 +28,10 @@ check_untyped_defs = true
 ignore_missing_imports = true
 pretty = true
 files = [
+  "application",
+  "domain",
+  "infrastructure",
+  "presentation",
   "core",
   "comfyui_client.py",
   "handlers/common.py",

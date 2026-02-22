@@ -10,8 +10,10 @@ from core.ui_kit import (
     item_callback,
     page_nav_row,
 )
-
-from .html_utils import h, truncate
+from core.ui_summary import MAX_REFERENCE_IMAGES_DEFAULT
+from core.ui_summary import loras_text as _loras_text
+from core.ui_summary import params_summary_full as _params_summary_full
+from core.ui_summary import params_summary_simple as _params_summary_simple
 
 SIZES = [
     ("512x512", 512, 512),
@@ -26,7 +28,7 @@ SIZES = [
 ]
 
 PAGE_SIZE = 8
-MAX_REFERENCE_IMAGES = 9
+MAX_REFERENCE_IMAGES = MAX_REFERENCE_IMAGES_DEFAULT
 
 
 def paginated_keyboard(
@@ -61,117 +63,22 @@ def custom_btn(callback_data: str) -> list[InlineKeyboardButton]:
 
 
 def loras_text(loras: list[tuple[str, float]]) -> str:
-    if not loras:
-        return "\u2014"
-    return ", ".join(f"{h(name)} <code>{strength}</code>" for name, strength in loras)
+    return _loras_text(loras)
 
 
 def params_summary(params: GenerationParams) -> str:
-    """Rich HTML summary for the prompt editor message (full / pro mode)."""
     return params_summary_for_mode(params, pro_mode=True)
 
 
 def params_summary_simple(params: GenerationParams) -> str:
-    """Compact summary for beginner mode: only key info."""
-    ckpt_short = h(truncate(params.checkpoint, 35)) if params.checkpoint else "\u2014"
-    pos_preview = h(truncate(params.positive, 60)) if params.positive.strip() else "<i>\u2014</i>"
-    neg_preview = h(truncate(params.negative, 60)) if params.negative.strip() else "<i>\u2014</i>"
-
-    enh_parts: list[str] = []
-    if params.enable_hires_fix:
-        enh_parts.append("Hi-res")
-    if params.enable_freeu:
-        enh_parts.append("FreeU")
-    if params.enable_pag:
-        enh_parts.append("PAG")
-    if params.enable_tiled_diffusion:
-        enh_parts.append("Tiled")
-    if params.upscale_model:
-        enh_parts.append("Upscale")
-    if params.vae_name:
-        enh_parts.append("VAE")
-    if params.controlnet_name:
-        enh_parts.append("ControlNet")
-    if params.embedding_name:
-        enh_parts.append("Embedding")
-    enh_line = ""
-    if enh_parts:
-        enh_line = f"\n\u2728 <b>Улучшения:</b> {', '.join(enh_parts)}"
-
-    lora_count = len(params.loras)
-    lora_line = ""
-    if lora_count:
-        lora_line = f"\n\U0001f4ce <b>LoRA:</b> {loras_text(params.loras)}"
-
-    return (
-        f"\U0001f3a8 <b>{ckpt_short}</b> | {params.width}\u00d7{params.height}\n"
-        "\n"
-        f"\U0001f7e2 <b>Positive:</b> {pos_preview}\n"
-        f"\U0001f534 <b>Negative:</b> {neg_preview}"
-        f"{lora_line}"
-        f"{enh_line}"
-    )
-
-
-def params_summary_full(params: GenerationParams) -> str:
-    """Full HTML summary for pro mode."""
-    seed_str = f"<code>{params.seed}</code>" if params.seed >= 0 else "\U0001f3b2 random"
-    ckpt_short = h(truncate(params.checkpoint, 35)) if params.checkpoint else "\u2014"
-    pos_preview = h(truncate(params.positive, 60)) if params.positive.strip() else "<i>\u2014</i>"
-    neg_preview = h(truncate(params.negative, 60)) if params.negative.strip() else "<i>\u2014</i>"
-    upscaler = h(params.upscale_model) if params.upscale_model else "\u2014"
-    vae = h(params.vae_name) if params.vae_name else "\u2014"
-    controlnet = h(params.controlnet_name) if params.controlnet_name else "\u2014"
-    embedding = h(params.embedding_name) if params.embedding_name else "\u2014"
-    ref_count = len(params.reference_images)
-
-    enhancements: list[str] = []
-    time_warnings: list[str] = []
-    if params.enable_hires_fix:
-        enhancements.append("\U0001f527 Hi-res")
-        time_warnings.append(f"Hi-res \u00d7{params.hires_scale}")
-    if params.enable_freeu:
-        enhancements.append("\u26a1 FreeU")
-    if params.enable_pag:
-        enhancements.append(f"\U0001f3af PAG {params.pag_scale}")
-    if params.upscale_model:
-        time_warnings.append("Upscale")
-    if params.enable_tiled_diffusion:
-        enhancements.append(f"\U0001f9e9 HyperTile {params.tile_size}")
-        time_warnings.append("HyperTile")
-
-    enhancement_line = ""
-    if enhancements or time_warnings:
-        parts = "  ".join(enhancements) if enhancements else ""
-        if parts:
-            enhancement_line += f"\n{parts}"
-        if time_warnings:
-            enhancement_line += f"\n\u26a0\ufe0f <i>+время: {', '.join(time_warnings)}</i>"
-
-    return (
-        f"\U0001f3a8 <b>{ckpt_short}</b> | {params.width}\u00d7{params.height} | Steps {params.steps}\n"
-        "\n"
-        f"\U0001f7e2 <b>Positive:</b> {pos_preview}\n"
-        f"\U0001f534 <b>Negative:</b> {neg_preview}\n"
-        "\n"
-        f"\u2699\ufe0f <b>Sampler:</b> <code>{h(params.sampler)}</code>  "
-        f"<b>Sched:</b> <code>{h(params.scheduler)}</code>\n"
-        f"<b>CFG:</b> <code>{params.cfg}</code>  "
-        f"<b>Denoise:</b> <code>{params.denoise}</code>  "
-        f"<b>Seed:</b> {seed_str}\n"
-        f"\U0001f4ce <b>LoRA:</b> {loras_text(params.loras)}  "
-        f"<b>Batch:</b> <code>{params.batch_size}</code>\n"
-        f"\U0001f5bc <b>Ref:</b> {ref_count}/{MAX_REFERENCE_IMAGES} "
-        f"(str <code>{params.reference_strength}</code>)  "
-        f"<b>Upscale:</b> {upscaler}\n"
-        f"🧬 <b>VAE:</b> {vae}  <b>ControlNet:</b> {controlnet}\n"
-        f"🔤 <b>Embedding:</b> {embedding}"
-        f"{enhancement_line}"
-    )
+    return _params_summary_simple(params)
 
 
 def params_summary_for_mode(params: GenerationParams, *, pro_mode: bool) -> str:
-    """Return summary for selected UI mode."""
     if pro_mode:
         return params_summary_full(params)
     return params_summary_simple(params)
+
+
+def params_summary_full(params: GenerationParams) -> str:
+    return _params_summary_full(params, max_reference_images=MAX_REFERENCE_IMAGES)

@@ -13,6 +13,22 @@ _resampling = getattr(Image, "Resampling", None)
 LANCZOS_RESAMPLE = getattr(_resampling, "LANCZOS", 1)
 
 
+def _to_rgb(image: Image.Image) -> Image.Image:
+    if image.mode == "RGBA":
+        background = Image.new("RGB", image.size, (255, 255, 255))
+        background.paste(image, mask=image.split()[3])
+        return background
+    if image.mode != "RGB":
+        return image.convert("RGB")
+    return image
+
+
+def _save_png(image: Image.Image) -> bytes:
+    buffer = BytesIO()
+    image.save(buffer, format="PNG", optimize=True)
+    return buffer.getvalue()
+
+
 def _fit_dimensions(width: int, height: int) -> tuple[int, int]:
     ratio = 1.0
     if width > TG_PHOTO_MAX_SIDE:
@@ -28,18 +44,15 @@ def compress_for_photo(
     image_bytes: bytes,
     max_size: int = TG_PHOTO_MAX_BYTES,
 ) -> bytes:
-    image: Image.Image = Image.open(BytesIO(image_bytes))
+    with Image.open(BytesIO(image_bytes)) as src:
+        image = src.copy()
+
     target_w, target_h = _fit_dimensions(image.width, image.height)
     needs_resize = target_w != image.width or target_h != image.height
     if not needs_resize and len(image_bytes) <= max_size:
         return image_bytes
 
-    if image.mode == "RGBA":
-        background = Image.new("RGB", image.size, (255, 255, 255))
-        background.paste(image, mask=image.split()[3])
-        image = background
-    elif image.mode != "RGB":
-        image = image.convert("RGB")
+    image = _to_rgb(image)
 
     if needs_resize:
         image = image.resize((target_w, target_h), LANCZOS_RESAMPLE)
@@ -81,9 +94,7 @@ def resize_image_by_percent(image_bytes: bytes, percent: int) -> bytes:
         target_w = max(1, int(round(image.width * percent / 100.0)))
         target_h = max(1, int(round(image.height * percent / 100.0)))
         resized = image.resize((target_w, target_h), LANCZOS_RESAMPLE)
-        buffer = BytesIO()
-        resized.save(buffer, format="PNG", optimize=True)
-        return buffer.getvalue()
+        return _save_png(resized)
 
 
 def shrink_image_to_box(image_bytes: bytes, max_width: int, max_height: int) -> bytes:
@@ -102,6 +113,4 @@ def shrink_image_to_box(image_bytes: bytes, max_width: int, max_height: int) -> 
         target_w = max(1, int(round(image.width * ratio)))
         target_h = max(1, int(round(image.height * ratio)))
         resized = image.resize((target_w, target_h), LANCZOS_RESAMPLE)
-        buffer = BytesIO()
-        resized.save(buffer, format="PNG", optimize=True)
-        return buffer.getvalue()
+        return _save_png(resized)

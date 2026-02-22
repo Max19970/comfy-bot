@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, cast
-
-from domain.loras import LoraCatalogEntry
+from application.lora_catalog_service import LoraCatalogService
 from handlers.prompt_editor_lora import (
     checkpoint_base_model,
     lora_compatibility,
@@ -15,7 +13,10 @@ class _DownloaderStub:
     def __init__(self) -> None:
         self._meta = {
             ("ckpt.safetensors", "checkpoint"): {"base_model": "SDXL"},
-            ("anime.safetensors", "lora"): {"base_model": "SDXL"},
+            ("anime.safetensors", "lora"): {
+                "base_model": "SDXL",
+                "trained_words": ["anime_style", "best quality", "masterpiece"],
+            },
             ("flux_style.safetensors", "lora"): {"base_model": "Flux"},
         }
 
@@ -29,31 +30,28 @@ class _DownloaderStub:
             return "Flux"
         return ""
 
-    def get_lora_trained_words(self, lora_name: str) -> list[str]:
-        if lora_name == "anime.safetensors":
-            return ["anime_style", "best quality", "masterpiece"]
-        return []
-
-    def get_lora_entry(self, lora_name: str) -> LoraCatalogEntry | None:
-        meta = self.get_model_metadata(lora_name, model_type="lora")
-        if not meta:
-            return None
-        return LoraCatalogEntry.from_metadata(lora_name, meta)
-
     def base_models_compatible(self, checkpoint_base: str, lora_base: str) -> bool:
         return checkpoint_base == lora_base
 
 
+def _catalog() -> LoraCatalogService:
+    stub = _DownloaderStub()
+    return LoraCatalogService(
+        get_model_metadata=stub.get_model_metadata,
+        infer_base_model=stub.infer_base_model,
+        base_models_compatible=stub.base_models_compatible,
+    )
+
+
 def test_checkpoint_base_model_prefers_metadata() -> None:
-    downloader = cast(Any, _DownloaderStub())
-    assert checkpoint_base_model("ckpt.safetensors", downloader) == "SDXL"
+    assert checkpoint_base_model("ckpt.safetensors", _catalog()) == "SDXL"
 
 
 def test_lora_compatibility_reports_compatible_and_incompatible() -> None:
-    downloader = cast(Any, _DownloaderStub())
+    catalog = _catalog()
 
     status_ok, ckpt_ok, lora_ok = lora_compatibility(
-        "ckpt.safetensors", "anime.safetensors", downloader
+        "ckpt.safetensors", "anime.safetensors", catalog
     )
     assert status_ok == "compatible"
     assert ckpt_ok == "SDXL"
@@ -62,7 +60,7 @@ def test_lora_compatibility_reports_compatible_and_incompatible() -> None:
     status_bad, ckpt_bad, lora_bad = lora_compatibility(
         "ckpt.safetensors",
         "flux_style.safetensors",
-        downloader,
+        catalog,
     )
     assert status_bad == "incompatible"
     assert ckpt_bad == "SDXL"
@@ -70,8 +68,7 @@ def test_lora_compatibility_reports_compatible_and_incompatible() -> None:
 
 
 def test_lora_trained_words_limited_to_twelve_items() -> None:
-    downloader = cast(Any, _DownloaderStub())
-    assert lora_trained_words("anime.safetensors", downloader) == [
+    assert lora_trained_words("anime.safetensors", _catalog()) == [
         "anime_style",
         "best quality",
         "masterpiece",

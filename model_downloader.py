@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
 import re
@@ -18,6 +17,7 @@ import aiohttp
 from config import Config
 from core.formatting import human_size, short_number
 from domain.loras import LoraCatalogEntry, lora_catalog_entry_from_metadata
+from infrastructure.model_metadata_index import ModelMetadataIndexRepository
 
 logger = logging.getLogger(__name__)
 
@@ -290,13 +290,7 @@ class ModelDownloader:
     def __init__(self, config: Config) -> None:
         self.cfg = config
         self._session: aiohttp.ClientSession | None = None
-
-        self._metadata_path = os.path.join(
-            self.cfg.comfyui_models_path,
-            ".comfybot_model_index.json",
-        )
-        self._metadata_lock = asyncio.Lock()
-        self._metadata: dict[str, dict[str, Any]] = self._load_metadata()
+        self._metadata_index = ModelMetadataIndexRepository(self.cfg.comfyui_models_path)
 
     async def _get_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
@@ -311,42 +305,6 @@ class ModelDownloader:
     # Local metadata index
     # ===================================================================
 
-    def _load_metadata(self) -> dict[str, dict[str, Any]]:
-        path = self._metadata_path
-        if not os.path.exists(path):
-            return {}
-        try:
-            with open(path, encoding="utf-8") as fh:
-                payload = json.load(fh)
-            if isinstance(payload, dict) and isinstance(payload.get("models"), dict):
-                payload = payload["models"]
-            if not isinstance(payload, dict):
-                return {}
-
-            normalized: dict[str, dict[str, Any]] = {}
-            for key, value in payload.items():
-                if isinstance(value, dict):
-                    normalized[str(key)] = value
-            return normalized
-        except (OSError, json.JSONDecodeError, TypeError, ValueError):
-            logger.exception("Failed to load model metadata index: %s", path)
-            return {}
-
-    async def _save_metadata(self) -> None:
-        payload = {
-            "version": 1,
-            "updated_at": datetime.now(timezone.utc).isoformat(),
-            "models": self._metadata,
-        }
-        os.makedirs(self.cfg.comfyui_models_path, exist_ok=True)
-        tmp_path = self._metadata_path + ".tmp"
-        with open(tmp_path, "w", encoding="utf-8") as fh:
-            json.dump(payload, fh, ensure_ascii=False, indent=2)
-        os.replace(tmp_path, self._metadata_path)
-
-    def _metadata_key(self, filename: str) -> str:
-        return os.path.basename(str(filename or "")).strip().casefold()
-
     def get_model_metadata(
         self,
         filename: str,
@@ -354,21 +312,13 @@ class ModelDownloader:
         model_type: str | None = None,
     ) -> dict[str, Any] | None:
         """Return stored metadata for a local filename."""
-        key = self._metadata_key(filename)
-        if not key:
-            return None
-        raw = self._metadata.get(key)
-        if not raw:
-            return None
-        if model_type and str(raw.get("model_type", "")).strip() != model_type:
-            return None
-        return dict(raw)
+        return self._metadata_index.get(filename, model_type=model_type)
 
     def get_lora_trained_words(self, lora_name: str) -> list[str]:
-        meta = self.get_model_metadata(lora_name, model_type="lora")
-        if not meta:
+        entry = self.get_lora_entry(lora_name)
+        if not entry:
             return []
-        return _clean_words(meta.get("trained_words", []), limit=24)
+        return entry.trigger_words(limit=24)
 
     def get_lora_entry(self, lora_name: str) -> LoraCatalogEntry | None:
         meta = self.get_model_metadata(lora_name, model_type="lora")
@@ -473,14 +423,11 @@ class ModelDownloader:
             "nsfw": bool(result.nsfw),
             "downloaded_at": datetime.now(timezone.utc).isoformat(),
         }
-        key = self._metadata_key(safe_filename)
-        original_key = self._metadata_key(result.filename)
-
-        async with self._metadata_lock:
-            self._metadata[key] = entry
-            if original_key and original_key != key:
-                self._metadata[original_key] = entry
-            await self._save_metadata()
+        await self._metadata_index.upsert(
+            safe_filename,
+            entry,
+            aliases=[result.filename],
+        )
 
     # ===================================================================
     # URL parsing helpers
@@ -1035,10 +982,7 @@ class ModelDownloader:
             raise FileNotFoundError(target_path)
         os.remove(target_path)
 
-        key = self._metadata_key(safe_name)
-        async with self._metadata_lock:
-            self._metadata.pop(key, None)
-            await self._save_metadata()
+        await self._metadata_index.delete(safe_name)
 
         return target_path
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 
+from application.lora_catalog_service import LoraCatalogService
 from comfyui_client import ComfyUIClient
 from core.html_utils import h
 from core.models import GenerationParams
@@ -11,66 +12,40 @@ from core.states import PromptEditorStates
 from core.ui import loras_text
 from core.ui_kit import back_button, build_keyboard
 from core.ui_kit.buttons import button
-from model_downloader import ModelDownloader
 
 from .prompt_editor_session import show_prompt_panel
 
 
-def checkpoint_base_model(checkpoint_name: str, downloader: ModelDownloader) -> str:
-    name = checkpoint_name.strip()
-    if not name:
-        return ""
-
-    meta = downloader.get_model_metadata(name, model_type="checkpoint")
-    base = str(meta.get("base_model") if meta else "").strip()
-    if base:
-        return base
-    return downloader.infer_base_model(name)
+def checkpoint_base_model(checkpoint_name: str, catalog: LoraCatalogService) -> str:
+    return catalog.checkpoint_base_model(checkpoint_name)
 
 
-def lora_base_model(lora_name: str, downloader: ModelDownloader) -> str:
-    name = lora_name.strip()
-    if not name:
-        return ""
-
-    entry = downloader.get_lora_entry(name)
-    base = entry.base_model if entry else ""
-    if base:
-        return base
-    return downloader.infer_base_model(name)
+def lora_base_model(lora_name: str, catalog: LoraCatalogService) -> str:
+    return catalog.lora_base_model(lora_name)
 
 
-def lora_trained_words(lora_name: str, downloader: ModelDownloader) -> list[str]:
-    entry = downloader.get_lora_entry(lora_name)
-    if entry and entry.trained_words:
-        return entry.trigger_words(limit=12)
-    return downloader.get_lora_trained_words(lora_name)[:12]
+def lora_trained_words(lora_name: str, catalog: LoraCatalogService) -> list[str]:
+    return catalog.lora_trigger_words(lora_name, limit=12)
 
 
 def lora_compatibility(
     checkpoint_name: str,
     lora_name: str,
-    downloader: ModelDownloader,
+    catalog: LoraCatalogService,
 ) -> tuple[str, str, str]:
-    ckpt_base = checkpoint_base_model(checkpoint_name, downloader)
-    lora_base = lora_base_model(lora_name, downloader)
-    if ckpt_base and lora_base:
-        if downloader.base_models_compatible(ckpt_base, lora_base):
-            return "compatible", ckpt_base, lora_base
-        return "incompatible", ckpt_base, lora_base
-    return "unknown", ckpt_base, lora_base
+    return catalog.lora_compatibility(checkpoint_name, lora_name)
 
 
 def incompatible_loras(
     params: GenerationParams,
-    downloader: ModelDownloader,
+    catalog: LoraCatalogService,
 ) -> list[tuple[str, str, str]]:
     result: list[tuple[str, str, str]] = []
     for lora_name, _ in params.loras:
         status, ckpt_base, lora_base = lora_compatibility(
             params.checkpoint,
             lora_name,
-            downloader,
+            catalog,
         )
         if status == "incompatible":
             result.append((lora_name, ckpt_base, lora_base))
@@ -80,11 +55,11 @@ def incompatible_loras(
 def lora_picker_items(
     checkpoint_name: str,
     client: ComfyUIClient,
-    downloader: ModelDownloader,
+    catalog: LoraCatalogService,
 ) -> tuple[list[str], list[str]]:
     entries: list[tuple[int, str, str, str]] = []
     for name in client.info.loras:
-        status, _, lora_base = lora_compatibility(checkpoint_name, name, downloader)
+        status, _, lora_base = lora_compatibility(checkpoint_name, name, catalog)
         if status == "compatible":
             rank = 0
             icon = "✅"
@@ -129,7 +104,7 @@ async def show_lora_menu(
     *,
     runtime: RuntimeStore,
     client: ComfyUIClient,
-    downloader: ModelDownloader,
+    catalog: LoraCatalogService,
     edit: bool = True,
     notice: str = "",
 ) -> None:
@@ -146,11 +121,11 @@ async def show_lora_menu(
     lines.append("🧲 <b>LoRA chain</b>")
     lines.append(f"Текущая цепочка: {loras_text(req.params.loras)}")
 
-    ckpt_base = checkpoint_base_model(req.params.checkpoint, downloader)
+    ckpt_base = checkpoint_base_model(req.params.checkpoint, catalog)
     if ckpt_base:
         lines.append(f"Checkpoint base: <code>{h(ckpt_base)}</code>")
 
-    bad = incompatible_loras(req.params, downloader)
+    bad = incompatible_loras(req.params, catalog)
     if bad:
         bad_names = ", ".join(name for name, _, _ in bad[:3])
         suffix = "" if len(bad) <= 3 else f" и ещё {len(bad) - 3}"

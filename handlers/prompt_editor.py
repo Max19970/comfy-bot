@@ -13,6 +13,7 @@ from aiogram.types import (
     Message,
 )
 
+from application.lora_catalog_service import LoraCatalogService
 from comfyui_client import ComfyUIClient
 from config import Config
 from core.models import GenerationParams
@@ -220,11 +221,17 @@ def register_prompt_editor_handlers(
     def smart_prompt_is_enabled() -> bool:
         return bool(smart_prompt and smart_prompt.is_enabled())
 
-    checkpoint_base_model = partial(_checkpoint_base_model, downloader=downloader)
-    lora_trained_words = partial(_lora_trained_words, downloader=downloader)
-    lora_compatibility = partial(_lora_compatibility, downloader=downloader)
-    incompatible_loras = partial(_incompatible_loras, downloader=downloader)
-    lora_picker_items = partial(_lora_picker_items, client=client, downloader=downloader)
+    lora_catalog = LoraCatalogService(
+        get_model_metadata=downloader.get_model_metadata,
+        infer_base_model=downloader.infer_base_model,
+        base_models_compatible=downloader.base_models_compatible,
+    )
+
+    checkpoint_base_model = partial(_checkpoint_base_model, catalog=lora_catalog)
+    lora_trained_words = partial(_lora_trained_words, catalog=lora_catalog)
+    lora_compatibility = partial(_lora_compatibility, catalog=lora_catalog)
+    incompatible_loras = partial(_incompatible_loras, catalog=lora_catalog)
+    lora_picker_items = partial(_lora_picker_items, client=client, catalog=lora_catalog)
     merge_prompt_with_words = _merge_prompt_with_words
     changed_params_count = partial(
         changed_params_count_impl,
@@ -290,7 +297,7 @@ def register_prompt_editor_handlers(
 
     run_generate_operation = partial(run_generate_operation_impl, deps=generation_deps)
 
-    show_lora_menu = partial(_show_lora_menu, runtime=runtime, client=client, downloader=downloader)
+    show_lora_menu = partial(_show_lora_menu, runtime=runtime, client=client, catalog=lora_catalog)
     show_reference_menu = partial(_show_reference_menu, runtime=runtime, client=client)
 
     register_prompt_editor_subhandlers(

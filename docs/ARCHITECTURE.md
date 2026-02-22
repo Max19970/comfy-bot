@@ -168,6 +168,18 @@
 До полной миграции эти объекты работают через совместимые адаптеры к legacy
 структурам `GenerationParams.loras` и JSON-представлениям в `core/storage.py`.
 
+### Metadata index и LoRA catalog service (Stage 2)
+
+Для декомпозиции `model_downloader.py` добавлены:
+
+- `infrastructure/model_metadata_index.py` — репозиторий локального индекса
+  `.comfybot_model_index.json` (load/get/upsert/delete).
+- `application/lora_catalog_service.py` — typed service для работы с LoRA-данными
+  (entry, trigger words, base-model resolve, compatibility).
+
+`ModelDownloader` остается фасадом, но хранение/доступ к индексу вынесены в
+отдельный инфраструктурный компонент, а UI flow использует сервис каталога.
+
 ## UI-архитектура
 
 Подробные правила интерфейсного слоя и шаблон расширения описаны в

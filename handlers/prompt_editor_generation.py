@@ -9,7 +9,7 @@ from dataclasses import asdict, dataclass
 from typing import Protocol
 
 import aiohttp
-from aiogram.exceptions import TelegramBadRequest
+from aiogram.exceptions import TelegramBadRequest, TelegramNetworkError
 from aiogram.fsm.context import FSMContext
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 
@@ -201,7 +201,7 @@ async def run_generate_operation(
 
                 kb = None if is_final else cancel_kb
                 await status_msg.edit_text(next_text, reply_markup=kb)
-            except TelegramBadRequest:
+            except (TelegramBadRequest, TelegramNetworkError, RuntimeError):
                 deps.logger.warning("Progress update failed", exc_info=True)
 
         async def _prompt_id_cb(prompt_id: str) -> None:
@@ -248,7 +248,7 @@ async def run_generate_operation(
                     sent_previews += 1
                 else:
                     preview_send_failures += 1
-            except (TelegramBadRequest, RuntimeError):
+            except (TelegramBadRequest, TelegramNetworkError, RuntimeError):
                 preview_send_failures += 1
                 deps.logger.exception("Failed to deliver generated preview")
 
@@ -299,14 +299,17 @@ async def run_generate_operation(
         except asyncio.CancelledError:
             try:
                 await status_msg.edit_text(f"{status_intro}\n\n❌ Генерация отменена.")
-            except TelegramBadRequest:
+            except (TelegramBadRequest, TelegramNetworkError, RuntimeError):
                 pass
             raise
         except TimeoutError:
-            await status_msg.edit_text(
-                f"{status_intro}\n\n⏰ Время ожидания истекло.",
-                reply_markup=return_to_editor_kb,
-            )
+            try:
+                await status_msg.edit_text(
+                    f"{status_intro}\n\n⏰ Время ожидания истекло.",
+                    reply_markup=return_to_editor_kb,
+                )
+            except (TelegramBadRequest, TelegramNetworkError, RuntimeError):
+                deps.logger.warning("Failed to send timeout status", exc_info=True)
             return
         except (
             aiohttp.ClientError,
@@ -314,11 +317,25 @@ async def run_generate_operation(
             RuntimeError,
             ValueError,
             OSError,
+            TelegramNetworkError,
         ) as exc:
-            await status_msg.edit_text(
-                f"{status_intro}\n\n❌ Ошибка: <code>{h(exc)}</code>",
-                reply_markup=return_to_editor_kb,
-            )
+            try:
+                await status_msg.edit_text(
+                    f"{status_intro}\n\n❌ Ошибка: <code>{h(exc)}</code>",
+                    reply_markup=return_to_editor_kb,
+                )
+            except (TelegramBadRequest, TelegramNetworkError, RuntimeError):
+                deps.logger.warning("Failed to send error status", exc_info=True)
+            return
+        except Exception as exc:
+            deps.logger.exception("Unexpected generation task failure", exc_info=exc)
+            try:
+                await status_msg.edit_text(
+                    f"{status_intro}\n\n❌ Неожиданная ошибка: <code>{h(exc)}</code>",
+                    reply_markup=return_to_editor_kb,
+                )
+            except (TelegramBadRequest, TelegramNetworkError, RuntimeError):
+                deps.logger.warning("Failed to send unexpected error status", exc_info=True)
             return
         finally:
             deps.runtime.active_generations.pop(generation_id, None)
@@ -354,12 +371,15 @@ async def run_generate_operation(
                 done_text,
                 deps.generation_result_keyboard(),
             )
-        except TelegramBadRequest:
-            fallback = await status_msg.answer(
-                done_text,
-                reply_markup=deps.generation_result_keyboard(),
-            )
-            deps.remember_prompt_panel(req, fallback)
+        except (TelegramBadRequest, TelegramNetworkError, RuntimeError):
+            try:
+                fallback = await status_msg.answer(
+                    done_text,
+                    reply_markup=deps.generation_result_keyboard(),
+                )
+                deps.remember_prompt_panel(req, fallback)
+            except (TelegramBadRequest, TelegramNetworkError, RuntimeError):
+                deps.logger.warning("Failed to post generation completion status", exc_info=True)
 
     task = asyncio.create_task(_generation_task())
     deps.runtime.active_generations[generation_id] = ActiveGeneration(

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from aiogram.exceptions import TelegramBadRequest
+import asyncio
+
+from aiogram.exceptions import TelegramBadRequest, TelegramNetworkError
 from aiogram.types import (
     BufferedInputFile,
     InlineKeyboardMarkup,
@@ -50,6 +52,49 @@ async def deliver_generated_images(
 ) -> list[Message]:
     preview_messages: list[Message] = []
     total = total_count if total_count and total_count > 0 else len(images)
+
+    async def _send_photo_with_retry(
+        *,
+        msg: Message,
+        image_bytes: bytes,
+        filename: str,
+        caption: str,
+        reply_markup: InlineKeyboardMarkup | None,
+    ) -> Message:
+        for attempt in range(2):
+            try:
+                return await msg.answer_photo(
+                    photo=BufferedInputFile(image_bytes, filename),
+                    caption=caption,
+                    reply_markup=reply_markup,
+                )
+            except TelegramNetworkError:
+                if attempt == 1:
+                    raise
+                await asyncio.sleep(0.35)
+        raise RuntimeError("unreachable")
+
+    async def _send_document_with_retry(
+        *,
+        msg: Message,
+        image_bytes: bytes,
+        filename: str,
+        caption: str,
+        reply_markup: InlineKeyboardMarkup | None,
+    ) -> Message:
+        for attempt in range(2):
+            try:
+                return await msg.answer_document(
+                    document=BufferedInputFile(image_bytes, filename),
+                    caption=caption,
+                    reply_markup=reply_markup,
+                )
+            except TelegramNetworkError:
+                if attempt == 1:
+                    raise
+                await asyncio.sleep(0.35)
+        raise RuntimeError("unreachable")
+
     for index, img_bytes in enumerate(images):
         caption = f"🖼 {index_offset + index + 1}/{total} | Seed: {used_seed}"
         preview_kb = None
@@ -58,23 +103,30 @@ async def deliver_generated_images(
         if mode in ("photo", "both"):
             try:
                 compressed = compress_for_photo(img_bytes)
-                sent = await message.answer_photo(
-                    photo=BufferedInputFile(compressed, f"comfy_{index + 1}.jpg"),
+                sent = await _send_photo_with_retry(
+                    msg=message,
+                    image_bytes=compressed,
+                    filename=f"comfy_{index + 1}.jpg",
                     caption=caption,
                     reply_markup=preview_kb,
                 )
                 preview_messages.append(sent)
             except TelegramBadRequest:
-                sent = await message.answer_document(
-                    document=BufferedInputFile(img_bytes, f"comfy_{index + 1}.png"),
+                sent = await _send_document_with_retry(
+                    msg=message,
+                    image_bytes=img_bytes,
+                    filename=f"comfy_{index + 1}.png",
                     caption=f"{caption} (fallback)",
                     reply_markup=preview_kb,
                 )
                 preview_messages.append(sent)
 
         if mode in ("file", "both"):
-            await message.answer_document(
-                document=BufferedInputFile(img_bytes, f"comfy_{index + 1}.png"),
+            await _send_document_with_retry(
+                msg=message,
+                image_bytes=img_bytes,
+                filename=f"comfy_{index + 1}.png",
                 caption=f"{caption} (PNG)",
+                reply_markup=None,
             )
     return preview_messages

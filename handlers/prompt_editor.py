@@ -40,6 +40,14 @@ from .prompt_editor_generation import (
 from .prompt_editor_generation import (
     run_generate_operation as run_generate_operation_impl,
 )
+from .prompt_editor_handlers_edit import PromptEditorEditHandlersDeps
+from .prompt_editor_handlers_exchange import PromptEditorExchangeHandlersDeps
+from .prompt_editor_handlers_flow import PromptEditorFlowHandlersDeps
+from .prompt_editor_handlers_lora import PromptEditorLoraHandlersDeps
+from .prompt_editor_handlers_references import PromptEditorReferenceHandlersDeps
+from .prompt_editor_handlers_send import PromptEditorSendHandlersDeps
+from .prompt_editor_handlers_smart import PromptEditorSmartHandlersDeps
+from .prompt_editor_handlers_thematic import PromptEditorThematicHandlersDeps
 from .prompt_editor_lora import (
     add_editor_lora as _add_editor_lora,
 )
@@ -325,59 +333,132 @@ def register_prompt_editor_handlers(
     show_lora_menu = partial(_show_lora_menu, runtime=runtime, client=client, catalog=lora_catalog)
     show_reference_menu = partial(_show_reference_menu, runtime=runtime, client=client)
 
+    flow_handlers_deps = PromptEditorFlowHandlersDeps(
+        runtime=runtime,
+        client=client,
+        callback_user_id=callback_user_id,
+        message_user_id=message_user_id,
+        ensure_models=ensure_models,
+        default_params_for_user=default_params_for_user,
+        open_prompt_request=open_prompt_request,
+        require_prompt_request_for_callback=require_prompt_request_for_callback,
+        show_prompt_editor=show_prompt_editor,
+        changed_params_count=changed_params_count,
+        run_generate_operation=run_generate_operation,
+    )
+
+    smart_handlers_deps = PromptEditorSmartHandlersDeps(
+        smart_prompt=smart_prompt,
+        smart_prompt_input_max_chars=SMART_PROMPT_INPUT_MAX_CHARS,
+        max_reference_images=MAX_REFERENCE_IMAGES,
+        logger=logger,
+        require_prompt_request_for_callback=require_prompt_request_for_callback,
+        require_prompt_request_for_message=require_prompt_request_for_message,
+        clear_smart_prompt_result_data=clear_smart_prompt_result_data,
+        show_smart_prompt_result_confirmation=show_smart_prompt_result_confirmation,
+        show_prompt_editor=show_prompt_editor,
+        smart_prompt_is_enabled=smart_prompt_is_enabled,
+        add_reference_from_message=add_reference_from_message,
+        merge_prompt_text=merge_prompt_text,
+        prompt_input_text=prompt_input_text,
+        back_keyboard=shell.back_keyboard,
+        cleanup_user_message=cleanup_user_message,
+    )
+
+    edit_handlers_deps = PromptEditorEditHandlersDeps(
+        runtime=runtime,
+        client=client,
+        sizes=SIZES,
+        callback_user_id=callback_user_id,
+        get_user_pro_mode=get_user_pro_mode,
+        set_user_pro_mode=set_user_pro_mode,
+        require_prompt_request_for_callback=require_prompt_request_for_callback,
+        require_prompt_request_for_message=require_prompt_request_for_message,
+        open_paginated_choice=open_paginated_choice,
+        change_paginated_choice_page=change_paginated_choice_page,
+        set_prompt_param_from_callback=set_prompt_param_from_callback,
+        show_prompt_editor=show_prompt_editor,
+        prompt_input_text=prompt_input_text,
+        back_keyboard=shell.back_keyboard,
+        incompatible_loras=incompatible_loras,
+        cleanup_user_message=cleanup_user_message,
+    )
+
+    exchange_handlers_deps = PromptEditorExchangeHandlersDeps(
+        require_prompt_request_for_callback=require_prompt_request_for_callback,
+        require_prompt_request_for_message=require_prompt_request_for_message,
+        show_prompt_editor=show_prompt_editor,
+        normalize_params=normalize_params,
+        cleanup_user_message=cleanup_user_message,
+    )
+
+    thematic_handlers_deps = PromptEditorThematicHandlersDeps(
+        runtime=runtime,
+        max_reference_images=MAX_REFERENCE_IMAGES,
+        is_freeu_supported=lambda: client.info.freeu_supported,
+        is_pag_supported=lambda: client.info.pag_supported,
+        is_tiled_diffusion_supported=lambda: client.info.tiled_diffusion_supported,
+        require_prompt_request_for_callback=require_prompt_request_for_callback,
+        require_prompt_request_for_message=require_prompt_request_for_message,
+        show_prompt_editor=show_prompt_editor,
+        back_keyboard=shell.back_keyboard,
+        cleanup_user_message=cleanup_user_message,
+    )
+
+    lora_handlers_deps = PromptEditorLoraHandlersDeps(
+        runtime=runtime,
+        callback_user_id=callback_user_id,
+        require_prompt_request_for_callback=require_prompt_request_for_callback,
+        require_prompt_request_for_message=require_prompt_request_for_message,
+        show_lora_menu=show_lora_menu,
+        lora_picker_items=lora_picker_items,
+        lora_compatibility=lora_compatibility,
+        lora_trained_words=lora_trained_words,
+        add_editor_lora=add_editor_lora,
+        remove_last_editor_lora=remove_last_editor_lora,
+        clear_editor_loras=clear_editor_loras,
+        editor_lora_count=editor_lora_count,
+        merge_prompt_with_words=merge_prompt_with_words,
+        open_paginated_choice=open_paginated_choice,
+        change_paginated_choice_page=change_paginated_choice_page,
+        back_keyboard=shell.back_keyboard,
+        list_available_loras=lambda: list(client.info.loras),
+        cleanup_user_message=cleanup_user_message,
+    )
+
+    reference_handlers_deps = PromptEditorReferenceHandlersDeps(
+        runtime=runtime,
+        callback_user_id=callback_user_id,
+        max_reference_images=MAX_REFERENCE_IMAGES,
+        require_prompt_request_for_callback=require_prompt_request_for_callback,
+        require_prompt_request_for_message=require_prompt_request_for_message,
+        show_reference_menu=show_reference_menu,
+        make_reference_image=make_reference_image,
+        cleanup_user_message=cleanup_user_message,
+    )
+
+    send_handlers_deps = PromptEditorSendHandlersDeps(
+        logger=logger,
+        runtime=runtime,
+        client=client,
+        require_prompt_request_for_callback=require_prompt_request_for_callback,
+        show_prompt_editor=show_prompt_editor,
+        deliver_generated_images=deliver_generated_images,
+        generation_result_keyboard=generation_result_keyboard,
+        preview_image_keyboard=preview_image_keyboard,
+    )
+
     register_prompt_editor_subhandlers(
         PromptEditorSubhandlersDeps(
             router=router,
-            runtime=runtime,
-            client=client,
-            smart_prompt=smart_prompt,
-            logger=logger,
-            smart_prompt_input_max_chars=SMART_PROMPT_INPUT_MAX_CHARS,
-            max_reference_images=MAX_REFERENCE_IMAGES,
-            sizes=SIZES,
-            callback_user_id=callback_user_id,
-            message_user_id=message_user_id,
-            get_user_pro_mode=get_user_pro_mode,
-            set_user_pro_mode=set_user_pro_mode,
-            ensure_models=ensure_models,
-            default_params_for_user=default_params_for_user,
-            open_prompt_request=open_prompt_request,
-            require_prompt_request_for_callback=require_prompt_request_for_callback,
-            require_prompt_request_for_message=require_prompt_request_for_message,
-            show_prompt_editor=show_prompt_editor,
-            changed_params_count=changed_params_count,
-            run_generate_operation=run_generate_operation,
-            clear_smart_prompt_result_data=clear_smart_prompt_result_data,
-            show_smart_prompt_result_confirmation=show_smart_prompt_result_confirmation,
-            smart_prompt_is_enabled=smart_prompt_is_enabled,
-            add_reference_from_message=add_reference_from_message,
-            merge_prompt_text=merge_prompt_text,
-            prompt_input_text=prompt_input_text,
-            back_keyboard=shell.back_keyboard,
-            cleanup_user_message=cleanup_user_message,
-            open_paginated_choice=open_paginated_choice,
-            change_paginated_choice_page=change_paginated_choice_page,
-            set_prompt_param_from_callback=set_prompt_param_from_callback,
-            incompatible_loras=incompatible_loras,
-            normalize_params=normalize_params,
-            is_freeu_supported=lambda: client.info.freeu_supported,
-            is_pag_supported=lambda: client.info.pag_supported,
-            is_tiled_diffusion_supported=lambda: client.info.tiled_diffusion_supported,
-            show_lora_menu=show_lora_menu,
-            lora_picker_items=lora_picker_items,
-            lora_compatibility=lora_compatibility,
-            lora_trained_words=lora_trained_words,
-            add_editor_lora=add_editor_lora,
-            remove_last_editor_lora=remove_last_editor_lora,
-            clear_editor_loras=clear_editor_loras,
-            editor_lora_count=editor_lora_count,
-            merge_prompt_with_words=merge_prompt_with_words,
-            list_available_loras=lambda: list(client.info.loras),
-            show_reference_menu=show_reference_menu,
-            make_reference_image=make_reference_image,
-            deliver_generated_images=deliver_generated_images,
-            generation_result_keyboard=generation_result_keyboard,
-            preview_image_keyboard=preview_image_keyboard,
+            flow=flow_handlers_deps,
+            smart=smart_handlers_deps,
+            edit=edit_handlers_deps,
+            exchange=exchange_handlers_deps,
+            thematic=thematic_handlers_deps,
+            lora=lora_handlers_deps,
+            references=reference_handlers_deps,
+            send=send_handlers_deps,
         )
     )
 

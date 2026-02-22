@@ -18,12 +18,19 @@ from core.html_utils import h
 from core.interaction import require_callback_message
 from core.states import DownloadStates
 from core.ui_kit import back_button, build_keyboard
-from core.ui_kit.buttons import button, cancel_button, menu_root_button
+from core.ui_kit.buttons import button, menu_root_button
 
+from .download_flow_state import (
+    clamp_page,
+    next_search_limit,
+    read_results_view_state,
+    serialize_results_payload,
+)
 from .download_flow_utils import (
     apply_download_profile,
     download_defaults_for_user,
 )
+from .download_flow_version_view import build_version_selection_view
 
 
 @dataclass
@@ -120,6 +127,36 @@ def register_download_flow_handlers(deps: DownloadFlowDeps) -> None:
             await cb.answer(invalid_text, show_alert=True)
             return None
         return parsed.value
+
+    async def _show_results_from_state(
+        message: Message,
+        state: FSMContext,
+        *,
+        notice: str = "",
+    ) -> bool:
+        data = await state.get_data()
+        view = read_results_view_state(
+            data,
+            default_page_size=default_page_size,
+            hydrate_result=deps.hydrate_result,
+        )
+        if not view.results:
+            return False
+
+        page = clamp_page(view.page, total_items=len(view.results), page_size=view.page_size)
+        await state.update_data(dl_results_page=page)
+        await state.set_state(DownloadStates.choosing_result)
+        await deps.show_results_menu(
+            message,
+            state,
+            view.results,
+            edit=True,
+            page=page,
+            page_size=view.page_size,
+            can_continue=view.can_continue,
+            notice=notice,
+        )
+        return True
 
     @router.message(Command("download"))
     async def cmd_download(msg: Message, state: FSMContext):
@@ -359,7 +396,7 @@ def register_download_flow_handlers(deps: DownloadFlowDeps) -> None:
             return
 
         await state.update_data(
-            dl_results=[asdict(item) for item in results],
+            dl_results=serialize_results_payload(results),
             dl_results_page=0,
             dl_loaded_limit=initial_limit,
             dl_more_exhausted=False,
@@ -401,16 +438,17 @@ def register_download_flow_handlers(deps: DownloadFlowDeps) -> None:
 
         if value in {"first", "prev", "next", "last", "more"}:
             data = await state.get_data()
-            results_data = data.get("dl_results", [])
-            results: list[Any] = []
-            for item in results_data:
-                if isinstance(item, dict):
-                    results.append(deps.hydrate_result(item))
+            view = read_results_view_state(
+                data,
+                default_page_size=default_page_size,
+                hydrate_result=deps.hydrate_result,
+            )
 
-            page_size = int(data.get("dl_page_size", default_page_size) or default_page_size)
-            page = int(data.get("dl_results_page", 0) or 0)
-            loaded_limit = int(data.get("dl_loaded_limit", page_size * 2) or (page_size * 2))
-            exhausted = bool(data.get("dl_more_exhausted", False))
+            results = view.results
+            page_size = view.page_size
+            page = view.page
+            loaded_limit = view.loaded_limit
+            exhausted = view.exhausted
             notice = ""
             callback_answered = False
 
@@ -426,7 +464,7 @@ def register_download_flow_handlers(deps: DownloadFlowDeps) -> None:
                 await cb.answer()
                 callback_answered = True
                 prev_count = len(results)
-                next_limit = min(200, loaded_limit + page_size * 2)
+                next_limit = next_search_limit(loaded_limit=loaded_limit, page_size=page_size)
                 if next_limit == loaded_limit:
                     exhausted = True
                     notice = "Больше результатов не найдено."
@@ -452,7 +490,7 @@ def register_download_flow_handlers(deps: DownloadFlowDeps) -> None:
                 loaded_limit = next_limit
                 exhausted = len(results) <= prev_count
                 await state.update_data(
-                    dl_results=[asdict(item) for item in results],
+                    dl_results=serialize_results_payload(results),
                     dl_loaded_limit=loaded_limit,
                     dl_more_exhausted=exhausted,
                 )
@@ -500,43 +538,13 @@ def register_download_flow_handlers(deps: DownloadFlowDeps) -> None:
             await state.update_data(dl_chosen_base=asdict(result))
             await state.set_state(DownloadStates.choosing_version)
 
-            rows: list[list[InlineKeyboardButton]] = []
-            versions = result.available_versions[:12]
-            for idx, option in enumerate(versions):
-                label_parts = []
-                if option.base_model:
-                    label_parts.append(option.base_model)
-                if option.version_name:
-                    label_parts.append(option.version_name)
-                if option.size_bytes > 0:
-                    label_parts.append(deps.human_size(option.size_bytes))
-                short = " | ".join(label_parts) or f"Версия {idx + 1}"
-                short = short if len(short) <= 58 else short[:55] + "..."
-                rows.append([button(f"{idx + 1}. {short}", f"dlver:{idx}")])
-            rows.append([cancel_button("dlver:cancel")])
-            rows.append([back_button("dlver:back", text="⬅️ Назад к результатам")])
-
-            lines = [
-                f"🧬 <b>Выберите версию</b> для <b>{h(result.name)}</b>",
-                f"Найдено версий: <b>{len(result.available_versions)}</b>",
-                "",
-            ]
-            for idx, option in enumerate(versions):
-                meta = []
-                if option.base_model:
-                    meta.append(option.base_model)
-                if option.size_bytes > 0:
-                    meta.append(deps.human_size(option.size_bytes))
-                if option.download_count > 0:
-                    meta.append(f"📥 {deps.short_number(option.download_count)}")
-                if option.version_name:
-                    lines.append(f"{idx + 1}. <b>{h(option.version_name)}</b>")
-                else:
-                    lines.append(f"{idx + 1}. <b>Версия {idx + 1}</b>")
-                if meta:
-                    lines.append(f"   <i>{h(' | '.join(meta))}</i>")
-
-            await message.edit_text("\n".join(lines), reply_markup=build_keyboard(rows))
+            text, kb = build_version_selection_view(
+                result,
+                human_size=deps.human_size,
+                short_number=deps.short_number,
+                escape_html=h,
+            )
+            await message.edit_text(text, reply_markup=kb)
             await cb.answer()
             return
 
@@ -563,34 +571,12 @@ def register_download_flow_handlers(deps: DownloadFlowDeps) -> None:
             return
 
         if value == "back":
-            data = await state.get_data()
-            results_data = data.get("dl_results", [])
-            results: list[Any] = []
-            for item in results_data:
-                if isinstance(item, dict):
-                    results.append(deps.hydrate_result(item))
-
-            if not results:
+            shown = await _show_results_from_state(message, state)
+            if not shown:
                 await state.clear()
                 await message.edit_text("❌ Сессия истекла. Запустите /download заново.")
                 await cb.answer()
                 return
-
-            await state.set_state(DownloadStates.choosing_result)
-            page_size = int(data.get("dl_page_size", default_page_size) or default_page_size)
-            page = int(data.get("dl_results_page", 0) or 0)
-            loaded_limit = int(data.get("dl_loaded_limit", page_size * 2) or (page_size * 2))
-            exhausted = bool(data.get("dl_more_exhausted", False))
-            can_continue = (not exhausted) and len(results) >= loaded_limit and loaded_limit < 200
-            await deps.show_results_menu(
-                message,
-                state,
-                results,
-                edit=True,
-                page=page,
-                page_size=page_size,
-                can_continue=can_continue,
-            )
             await cb.answer()
             return
 
@@ -635,34 +621,12 @@ def register_download_flow_handlers(deps: DownloadFlowDeps) -> None:
         if decision is None:
             return
         if decision == "back":
-            data = await state.get_data()
-            results_data = data.get("dl_results", [])
-            results: list[Any] = []
-            for item in results_data:
-                if isinstance(item, dict):
-                    results.append(deps.hydrate_result(item))
-
-            if not results:
+            shown = await _show_results_from_state(message, state)
+            if not shown:
                 await state.clear()
                 await message.edit_text("❌ Сессия истекла. Запустите /download заново.")
                 await cb.answer()
                 return
-
-            await state.set_state(DownloadStates.choosing_result)
-            page_size = int(data.get("dl_page_size", default_page_size) or default_page_size)
-            page = int(data.get("dl_results_page", 0) or 0)
-            loaded_limit = int(data.get("dl_loaded_limit", page_size * 2) or (page_size * 2))
-            exhausted = bool(data.get("dl_more_exhausted", False))
-            can_continue = (not exhausted) and len(results) >= loaded_limit and loaded_limit < 200
-            await deps.show_results_menu(
-                message,
-                state,
-                results,
-                edit=True,
-                page=page,
-                page_size=page_size,
-                can_continue=can_continue,
-            )
             await cb.answer()
             return
 
@@ -810,34 +774,12 @@ def register_download_flow_handlers(deps: DownloadFlowDeps) -> None:
             return
 
         if action == "results":
-            data = await state.get_data()
-            results_data = data.get("dl_results", [])
-            results: list[Any] = []
-            for item in results_data:
-                if isinstance(item, dict):
-                    results.append(deps.hydrate_result(item))
-
-            if not results:
+            shown = await _show_results_from_state(message, state)
+            if not shown:
                 await cb.answer(
                     "История результатов недоступна. Начните новый поиск.", show_alert=True
                 )
                 return
-
-            page_size = int(data.get("dl_page_size", default_page_size) or default_page_size)
-            page = int(data.get("dl_results_page", 0) or 0)
-            loaded_limit = int(data.get("dl_loaded_limit", page_size * 2) or (page_size * 2))
-            exhausted = bool(data.get("dl_more_exhausted", False))
-            can_continue = (not exhausted) and len(results) >= loaded_limit and loaded_limit < 200
-            await state.set_state(DownloadStates.choosing_result)
-            await deps.show_results_menu(
-                message,
-                state,
-                results,
-                edit=True,
-                page=page,
-                page_size=page_size,
-                can_continue=can_continue,
-            )
             await cb.answer()
             return
 

@@ -1,14 +1,9 @@
 from __future__ import annotations
 
-import asyncio
 import logging
-import random
-import time
-import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass
 
-import aiohttp
 from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
@@ -22,17 +17,18 @@ from aiogram.types import (
 from comfyui_client import ComfyUIClient
 from core.callbacks import ValueSelectionCallback
 from core.html_utils import h
-from core.image_utils import image_dimensions, resize_image_by_percent, shrink_image_to_box
 from core.interaction import require_callback_message
 from core.models import GenerationParams
 from core.prompt_enhancements import (
     numeric_control_range_text,
 )
-from core.runtime import ActiveGeneration, PreviewArtifact, PromptRequest, RuntimeStore
+from core.runtime import PreviewArtifact, PromptRequest, RuntimeStore
 from core.ui_copy import START_TEXT, main_menu_keyboard
-from core.ui_kit import build_keyboard
-from core.ui_kit.buttons import button
 
+from .prompt_editor_enhancement import (
+    PromptEditorEnhancementDeps,
+    start_image_enhancement,
+)
 from .prompt_editor_send_menu_utils import (
     apply_field_value,
     custom_field_meta,
@@ -432,6 +428,15 @@ def register_prompt_editor_send_handlers(
             caption=_artifact_menu_caption(artifact, menu),
             reply_markup=_artifact_menu_keyboard(artifact, menu),
         )
+
+    enhancement_deps = PromptEditorEnhancementDeps(
+        logger=deps.logger,
+        runtime=deps.runtime,
+        client=deps.client,
+        deliver_generated_images=deps.deliver_generated_images,
+        preview_image_keyboard=deps.preview_image_keyboard,
+        move_main_panel_to_bottom=_move_main_panel_to_bottom,
+    )
 
     @router.callback_query(F.data.startswith("send:"))
     async def send_images(cb: CallbackQuery, state: FSMContext):
@@ -1074,196 +1079,12 @@ def register_prompt_editor_send_handlers(
         artifact_payload = await _artifact_from_callback(cb, prefix="img:run")
         if artifact_payload is None:
             return
-        artifact_id, artifact = artifact_payload
-        artifact_item = artifact
+        _, artifact = artifact_payload
 
-        status_msg = await message.answer("⏳ Запускаю улучшение...")
+        await start_image_enhancement(
+            message,
+            uid=uid,
+            artifact=artifact,
+            deps=enhancement_deps,
+        )
         await cb.answer("🚀 Улучшение запущено")
-        generation_id = f"enh_{uuid.uuid4().hex}"
-        enhancement_cancel_kb = build_keyboard(
-            [[button("❌ Отменить улучшение", f"pe:gen:cancel:{generation_id}")]]
-        )
-        try:
-            await status_msg.edit_reply_markup(reply_markup=enhancement_cancel_kb)
-        except TelegramBadRequest:
-            pass
-
-        async def _progress(current: int, total: int, text: str) -> None:
-            line = f"⏳ {h(text)}"
-            if total > 0:
-                line = f"⏳ {h(text)} ({current}/{total})"
-            try:
-                await status_msg.edit_text(line, reply_markup=enhancement_cancel_kb)
-            except TelegramBadRequest:
-                deps.logger.debug("Image enhancement progress update failed", exc_info=True)
-
-        async def _run() -> None:
-            try:
-                source_bytes = deps.runtime.artifact_bytes(artifact_item)
-                if not source_bytes:
-                    await status_msg.edit_text(
-                        "❌ Не найдены данные исходной картинки.",
-                        reply_markup=None,
-                    )
-                    return
-
-                run_params = GenerationParams(**asdict(artifact_item.params))
-                run_params.batch_size = 1
-                run_params.reference_images = []
-                run_params.reference_strength = 0.8
-                if artifact_item.enable_sampler_pass and run_params.seed < 0:
-                    run_params.seed = random.randint(0, 2**63 - 1)
-                result_seed = (
-                    int(run_params.seed) if run_params.seed >= 0 else artifact_item.used_seed
-                )
-
-                async def _prompt_id_cb(prompt_id: str) -> None:
-                    active = deps.runtime.active_generations.get(generation_id)
-                    if active is not None:
-                        active.prompt_id = prompt_id
-                        deps.runtime.persist()
-
-                if artifact_item.enable_sampler_pass:
-                    images = await deps.client.generate_from_image(
-                        run_params,
-                        image_bytes=source_bytes,
-                        progress_cb=_progress,
-                        prompt_id_cb=_prompt_id_cb,
-                    )
-                    result_seed = int(run_params.seed)
-                elif run_params.upscale_model:
-                    images = await deps.client.upscale_image_only(
-                        image_bytes=source_bytes,
-                        upscale_model=run_params.upscale_model,
-                        progress_cb=_progress,
-                        prompt_id_cb=_prompt_id_cb,
-                    )
-                else:
-                    await _progress(0, 0, "Без ComfyUI: только сжатие")
-                    images = [source_bytes]
-
-                if not images:
-                    await status_msg.edit_text(
-                        "❌ ComfyUI не вернул изображение.", reply_markup=None
-                    )
-                    return
-
-                result_image = images[0]
-                if artifact_item.compression_percent < 100:
-                    await _progress(0, 0, f"Сжимаю до {artifact_item.compression_percent}%")
-                    result_image = resize_image_by_percent(
-                        result_image,
-                        artifact_item.compression_percent,
-                    )
-                if artifact_item.shrink_width and artifact_item.shrink_height:
-                    await _progress(
-                        0,
-                        0,
-                        f"Shrink до {artifact_item.shrink_width}x{artifact_item.shrink_height}",
-                    )
-                    result_image = shrink_image_to_box(
-                        result_image,
-                        artifact_item.shrink_width,
-                        artifact_item.shrink_height,
-                    )
-
-                next_params = GenerationParams(**asdict(run_params))
-                try:
-                    next_w, next_h = image_dimensions(result_image)
-                    next_params.width = next_w
-                    next_params.height = next_h
-                except (OSError, ValueError):
-                    pass
-
-                next_artifact_id = uuid.uuid4().hex
-                next_artifact = PreviewArtifact(
-                    artifact_id=next_artifact_id,
-                    owner_uid=artifact_item.owner_uid,
-                    image_bytes=result_image,
-                    params=next_params,
-                    used_seed=result_seed,
-                    parent_artifact_id=artifact_item.artifact_id,
-                    generation_step=artifact_item.generation_step + 1,
-                    enable_sampler_pass=artifact_item.enable_sampler_pass,
-                    compression_percent=artifact_item.compression_percent,
-                    shrink_width=artifact_item.shrink_width,
-                    shrink_height=artifact_item.shrink_height,
-                )
-                deps.runtime.register_preview_artifact(next_artifact)
-                deps.runtime.prune_preview_artifacts(artifact_item.owner_uid)
-
-                deps.runtime.last_params[artifact_item.owner_uid] = GenerationParams(
-                    **asdict(next_params)
-                )
-                deps.runtime.last_seeds[artifact_item.owner_uid] = result_seed
-                deps.runtime.persist()
-
-                sent_previews = await deps.deliver_generated_images(
-                    status_msg,
-                    [result_image],
-                    used_seed=result_seed,
-                    mode="photo",
-                    preview_keyboards=[
-                        deps.preview_image_keyboard(
-                            next_artifact_id,
-                            artifact_item.artifact_id,
-                        )
-                    ],
-                )
-                if sent_previews:
-                    next_artifact.preview_chat_id = sent_previews[0].chat.id
-                    next_artifact.preview_message_id = sent_previews[0].message_id
-
-                extra_lines: list[str] = []
-                if artifact_item.compression_percent < 100:
-                    extra_lines.append(
-                        f"🗜 Сжатие применено: {artifact_item.compression_percent}% от результата."
-                    )
-                if artifact_item.shrink_width and artifact_item.shrink_height:
-                    extra_lines.append(
-                        "📦 Shrink применен: "
-                        f"{artifact_item.shrink_width}x{artifact_item.shrink_height}."
-                    )
-                detail_block = "\n".join(extra_lines)
-                if detail_block:
-                    detail_block += "\n"
-                await _move_main_panel_to_bottom(
-                    artifact_item.owner_uid,
-                    status_msg,
-                    "✅ Улучшение завершено. Отправил новую превью.\n"
-                    f"{detail_block}"
-                    "Для каждой превью доступны: отправка PNG и меню улучшений.",
-                )
-            except asyncio.CancelledError:
-                await status_msg.edit_text("❌ Улучшение отменено.", reply_markup=None)
-            except (
-                aiohttp.ClientError,
-                asyncio.TimeoutError,
-                OSError,
-                RuntimeError,
-                ValueError,
-            ) as exc:
-                deps.logger.exception("Image enhancement failed")
-                await status_msg.edit_text(
-                    f"❌ Ошибка улучшения: <code>{h(exc)}</code>",
-                    reply_markup=None,
-                )
-            finally:
-                deps.runtime.active_image_jobs.pop(temp_job_id, None)
-                deps.runtime.active_generations.pop(generation_id, None)
-                deps.runtime.persist()
-
-        temp_job_id = f"job_{time.time_ns()}"
-        task = asyncio.create_task(_run())
-        deps.runtime.active_image_jobs[temp_job_id] = task
-        deps.runtime.active_generations[generation_id] = ActiveGeneration(
-            owner_uid=uid,
-            generation_id=generation_id,
-            task=task,
-            kind="enhancement",
-            title="Улучшение",
-            status_msg=status_msg,
-            status_chat_id=status_msg.chat.id,
-            status_message_id=status_msg.message_id,
-        )
-        deps.runtime.persist()

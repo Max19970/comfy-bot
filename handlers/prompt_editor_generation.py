@@ -39,6 +39,87 @@ class PromptEditorGenerationDeps:
     prune_preview_artifacts: Callable[[int], None]
 
 
+def _return_to_editor_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🔄 Вернуться в редактор", callback_data="pe:gen:back")]
+        ]
+    )
+
+
+def _cancel_generation_keyboard(generation_id: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="❌ Отменить", callback_data=f"pe:gen:cancel:{generation_id}"
+                )
+            ]
+        ]
+    )
+
+
+def _build_generation_status_intro(
+    *,
+    params: GenerationParams,
+    generation_params: GenerationParams,
+    reference_images: list[bytes],
+    failed_refs: int,
+    reference_mode: str,
+    lora_warning: str,
+) -> str:
+    ckpt_short = h(truncate(params.checkpoint, 30))
+    start_lines = [f"⏳ <b>Генерация</b> | {ckpt_short} | {params.width}×{params.height}"]
+
+    if reference_images:
+        ref_info = f"🖼 <b>Ref:</b> {len(reference_images)}"
+        if failed_refs:
+            ref_info += f" (❌ {failed_refs})"
+        if reference_mode == "ipadapter":
+            ref_info += f" | IP-Adapter, str={generation_params.reference_strength}"
+        elif reference_mode == "none":
+            ref_info += " | референс загружен"
+        else:
+            ref_info += (
+                f" | img2img, str={generation_params.reference_strength}"
+                f", dn={generation_params.denoise}"
+            )
+        start_lines.append(ref_info)
+
+    if generation_params.vae_name:
+        start_lines.append(f"🧬 <b>VAE:</b> <code>{h(generation_params.vae_name)}</code>")
+    if generation_params.controlnet_name:
+        start_lines.append(
+            "🧷 <b>ControlNet:</b> "
+            f"<code>{h(generation_params.controlnet_name)}</code> "
+            f"(str={generation_params.controlnet_strength})"
+        )
+    if generation_params.embedding_name:
+        start_lines.append(
+            f"🔤 <b>Embedding:</b> <code>{h(generation_params.embedding_name)}</code>"
+        )
+    if lora_warning:
+        start_lines.append(lora_warning)
+    return "\n".join(start_lines)
+
+
+def _preview_notice_text(*, sent_previews: int, ready_previews: int, failures: int) -> str:
+    if failures <= 0:
+        return "🖼 Превью отправлялись по мере готовности."
+    return (
+        "⚠️ Часть превью не удалось отправить как фото "
+        f"({sent_previews}/{ready_previews}). Можно скачать PNG без сжатия."
+    )
+
+
+def _generation_done_text(*, ready_previews: int, used_seed: int, preview_notice: str) -> str:
+    return (
+        f"✅ <b>Готово!</b> {ready_previews} изобр. | Seed: <code>{used_seed}</code>\n"
+        f"\n{preview_notice}\n"
+        "Для каждой превью доступны: отправка PNG и меню улучшений."
+    )
+
+
 async def run_generate_operation(
     message: Message,
     state: FSMContext,
@@ -104,54 +185,19 @@ async def run_generate_operation(
         has_reference_images=bool(reference_images),
     )
 
-    ckpt_short = h(truncate(params.checkpoint, 30))
-    start_lines = [f"⏳ <b>Генерация</b> | {ckpt_short} | {params.width}×{params.height}"]
-    if reference_images:
-        ref_info = f"🖼 <b>Ref:</b> {len(reference_images)}"
-        if failed_refs:
-            ref_info += f" (❌ {failed_refs})"
-        if reference_mode == "ipadapter":
-            ref_info += f" | IP-Adapter, str={generation_params.reference_strength}"
-        elif reference_mode == "none":
-            ref_info += " | референс загружен"
-        else:
-            ref_info += (
-                f" | img2img, str={generation_params.reference_strength}"
-                f", dn={generation_params.denoise}"
-            )
-        start_lines.append(ref_info)
-    if generation_params.vae_name:
-        start_lines.append(f"🧬 <b>VAE:</b> <code>{h(generation_params.vae_name)}</code>")
-    if generation_params.controlnet_name:
-        start_lines.append(
-            "🧷 <b>ControlNet:</b> "
-            f"<code>{h(generation_params.controlnet_name)}</code> "
-            f"(str={generation_params.controlnet_strength})"
-        )
-    if generation_params.embedding_name:
-        start_lines.append(
-            f"🔤 <b>Embedding:</b> <code>{h(generation_params.embedding_name)}</code>"
-        )
-    if lora_warning:
-        start_lines.append(lora_warning)
-    status_intro = "\n".join(start_lines)
-
-    return_to_editor_kb = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="🔄 Вернуться в редактор", callback_data="pe:gen:back")]
-        ]
+    status_intro = _build_generation_status_intro(
+        params=params,
+        generation_params=generation_params,
+        reference_images=reference_images,
+        failed_refs=failed_refs,
+        reference_mode=reference_mode,
+        lora_warning=lora_warning,
     )
+
+    return_to_editor_kb = _return_to_editor_keyboard()
 
     generation_id = uuid.uuid4().hex
-    cancel_kb = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="❌ Отменить", callback_data=f"pe:gen:cancel:{generation_id}"
-                )
-            ]
-        ]
-    )
+    cancel_kb = _cancel_generation_keyboard(generation_id)
 
     status_msg = await deps.show_prompt_panel(
         message,
@@ -352,17 +398,15 @@ async def run_generate_operation(
         deps.runtime.last_seeds[uid] = used_seed
         deps.runtime.persist()
 
-        preview_notice = "🖼 Превью отправлялись по мере готовности."
-        if preview_send_failures > 0:
-            preview_notice = (
-                "⚠️ Часть превью не удалось отправить как фото "
-                f"({sent_previews}/{ready_previews}). Можно скачать PNG без сжатия."
-            )
-
-        done_text = (
-            f"✅ <b>Готово!</b> {ready_previews} изобр. | Seed: <code>{used_seed}</code>\n"
-            f"\n{preview_notice}\n"
-            "Для каждой превью доступны: отправка PNG и меню улучшений."
+        preview_notice = _preview_notice_text(
+            sent_previews=sent_previews,
+            ready_previews=ready_previews,
+            failures=preview_send_failures,
+        )
+        done_text = _generation_done_text(
+            ready_previews=ready_previews,
+            used_seed=used_seed,
+            preview_notice=preview_notice,
         )
         try:
             await deps.move_prompt_panel_to_bottom(

@@ -1,0 +1,238 @@
+from __future__ import annotations
+
+import asyncio
+import logging
+import random
+import time
+import uuid
+from collections.abc import Awaitable, Callable
+from dataclasses import asdict, dataclass
+from typing import Protocol
+
+import aiohttp
+from aiogram.exceptions import TelegramBadRequest, TelegramNetworkError
+from aiogram.types import InlineKeyboardMarkup, Message
+
+from core.html_utils import h
+from core.image_utils import image_dimensions, resize_image_by_percent, shrink_image_to_box
+from core.models import GenerationParams
+from core.runtime import ActiveGeneration, PreviewArtifact, RuntimeStore
+
+
+class _ClientLike(Protocol):
+    async def generate_from_image(
+        self,
+        params: GenerationParams,
+        *,
+        image_bytes: bytes,
+        progress_cb: Callable[[int, int, str], Awaitable[None]] | None = None,
+        prompt_id_cb: Callable[[str], Awaitable[None]] | None = None,
+    ) -> list[bytes]: ...
+
+    async def upscale_image_only(
+        self,
+        *,
+        image_bytes: bytes,
+        upscale_model: str,
+        progress_cb: Callable[[int, int, str], Awaitable[None]] | None = None,
+        prompt_id_cb: Callable[[str], Awaitable[None]] | None = None,
+    ) -> list[bytes]: ...
+
+
+@dataclass
+class PromptEditorEnhancementDeps:
+    logger: logging.Logger
+    runtime: RuntimeStore
+    client: _ClientLike
+    deliver_generated_images: Callable[..., Awaitable[list[Message]]]
+    preview_image_keyboard: Callable[[str, str | None], InlineKeyboardMarkup]
+    move_main_panel_to_bottom: Callable[[int, Message, str], Awaitable[None]]
+
+
+async def start_image_enhancement(
+    message: Message,
+    *,
+    uid: int,
+    artifact: PreviewArtifact,
+    deps: PromptEditorEnhancementDeps,
+) -> None:
+    status_msg = await message.answer("⏳ Запускаю улучшение...")
+    generation_id = f"enh_{uuid.uuid4().hex}"
+    temp_job_id = f"job_{time.time_ns()}"
+
+    try:
+        await status_msg.edit_reply_markup(reply_markup=_enhancement_cancel_keyboard(generation_id))
+    except (TelegramBadRequest, TelegramNetworkError):
+        pass
+
+    async def _progress(current: int, total: int, text: str) -> None:
+        line = f"⏳ {h(text)}"
+        if total > 0:
+            line = f"⏳ {h(text)} ({current}/{total})"
+        try:
+            await status_msg.edit_text(
+                line, reply_markup=_enhancement_cancel_keyboard(generation_id)
+            )
+        except (TelegramBadRequest, TelegramNetworkError):
+            deps.logger.debug("Image enhancement progress update failed", exc_info=True)
+
+    async def _safe_edit_status(text: str) -> None:
+        try:
+            await status_msg.edit_text(text, reply_markup=None)
+        except (TelegramBadRequest, TelegramNetworkError):
+            deps.logger.debug("Image enhancement status update failed", exc_info=True)
+
+    async def _run() -> None:
+        try:
+            source_bytes = deps.runtime.artifact_bytes(artifact)
+            if not source_bytes:
+                await _safe_edit_status("❌ Не найдены данные исходной картинки.")
+                return
+
+            run_params = GenerationParams(**asdict(artifact.params))
+            run_params.batch_size = 1
+            run_params.reference_images = []
+            run_params.reference_strength = 0.8
+            if artifact.enable_sampler_pass and run_params.seed < 0:
+                run_params.seed = random.randint(0, 2**63 - 1)
+            result_seed = int(run_params.seed) if run_params.seed >= 0 else artifact.used_seed
+
+            async def _prompt_id_cb(prompt_id: str) -> None:
+                active = deps.runtime.active_generations.get(generation_id)
+                if active is not None:
+                    active.prompt_id = prompt_id
+                    deps.runtime.persist()
+
+            if artifact.enable_sampler_pass:
+                images = await deps.client.generate_from_image(
+                    run_params,
+                    image_bytes=source_bytes,
+                    progress_cb=_progress,
+                    prompt_id_cb=_prompt_id_cb,
+                )
+                result_seed = int(run_params.seed)
+            elif run_params.upscale_model:
+                images = await deps.client.upscale_image_only(
+                    image_bytes=source_bytes,
+                    upscale_model=run_params.upscale_model,
+                    progress_cb=_progress,
+                    prompt_id_cb=_prompt_id_cb,
+                )
+            else:
+                await _progress(0, 0, "Без ComfyUI: только сжатие")
+                images = [source_bytes]
+
+            if not images:
+                await _safe_edit_status("❌ ComfyUI не вернул изображение.")
+                return
+
+            result_image = images[0]
+            if artifact.compression_percent < 100:
+                await _progress(0, 0, f"Сжимаю до {artifact.compression_percent}%")
+                result_image = resize_image_by_percent(result_image, artifact.compression_percent)
+            if artifact.shrink_width and artifact.shrink_height:
+                await _progress(0, 0, f"Shrink до {artifact.shrink_width}x{artifact.shrink_height}")
+                result_image = shrink_image_to_box(
+                    result_image,
+                    artifact.shrink_width,
+                    artifact.shrink_height,
+                )
+
+            next_params = GenerationParams(**asdict(run_params))
+            try:
+                next_w, next_h = image_dimensions(result_image)
+                next_params.width = next_w
+                next_params.height = next_h
+            except (OSError, ValueError):
+                pass
+
+            next_artifact_id = uuid.uuid4().hex
+            next_artifact = PreviewArtifact(
+                artifact_id=next_artifact_id,
+                owner_uid=artifact.owner_uid,
+                image_bytes=result_image,
+                params=next_params,
+                used_seed=result_seed,
+                parent_artifact_id=artifact.artifact_id,
+                generation_step=artifact.generation_step + 1,
+                enable_sampler_pass=artifact.enable_sampler_pass,
+                compression_percent=artifact.compression_percent,
+                shrink_width=artifact.shrink_width,
+                shrink_height=artifact.shrink_height,
+            )
+            deps.runtime.register_preview_artifact(next_artifact)
+            deps.runtime.prune_preview_artifacts(artifact.owner_uid)
+
+            deps.runtime.last_params[artifact.owner_uid] = GenerationParams(**asdict(next_params))
+            deps.runtime.last_seeds[artifact.owner_uid] = result_seed
+            deps.runtime.persist()
+
+            sent_previews = await deps.deliver_generated_images(
+                status_msg,
+                [result_image],
+                used_seed=result_seed,
+                mode="photo",
+                preview_keyboards=[
+                    deps.preview_image_keyboard(next_artifact_id, artifact.artifact_id)
+                ],
+            )
+            if sent_previews:
+                next_artifact.preview_chat_id = sent_previews[0].chat.id
+                next_artifact.preview_message_id = sent_previews[0].message_id
+
+            extra_lines: list[str] = []
+            if artifact.compression_percent < 100:
+                extra_lines.append(
+                    f"🗜 Сжатие применено: {artifact.compression_percent}% от результата."
+                )
+            if artifact.shrink_width and artifact.shrink_height:
+                extra_lines.append(
+                    f"📦 Shrink применен: {artifact.shrink_width}x{artifact.shrink_height}."
+                )
+            detail_block = "\n".join(extra_lines)
+            if detail_block:
+                detail_block += "\n"
+            await deps.move_main_panel_to_bottom(
+                artifact.owner_uid,
+                status_msg,
+                "✅ Улучшение завершено. Отправил новую превью.\n"
+                f"{detail_block}"
+                "Для каждой превью доступны: отправка PNG и меню улучшений.",
+            )
+        except asyncio.CancelledError:
+            await _safe_edit_status("❌ Улучшение отменено.")
+        except (
+            aiohttp.ClientError,
+            asyncio.TimeoutError,
+            OSError,
+            RuntimeError,
+            ValueError,
+            TelegramNetworkError,
+        ) as exc:
+            deps.logger.exception("Image enhancement failed")
+            await _safe_edit_status(f"❌ Ошибка улучшения: <code>{h(exc)}</code>")
+        finally:
+            deps.runtime.active_image_jobs.pop(temp_job_id, None)
+            deps.runtime.active_generations.pop(generation_id, None)
+            deps.runtime.persist()
+
+    task = asyncio.create_task(_run())
+    deps.runtime.active_image_jobs[temp_job_id] = task
+    deps.runtime.active_generations[generation_id] = ActiveGeneration(
+        owner_uid=uid,
+        generation_id=generation_id,
+        task=task,
+        kind="enhancement",
+        title="Улучшение",
+        status_msg=status_msg,
+        status_chat_id=status_msg.chat.id,
+        status_message_id=status_msg.message_id,
+    )
+    deps.runtime.persist()
+
+
+def _enhancement_cancel_keyboard(generation_id: str) -> InlineKeyboardMarkup:
+    from core.ui_kit import build_keyboard
+    from core.ui_kit.buttons import button
+
+    return build_keyboard([[button("❌ Отменить улучшение", f"pe:gen:cancel:{generation_id}")]])

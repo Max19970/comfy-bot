@@ -19,6 +19,12 @@ from core.formatting import human_size, short_number
 from domain.base_model_policy import BaseModelPolicy
 from domain.loras import LoraCatalogEntry, lora_catalog_entry_from_metadata
 from infrastructure.model_metadata_index import ModelMetadataIndexRepository
+from infrastructure.model_source_clients import (
+    CivitaiApiClient,
+    FileDownloadResult,
+    HuggingFaceApiClient,
+    RemoteFileDownloader,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -293,6 +299,9 @@ class ModelDownloader:
         self._session: aiohttp.ClientSession | None = None
         self._metadata_index = ModelMetadataIndexRepository(self.cfg.comfyui_models_path)
         self._base_model_policy = BaseModelPolicy()
+        self._civitai_api = CivitaiApiClient(self._get_session)
+        self._huggingface_api = HuggingFaceApiClient(self._get_session)
+        self._remote_file_downloader = RemoteFileDownloader(self._get_session)
 
     async def _get_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
@@ -606,7 +615,6 @@ class ModelDownloader:
         strict_type: bool = True,
     ) -> list[SearchResult]:
         """Search CivitAI for models with rich metadata."""
-        session = await self._get_session()
         params: dict[str, Any] = {
             "query": query,
             "limit": max(1, min(limit, 100)),
@@ -635,14 +643,11 @@ class ModelDownloader:
         async def _fetch_page(
             request_params: dict[str, Any],
         ) -> tuple[list[dict[str, Any]], str | None]:
-            async with session.get(
-                "https://civitai.com/api/v1/models",
+            data = await self._civitai_api.search_models(
                 params=request_params,
                 headers=headers,
-                timeout=aiohttp.ClientTimeout(total=20),
-            ) as resp:
-                resp.raise_for_status()
-                data = await resp.json()
+                timeout=20,
+            )
             metadata = data.get("metadata") if isinstance(data, dict) else {}
             items = data.get("items", [])
             next_cursor_raw: Any = None
@@ -747,20 +752,16 @@ class ModelDownloader:
         model_type: str,
     ) -> list[SearchResult]:
         """Fetch one CivitAI model by model ID."""
-        session = await self._get_session()
         headers: dict[str, str] = {}
         if self.cfg.civitai_api_key:
             headers["Authorization"] = f"Bearer {self.cfg.civitai_api_key}"
 
-        url = f"https://civitai.com/api/v1/models/{model_id}"
         try:
-            async with session.get(
-                url,
+            item = await self._civitai_api.fetch_model(
+                model_id,
                 headers=headers,
-                timeout=aiohttp.ClientTimeout(total=20),
-            ) as resp:
-                resp.raise_for_status()
-                item = await resp.json()
+                timeout=20,
+            )
         except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
             logger.exception("CivitAI model fetch failed: %s", model_id)
             raise
@@ -776,19 +777,12 @@ class ModelDownloader:
 
     async def _hf_list_files(self, repo_id: str, headers: dict[str, str]) -> list[dict]:
         """List files in a HuggingFace repo (recursive tree)."""
-        session = await self._get_session()
-        url = f"https://huggingface.co/api/models/{repo_id}/tree/main"
         try:
-            async with session.get(
-                url,
+            return await self._huggingface_api.list_files(
+                repo_id,
                 headers=headers,
-                params={"recursive": "true", "expand": "true"},
-                timeout=aiohttp.ClientTimeout(total=15),
-            ) as resp:
-                if resp.status != 200:
-                    return []
-                data = await resp.json()
-                return data if isinstance(data, list) else []
+                timeout=15,
+            )
         except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
             return []
 
@@ -1012,7 +1006,6 @@ class ModelDownloader:
         limit: int = 10,
     ) -> list[SearchResult]:
         """Search HuggingFace for model artifacts."""
-        session = await self._get_session()
         params: dict[str, Any] = {
             "search": query,
             "sort": "downloads",
@@ -1027,15 +1020,11 @@ class ModelDownloader:
             headers["Authorization"] = f"Bearer {self.cfg.huggingface_token}"
 
         async def _fetch_models(fetch_params: dict[str, Any]) -> list[dict[str, Any]]:
-            async with session.get(
-                "https://huggingface.co/api/models",
+            return await self._huggingface_api.search_models(
                 params=fetch_params,
                 headers=headers,
-                timeout=aiohttp.ClientTimeout(total=20),
-            ) as resp:
-                resp.raise_for_status()
-                payload = await resp.json()
-            return payload if isinstance(payload, list) else []
+                timeout=20,
+            )
 
         try:
             models = await _fetch_models(dict(params))
@@ -1078,20 +1067,16 @@ class ModelDownloader:
         model_type: str,
     ) -> list[SearchResult]:
         """Fetch one HuggingFace repo and pick the best matching file."""
-        session = await self._get_session()
         headers: dict[str, str] = {}
         if self.cfg.huggingface_token:
             headers["Authorization"] = f"Bearer {self.cfg.huggingface_token}"
 
-        url = f"https://huggingface.co/api/models/{repo_id}"
         try:
-            async with session.get(
-                url,
+            model = await self._huggingface_api.fetch_model(
+                repo_id,
                 headers=headers,
-                timeout=aiohttp.ClientTimeout(total=20),
-            ) as resp:
-                resp.raise_for_status()
-                model = await resp.json()
+                timeout=20,
+            )
         except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
             logger.exception("HuggingFace repo fetch failed: %s", repo_id)
             raise
@@ -1164,7 +1149,6 @@ class ModelDownloader:
         if os.path.exists(target_path):
             raise FileExistsError(f"File already exists: {target_path}")
 
-        session = await self._get_session()
         headers: dict[str, str] = {}
         if result.source == "civitai" and self.cfg.civitai_api_key:
             headers["Authorization"] = f"Bearer {self.cfg.civitai_api_key}"
@@ -1176,36 +1160,37 @@ class ModelDownloader:
 
         tmp_path = target_path + ".tmp"
         total = int(result.size_bytes or 0)
-        downloaded = 0
         last_report_pct = -1
         last_report_bytes = 0
 
+        async def _chunk_progress(downloaded_bytes: int, total_bytes: int) -> None:
+            nonlocal total, last_report_pct, last_report_bytes
+            if total_bytes > 0:
+                total = total_bytes
+            if progress_cb is None or total <= 0:
+                return
+
+            pct = (downloaded_bytes * 100) // total
+            bytes_delta = downloaded_bytes - last_report_bytes
+            if pct >= last_report_pct + 5 or bytes_delta >= 10 * 1024 * 1024:
+                last_report_pct = pct
+                last_report_bytes = downloaded_bytes
+                await progress_cb(
+                    downloaded_bytes,
+                    total,
+                    f"📥 {pct}% ({_human_size(downloaded_bytes)} / {_human_size(total)})",
+                )
+
         try:
-            async with session.get(
-                result.download_url,
+            transfer: FileDownloadResult = await self._remote_file_downloader.download_to_file(
+                url=result.download_url,
+                tmp_path=tmp_path,
                 headers=headers,
-                timeout=aiohttp.ClientTimeout(total=3600, sock_read=120),
-                allow_redirects=True,
-            ) as resp:
-                resp.raise_for_status()
-                total = int(resp.headers.get("Content-Length", result.size_bytes or 0))
-
-                with open(tmp_path, "wb") as fh:
-                    async for chunk in resp.content.iter_chunked(1024 * 256):
-                        fh.write(chunk)
-                        downloaded += len(chunk)
-
-                        if progress_cb and total > 0:
-                            pct = (downloaded * 100) // total
-                            bytes_delta = downloaded - last_report_bytes
-                            if pct >= last_report_pct + 5 or bytes_delta >= 10 * 1024 * 1024:
-                                last_report_pct = pct
-                                last_report_bytes = downloaded
-                                await progress_cb(
-                                    downloaded,
-                                    total,
-                                    f"📥 {pct}% ({_human_size(downloaded)} / {_human_size(total)})",
-                                )
+                expected_size=total,
+                progress_cb=_chunk_progress if progress_cb else None,
+            )
+            if transfer.total_bytes > 0:
+                total = transfer.total_bytes
 
             os.replace(tmp_path, target_path)
             await self._record_download_metadata(

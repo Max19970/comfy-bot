@@ -1,5 +1,6 @@
 """Domain layer package for typed business entities and value objects."""
 
+from .base_model_policy import BaseModelPolicy
 from .generation_request import (
     GenerationEnhancementConfig,
     GenerationImageConfig,
@@ -20,6 +21,7 @@ from .loras import (
 )
 
 __all__ = [
+    "BaseModelPolicy",
     "GenerationEnhancementConfig",
     "GenerationImageConfig",
     "GenerationModelStack",

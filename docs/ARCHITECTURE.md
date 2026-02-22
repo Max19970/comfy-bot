@@ -221,6 +221,20 @@ Handler-модули `handlers/prompt_editor_generation.py` и
 `handlers/download_flow_handlers.py` теперь выступают тонкими контроллерами,
 делегируя бизнес-решения в use-case классы.
 
+### Large module decomposition (Stage 6)
+
+Продолжена декомпозиция крупных модулей с сохранением фасадов:
+
+- `comfyui_client.py` делегирует построение workflow в
+  `infrastructure/comfy_workflow_builder.py`.
+- `smart_prompt.py` использует выделенный text/policy модуль
+  `application/smart_prompt_text.py` (preset/anchor/tag sanitation logic).
+- `model_downloader.py` делегирует эвристики базовых семейств и совместимости в
+  `domain/base_model_policy.py`.
+
+Публичные интерфейсы сервисов (`ComfyUIClient`, `SmartPromptService`,
+`ModelDownloader`) сохранены совместимыми.
+
 ## UI-архитектура
 
 Подробные правила интерфейсного слоя и шаблон расширения описаны в

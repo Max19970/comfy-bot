@@ -16,6 +16,7 @@ import aiohttp
 
 from config import Config
 from core.formatting import human_size, short_number
+from domain.base_model_policy import BaseModelPolicy
 from domain.loras import LoraCatalogEntry, lora_catalog_entry_from_metadata
 from infrastructure.model_metadata_index import ModelMetadataIndexRepository
 
@@ -291,6 +292,7 @@ class ModelDownloader:
         self.cfg = config
         self._session: aiohttp.ClientSession | None = None
         self._metadata_index = ModelMetadataIndexRepository(self.cfg.comfyui_models_path)
+        self._base_model_policy = BaseModelPolicy()
 
     async def _get_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
@@ -330,65 +332,11 @@ class ModelDownloader:
         return entry
 
     def infer_base_model(self, text: str) -> str:
-        value = str(text or "").strip().lower()
-        if not value:
-            return ""
-        if "pony" in value:
-            return "Pony"
-        if "flux" in value:
-            return "Flux"
-        if "illustrious" in value:
-            return "Illustrious"
-        if "sdxl" in value or "stable diffusion xl" in value:
-            return "SDXL"
-        if "sd 2.1" in value or "sd2.1" in value or "stable diffusion 2.1" in value:
-            return "SD 2.1"
-        if "sd 2" in value or "sd2" in value:
-            return "SD 2.x"
-        if (
-            "sd 1.5" in value
-            or "sd1.5" in value
-            or "stable diffusion 1.5" in value
-            or "_15" in value
-        ):
-            return "SD 1.5"
-        if "sd 1" in value or "stable diffusion 1" in value:
-            return "SD 1.x"
-        return ""
-
-    def _base_family(self, base_model: str) -> str:
-        value = str(base_model or "").strip().lower()
-        if not value:
-            return ""
-        if "pony" in value:
-            return "pony"
-        if "flux" in value:
-            return "flux"
-        if "illustrious" in value:
-            return "illustrious"
-        if "sdxl" in value or "stable diffusion xl" in value:
-            return "sdxl"
-        if "sd 2" in value or "stable diffusion 2" in value:
-            return "sd2"
-        if "sd 1.5" in value or "sd1.5" in value or "stable diffusion 1.5" in value:
-            return "sd15"
-        if "sd 1" in value or "stable diffusion 1" in value:
-            return "sd1"
-        return value
+        return self._base_model_policy.infer_base_model(text)
 
     def base_models_compatible(self, checkpoint_base: str, lora_base: str) -> bool:
         """Loose compatibility check used for warnings/filtering."""
-        ck = self._base_family(checkpoint_base)
-        lr = self._base_family(lora_base)
-        if not ck or not lr:
-            return True
-        if ck == lr:
-            return True
-
-        # Sometimes Illustrious and SDXL are close enough for practical use.
-        if {ck, lr} <= {"sdxl", "illustrious"}:
-            return True
-        return False
+        return self._base_model_policy.base_models_compatible(checkpoint_base, lora_base)
 
     async def _record_download_metadata(
         self,

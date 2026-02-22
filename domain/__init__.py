@@ -1,5 +1,14 @@
 """Domain layer package for typed business entities and value objects."""
 
+from .generation_request import (
+    GenerationEnhancementConfig,
+    GenerationImageConfig,
+    GenerationModelStack,
+    GenerationPromptText,
+    GenerationRequest,
+    GenerationSamplingConfig,
+    ReferenceImageInput,
+)
 from .loras import (
     EditorLoraSelection,
     LoraCatalogEntry,
@@ -11,6 +20,13 @@ from .loras import (
 )
 
 __all__ = [
+    "GenerationEnhancementConfig",
+    "GenerationImageConfig",
+    "GenerationModelStack",
+    "GenerationPromptText",
+    "GenerationRequest",
+    "GenerationSamplingConfig",
+    "ReferenceImageInput",
     "EditorLoraSelection",
     "LoraCatalogEntry",
     "WorkflowLoraAttachment",

@@ -190,6 +190,24 @@ LoRA-flow редактора переведен на `EditorLoraSelection` в р
 - удаление/очистка цепочки и проверка совместимости работают через typed chain,
   сохраняя совместимость с текущим UI и workflow.
 
+### Typed generation request (Stage 4)
+
+Добавлен типизированный `GenerationRequest` (`domain/generation_request.py`) с
+декомпозицией на подмодели:
+
+- `GenerationPromptText`
+- `GenerationModelStack`
+- `GenerationSamplingConfig`
+- `GenerationImageConfig`
+- `GenerationEnhancementConfig`
+
+`GenerationParams` сохраняется как backward-compatible DTO, но теперь умеет
+конвертироваться в typed request (`to_generation_request`) и обратно
+(`from_generation_request`).
+
+Построение workflow в `comfyui_client.py` использует typed request как источник
+данных, сохраняя текущие внешние контракты вызова.
+
 ## UI-архитектура
 
 Подробные правила интерфейсного слоя и шаблон расширения описаны в

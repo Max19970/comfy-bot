@@ -349,7 +349,14 @@ class ComfyUIClient:
           (EmptyLatentImage OR LoadImage->VAEEncode) ->
           KSampler -> VAE Decode -> (optional Upscale) -> SaveImage
         """
-        seed = params.seed if params.seed >= 0 else _random_seed()
+        request = params.to_generation_request()
+        prompt = request.prompt
+        models = request.models
+        sampling = request.sampling
+        image = request.image
+        enhancements = request.enhancements
+
+        seed = sampling.seed if sampling.seed >= 0 else _random_seed()
 
         workflow: dict[str, Any] = {}
         next_id = 1
@@ -362,7 +369,7 @@ class ComfyUIClient:
             return nid
 
         # 1. Checkpoint loader
-        ckpt_id = _node("CheckpointLoaderSimple", {"ckpt_name": params.checkpoint})
+        ckpt_id = _node("CheckpointLoaderSimple", {"ckpt_name": models.checkpoint})
 
         # Model / CLIP / VAE outputs from checkpoint
         model_out = [ckpt_id, 0]
@@ -370,12 +377,12 @@ class ComfyUIClient:
         vae_out = [ckpt_id, 2]
 
         # Optional custom VAE override.
-        if params.vae_name:
-            vae_loader_id = _node("VAELoader", {"vae_name": params.vae_name})
+        if models.vae_name:
+            vae_loader_id = _node("VAELoader", {"vae_name": models.vae_name})
             vae_out = [vae_loader_id, 0]
 
         # 2. LoRA chain (0 or more)
-        for attachment in params.workflow_lora_attachments():
+        for attachment in models.loras:
             lora_id = _node(
                 "LoraLoader",
                 {
@@ -389,10 +396,10 @@ class ComfyUIClient:
             model_out = [lora_id, 0]
             clip_out = [lora_id, 1]
 
-        positive_text = params.positive
-        negative_text = params.negative
-        if params.embedding_name:
-            token = f"embedding:{params.embedding_name}"
+        positive_text = prompt.positive
+        negative_text = prompt.negative
+        if models.embedding_name:
+            token = f"embedding:{models.embedding_name}"
             if negative_text.strip():
                 negative_text = f"{negative_text}, {token}"
             else:
@@ -419,14 +426,14 @@ class ComfyUIClient:
         negative_ref: list[Any] = [neg_id, 0]
 
         # Optional ControlNet conditioning from reference image.
-        if params.controlnet_name and reference_image_name:
+        if models.controlnet_name and reference_image_name:
             control_loader_inputs = self._required_input_defaults("ControlNetLoader")
             control_name_field = self._select_field_name(
                 control_loader_inputs,
                 ("control_net_name", "controlnet_name"),
             )
             if control_name_field:
-                control_loader_inputs[control_name_field] = params.controlnet_name
+                control_loader_inputs[control_name_field] = models.controlnet_name
                 unresolved_control_loader = [
                     name for name, value in control_loader_inputs.items() if value is None
                 ]
@@ -475,7 +482,7 @@ class ComfyUIClient:
                         control_apply_inputs[controlnet_field] = [control_loader_id, 0]
                         control_apply_inputs[image_field] = [control_image_id, 0]
                         if strength_field:
-                            control_apply_inputs[strength_field] = params.controlnet_strength
+                            control_apply_inputs[strength_field] = models.controlnet_strength
 
                         for field_name, field_value in (
                             ("start_percent", 0.0),
@@ -568,7 +575,7 @@ class ComfyUIClient:
                 ("weight", "strength", "scale"),
             )
             if strength_field:
-                apply_inputs[strength_field] = params.reference_strength
+                apply_inputs[strength_field] = image.reference_strength
 
             for field_name, field_value in (
                 ("start_at", 0.0),
@@ -589,7 +596,7 @@ class ComfyUIClient:
             model_out = [ip_apply_id, 0]
 
         # 5b. Optional FreeU V2 model patching
-        if params.enable_freeu:
+        if enhancements.enable_freeu:
             freeu_id = _node(
                 "FreeU_V2",
                 {
@@ -603,23 +610,23 @@ class ComfyUIClient:
             model_out = [freeu_id, 0]
 
         # 5c. Optional Perturbed-Attention Guidance (PAG)
-        if params.enable_pag:
+        if enhancements.enable_pag:
             pag_id = _node(
                 "PerturbedAttentionGuidance",
                 {
                     "model": model_out,
-                    "scale": params.pag_scale,
+                    "scale": enhancements.pag_scale,
                 },
             )
             model_out = [pag_id, 0]
 
         # 5d. Optional HyperTile (efficient tiled generation for arbitrary sizes)
-        if params.enable_tiled_diffusion:
+        if enhancements.enable_tiled_diffusion:
             ht_id = _node(
                 "HyperTile",
                 {
                     "model": model_out,
-                    "tile_size": params.tile_size,
+                    "tile_size": enhancements.tile_size,
                     "swap_size": 2,
                     "max_depth": 0,
                     "scale_depth": False,
@@ -629,19 +636,19 @@ class ComfyUIClient:
 
         # 6. Latent source (text2img or img2img fallback)
         # Round dimensions to multiples of 8 (required for latent space)
-        w = (params.width // 8) * 8 or 8
-        h = (params.height // 8) * 8 or 8
+        w = (image.width // 8) * 8 or 8
+        h = (image.height // 8) * 8 or 8
 
         if reference_mode == "img2img" and reference_image_name:
             load_image_id = _node("LoadImage", {"image": reference_image_name})
-            if params.enable_tiled_diffusion:
+            if enhancements.enable_tiled_diffusion:
                 latent_id = _node(
                     "VAEEncodeTiled",
                     {
                         "pixels": [load_image_id, 0],
                         "vae": vae_out,
-                        "tile_size": params.vae_tile_size,
-                        "overlap": params.tile_overlap,
+                        "tile_size": enhancements.vae_tile_size,
+                        "overlap": enhancements.tile_overlap,
                         "temporal_size": 64,
                         "temporal_overlap": 8,
                     },
@@ -654,12 +661,12 @@ class ComfyUIClient:
                         "vae": vae_out,
                     },
                 )
-            if params.batch_size > 1:
+            if sampling.batch_size > 1:
                 latent_id = _node(
                     "RepeatLatentBatch",
                     {
                         "samples": [latent_id, 0],
-                        "amount": params.batch_size,
+                        "amount": sampling.batch_size,
                     },
                 )
         else:
@@ -668,7 +675,7 @@ class ComfyUIClient:
                 {
                     "width": w,
                     "height": h,
-                    "batch_size": params.batch_size,
+                    "batch_size": sampling.batch_size,
                 },
             )
 
@@ -681,23 +688,23 @@ class ComfyUIClient:
                 "negative": negative_ref,
                 "latent_image": [latent_id, 0],
                 "seed": seed,
-                "steps": params.steps,
-                "cfg": params.cfg,
-                "sampler_name": params.sampler,
-                "scheduler": params.scheduler,
-                "denoise": params.denoise,
+                "steps": sampling.steps,
+                "cfg": sampling.cfg,
+                "sampler_name": sampling.sampler,
+                "scheduler": sampling.scheduler,
+                "denoise": sampling.denoise,
             },
         )
 
         # 7b. Optional Hi-res Fix (second pass)
-        if params.enable_hires_fix:
+        if enhancements.enable_hires_fix:
             hires_latent_id = _node(
                 "LatentUpscale",
                 {
                     "samples": [sampler_id, 0],
                     "upscale_method": "bislerp",
-                    "width": max(64, ((int(w * params.hires_scale) + 7) // 8) * 8),
-                    "height": max(64, ((int(h * params.hires_scale) + 7) // 8) * 8),
+                    "width": max(64, ((int(w * enhancements.hires_scale) + 7) // 8) * 8),
+                    "height": max(64, ((int(h * enhancements.hires_scale) + 7) // 8) * 8),
                     "crop": "disabled",
                 },
             )
@@ -709,23 +716,23 @@ class ComfyUIClient:
                     "negative": negative_ref,
                     "latent_image": [hires_latent_id, 0],
                     "seed": seed,
-                    "steps": params.steps,
-                    "cfg": params.cfg,
-                    "sampler_name": params.sampler,
-                    "scheduler": params.scheduler,
-                    "denoise": params.hires_denoise,
+                    "steps": sampling.steps,
+                    "cfg": sampling.cfg,
+                    "sampler_name": sampling.sampler,
+                    "scheduler": sampling.scheduler,
+                    "denoise": enhancements.hires_denoise,
                 },
             )
 
         # 8. VAE Decode (tiled when tiled diffusion is active)
-        if params.enable_tiled_diffusion:
+        if enhancements.enable_tiled_diffusion:
             decode_id = _node(
                 "VAEDecodeTiled",
                 {
                     "samples": [sampler_id, 0],
                     "vae": vae_out,
-                    "tile_size": params.vae_tile_size,
-                    "overlap": params.tile_overlap,
+                    "tile_size": enhancements.vae_tile_size,
+                    "overlap": enhancements.tile_overlap,
                     "temporal_size": 64,
                     "temporal_overlap": 8,
                 },
@@ -742,11 +749,11 @@ class ComfyUIClient:
         image_out = [decode_id, 0]
 
         # 9. Optional upscale
-        if params.upscale_model:
+        if models.upscale_model:
             upscale_loader_id = _node(
                 "UpscaleModelLoader",
                 {
-                    "model_name": params.upscale_model,
+                    "model_name": models.upscale_model,
                 },
             )
             upscale_id = _node(
@@ -1595,16 +1602,17 @@ class ComfyUIClient:
         image_cb: GenerationImageCallback | None = None,
     ) -> list[bytes]:
         """Full generation pipeline: build workflow -> queue -> wait -> download."""
+        request = params.to_generation_request()
         reference_image_name: str | None = None
         reference_mode = "none"
         if reference_images:
             composed = _compose_reference_image(
                 reference_images,
-                width=params.width,
-                height=params.height,
+                width=request.image.width,
+                height=request.image.height,
             )
             reference_image_name = await self.upload_input_image(composed)
-            if params.controlnet_name:
+            if request.models.controlnet_name:
                 # For ControlNet we keep latent source as txt2img by default.
                 # If IP-Adapter is available, it can be combined explicitly.
                 reference_mode = "ipadapter" if self.supports_ipadapter() else "none"

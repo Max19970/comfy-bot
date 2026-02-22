@@ -18,6 +18,7 @@ from core.storage import (
     save_runtime_session,
 )
 from core.user_preferences import normalize_user_preferences
+from domain.loras import EditorLoraSelection
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +29,58 @@ class PromptRequest:
     operation: str = "generate"
     ui_chat_id: int | None = None
     ui_message_id: int | None = None
+    editor_loras: list[EditorLoraSelection] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        if self.editor_loras:
+            self.set_editor_loras(self.editor_loras)
+            return
+        self.editor_loras = self.params.lora_selections()
+
+    def set_editor_loras(self, selections: list[EditorLoraSelection]) -> None:
+        normalized = [
+            EditorLoraSelection.create(
+                item.name,
+                item.strength,
+                file_path=item.file_path,
+            )
+            for item in selections
+        ]
+        self.editor_loras = normalized
+        self.params.set_lora_selections(normalized)
+
+    def sync_editor_loras_from_params(self) -> None:
+        by_name = {
+            item.name.casefold(): item.file_path for item in self.editor_loras if item.file_path
+        }
+        synced = [
+            EditorLoraSelection.create(
+                item.name,
+                item.strength,
+                file_path=by_name.get(item.name.casefold(), ""),
+            )
+            for item in self.params.lora_selections()
+        ]
+        self.editor_loras = synced
+
+    def add_editor_lora(self, selection: EditorLoraSelection) -> None:
+        chain = list(self.editor_loras)
+        chain.append(selection)
+        self.set_editor_loras(chain)
+
+    def remove_last_editor_lora(self) -> bool:
+        if not self.editor_loras:
+            return False
+        chain = list(self.editor_loras)
+        chain.pop()
+        self.set_editor_loras(chain)
+        return True
+
+    def clear_editor_loras(self) -> int:
+        count = len(self.editor_loras)
+        if count > 0:
+            self.set_editor_loras([])
+        return count
 
 
 @dataclass

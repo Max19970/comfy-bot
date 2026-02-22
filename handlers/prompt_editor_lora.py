@@ -7,11 +7,12 @@ from application.lora_catalog_service import LoraCatalogService
 from comfyui_client import ComfyUIClient
 from core.html_utils import h
 from core.models import GenerationParams
-from core.runtime import RuntimeStore
+from core.runtime import PromptRequest, RuntimeStore
 from core.states import PromptEditorStates
 from core.ui import loras_text
 from core.ui_kit import back_button, build_keyboard
 from core.ui_kit.buttons import button
+from domain.loras import EditorLoraSelection
 
 from .prompt_editor_session import show_prompt_panel
 
@@ -41,14 +42,14 @@ def incompatible_loras(
     catalog: LoraCatalogService,
 ) -> list[tuple[str, str, str]]:
     result: list[tuple[str, str, str]] = []
-    for lora_name, _ in params.loras:
+    for selection in params.lora_selections():
         status, ckpt_base, lora_base = lora_compatibility(
             params.checkpoint,
-            lora_name,
+            selection.name,
             catalog,
         )
         if status == "incompatible":
-            result.append((lora_name, ckpt_base, lora_base))
+            result.append((selection.name, ckpt_base, lora_base))
     return result
 
 
@@ -97,6 +98,33 @@ def merge_prompt_with_words(prompt: str, words: list[str]) -> str:
     return f"{base}, {addon}"
 
 
+def editor_lora_chain(req: PromptRequest) -> list[EditorLoraSelection]:
+    return list(req.editor_loras)
+
+
+def lora_chain_pairs(req: PromptRequest) -> list[tuple[str, float]]:
+    return [selection.to_legacy_pair() for selection in editor_lora_chain(req)]
+
+
+def add_editor_lora(
+    req: PromptRequest,
+    lora_name: str,
+    strength: float,
+    catalog: LoraCatalogService,
+) -> EditorLoraSelection:
+    selection = catalog.editor_selection(lora_name, strength=strength)
+    req.add_editor_lora(selection)
+    return selection
+
+
+def remove_last_editor_lora(req: PromptRequest) -> bool:
+    return req.remove_last_editor_lora()
+
+
+def clear_editor_loras(req: PromptRequest) -> int:
+    return req.clear_editor_loras()
+
+
 async def show_lora_menu(
     message: Message,
     state: FSMContext,
@@ -119,7 +147,7 @@ async def show_lora_menu(
         lines.append("")
 
     lines.append("🧲 <b>LoRA chain</b>")
-    lines.append(f"Текущая цепочка: {loras_text(req.params.loras)}")
+    lines.append(f"Текущая цепочка: {loras_text(lora_chain_pairs(req))}")
 
     ckpt_base = checkpoint_base_model(req.params.checkpoint, catalog)
     if ckpt_base:

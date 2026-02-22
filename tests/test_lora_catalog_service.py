@@ -51,6 +51,11 @@ def test_lora_catalog_service_returns_typed_entry_and_trigger_words() -> None:
         "best quality",
     ]
 
+    selection = catalog.editor_selection("anime.safetensors", strength=1.2)
+    assert selection.name == "anime.safetensors"
+    assert selection.strength == 1.2
+    assert selection.file_path == "models/loras/anime.safetensors"
+
 
 def test_lora_catalog_service_compatibility_resolves_statuses() -> None:
     catalog = _build_catalog(

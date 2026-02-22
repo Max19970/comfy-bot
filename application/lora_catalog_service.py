@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from domain.loras import LoraCatalogEntry, lora_catalog_entry_from_metadata
+from domain.loras import EditorLoraSelection, LoraCatalogEntry, lora_catalog_entry_from_metadata
 
 
 class ModelMetadataLookup(Protocol):
@@ -57,6 +57,12 @@ class LoraCatalogService:
         if not entry:
             return []
         return entry.trigger_words(limit=limit)
+
+    def editor_selection(self, lora_name: str, *, strength: Any) -> EditorLoraSelection:
+        entry = self.lora_entry(lora_name)
+        if entry:
+            return entry.editor_selection(strength=strength)
+        return EditorLoraSelection.create(lora_name, strength)
 
     def lora_compatibility(self, checkpoint_name: str, lora_name: str) -> tuple[str, str, str]:
         checkpoint_base = self.checkpoint_base_model(checkpoint_name)

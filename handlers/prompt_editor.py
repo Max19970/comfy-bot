@@ -18,6 +18,7 @@ from comfyui_client import ComfyUIClient
 from config import Config
 from core.models import GenerationParams
 from core.runtime import (
+    PromptRequest,
     RuntimeStore,
     get_user_pro_mode,
     set_user_pro_mode,
@@ -39,7 +40,16 @@ from .prompt_editor_generation import (
     run_generate_operation as run_generate_operation_impl,
 )
 from .prompt_editor_lora import (
+    add_editor_lora as _add_editor_lora,
+)
+from .prompt_editor_lora import (
     checkpoint_base_model as _checkpoint_base_model,
+)
+from .prompt_editor_lora import (
+    clear_editor_loras as _clear_editor_loras,
+)
+from .prompt_editor_lora import (
+    editor_lora_chain as _editor_lora_chain,
 )
 from .prompt_editor_lora import (
     incompatible_loras as _incompatible_loras,
@@ -55,6 +65,9 @@ from .prompt_editor_lora import (
 )
 from .prompt_editor_lora import (
     merge_prompt_with_words as _merge_prompt_with_words,
+)
+from .prompt_editor_lora import (
+    remove_last_editor_lora as _remove_last_editor_lora,
 )
 from .prompt_editor_lora import (
     show_lora_menu as _show_lora_menu,
@@ -232,6 +245,13 @@ def register_prompt_editor_handlers(
     lora_compatibility = partial(_lora_compatibility, catalog=lora_catalog)
     incompatible_loras = partial(_incompatible_loras, catalog=lora_catalog)
     lora_picker_items = partial(_lora_picker_items, client=client, catalog=lora_catalog)
+    add_editor_lora = partial(_add_editor_lora, catalog=lora_catalog)
+    remove_last_editor_lora = _remove_last_editor_lora
+    clear_editor_loras = _clear_editor_loras
+
+    def editor_lora_count(req: PromptRequest) -> int:
+        return len(_editor_lora_chain(req))
+
     merge_prompt_with_words = _merge_prompt_with_words
     changed_params_count = partial(
         changed_params_count_impl,
@@ -342,6 +362,10 @@ def register_prompt_editor_handlers(
             lora_picker_items=lora_picker_items,
             lora_compatibility=lora_compatibility,
             lora_trained_words=lora_trained_words,
+            add_editor_lora=add_editor_lora,
+            remove_last_editor_lora=remove_last_editor_lora,
+            clear_editor_loras=clear_editor_loras,
+            editor_lora_count=editor_lora_count,
             merge_prompt_with_words=merge_prompt_with_words,
             list_available_loras=lambda: list(client.info.loras),
             show_reference_menu=show_reference_menu,

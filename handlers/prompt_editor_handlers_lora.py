@@ -21,6 +21,7 @@ from core.states import PromptEditorStates
 from core.ui import custom_btn
 from core.ui_kit import build_keyboard
 from core.ui_kit.buttons import button
+from domain.loras import EditorLoraSelection
 
 
 @dataclass
@@ -37,6 +38,10 @@ class PromptEditorLoraHandlersDeps:
     lora_picker_items: Callable[[str], tuple[list[str], list[str]]]
     lora_compatibility: Callable[[str, str], tuple[str, str, str]]
     lora_trained_words: Callable[[str], list[str]]
+    add_editor_lora: Callable[[PromptRequest, str, float], EditorLoraSelection]
+    remove_last_editor_lora: Callable[[PromptRequest], bool]
+    clear_editor_loras: Callable[[PromptRequest], int]
+    editor_lora_count: Callable[[PromptRequest], int]
     merge_prompt_with_words: Callable[[str, list[str]], str]
     open_paginated_choice: Callable[..., Awaitable[None]]
     change_paginated_choice_page: Callable[..., Awaitable[None]]
@@ -312,7 +317,7 @@ def register_prompt_editor_lora_handlers(
             await cb.answer("LoRA не выбрана.", show_alert=True)
             return
 
-        req.params.loras.append((lora_name, float(value)))
+        deps.add_editor_lora(req, lora_name, float(value))
         await state.update_data(pe_pending_lora=None)
         await offer_lora_trigger_prompt(
             message,
@@ -346,7 +351,7 @@ def register_prompt_editor_lora_handlers(
             await deps.show_lora_menu(msg, state, uid, edit=False)
             return
 
-        req.params.loras.append((lora_name, value))
+        deps.add_editor_lora(req, lora_name, value)
         await state.update_data(pe_pending_lora=None)
         await deps.cleanup_user_message(msg)
         await offer_lora_trigger_prompt(
@@ -404,8 +409,7 @@ def register_prompt_editor_lora_handlers(
 
         uid, req = payload
         notice = "ℹ️ Цепочка LoRA не изменилась."
-        if req.params.loras:
-            req.params.loras.pop()
+        if deps.remove_last_editor_lora(req):
             notice = "✅ Последняя LoRA удалена."
         await deps.show_lora_menu(message, state, uid, edit=True, notice=notice)
         await cb.answer()
@@ -420,7 +424,7 @@ def register_prompt_editor_lora_handlers(
             return
 
         uid, req = payload
-        count = len(req.params.loras)
+        count = deps.editor_lora_count(req)
         if count == 0:
             await deps.show_lora_menu(
                 message,
@@ -451,7 +455,7 @@ def register_prompt_editor_lora_handlers(
             return
 
         uid, req = payload
-        req.params.loras = []
+        deps.clear_editor_loras(req)
         await deps.show_lora_menu(
             message,
             state,

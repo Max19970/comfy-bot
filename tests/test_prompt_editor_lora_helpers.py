@@ -1,20 +1,30 @@
 from __future__ import annotations
 
+from typing import Any
+
 from application.lora_catalog_service import LoraCatalogService
+from core.models import GenerationParams
+from core.runtime import PromptRequest
 from handlers.prompt_editor_lora import (
+    add_editor_lora,
     checkpoint_base_model,
+    clear_editor_loras,
+    editor_lora_chain,
+    lora_chain_pairs,
     lora_compatibility,
     lora_trained_words,
     merge_prompt_with_words,
+    remove_last_editor_lora,
 )
 
 
 class _DownloaderStub:
     def __init__(self) -> None:
-        self._meta = {
+        self._meta: dict[tuple[str, str], dict[str, Any]] = {
             ("ckpt.safetensors", "checkpoint"): {"base_model": "SDXL"},
             ("anime.safetensors", "lora"): {
                 "base_model": "SDXL",
+                "path": "models/loras/anime.safetensors",
                 "trained_words": ["anime_style", "best quality", "masterpiece"],
             },
             ("flux_style.safetensors", "lora"): {"base_model": "Flux"},
@@ -79,3 +89,27 @@ def test_merge_prompt_with_words_appends_only_missing_tokens() -> None:
     prompt = "portrait, best quality"
     merged = merge_prompt_with_words(prompt, ["best quality", "anime_style", "masterpiece"])
     assert merged == "portrait, best quality, anime_style, masterpiece"
+
+
+def test_add_editor_lora_populates_typed_chain_and_path() -> None:
+    req = PromptRequest(params=GenerationParams())
+    added = add_editor_lora(req, "anime.safetensors", 0.8, _catalog())
+
+    assert added.name == "anime.safetensors"
+    assert added.strength == 0.8
+    assert added.file_path == "models/loras/anime.safetensors"
+    assert editor_lora_chain(req) == [added]
+    assert lora_chain_pairs(req) == [("anime.safetensors", 0.8)]
+
+
+def test_remove_and_clear_editor_lora_chain() -> None:
+    req = PromptRequest(
+        params=GenerationParams(loras=[("anime.safetensors", 0.8), ("flux_style.safetensors", 1.1)])
+    )
+
+    assert remove_last_editor_lora(req) is True
+    assert lora_chain_pairs(req) == [("anime.safetensors", 0.8)]
+    assert clear_editor_loras(req) == 1
+    assert req.params.loras == []
+    assert clear_editor_loras(req) == 0
+    assert remove_last_editor_lora(req) is False

@@ -71,6 +71,7 @@ async def show_prompt_editor(
         return
 
     req.params = deps.normalize_params(req.params)
+    req.sync_editor_loras_from_params()
     await state.set_state(PromptEditorStates.editing)
     pro_mode = deps.get_user_pro_mode(deps.runtime, uid)
     text = build_prompt_editor_text(req, notice=notice, pro_mode=pro_mode, deps=deps)

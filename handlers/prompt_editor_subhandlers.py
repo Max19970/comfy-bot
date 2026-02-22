@@ -10,6 +10,7 @@ from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 
 from core.models import GenerationParams
 from core.runtime import PromptRequest, RuntimeStore
+from domain.loras import EditorLoraSelection
 from smart_prompt import SmartPromptService
 
 from .prompt_editor_handlers_edit import (
@@ -92,6 +93,10 @@ class PromptEditorSubhandlersDeps:
     lora_picker_items: Callable[[str], tuple[list[str], list[str]]]
     lora_compatibility: Callable[[str, str], tuple[str, str, str]]
     lora_trained_words: Callable[[str], list[str]]
+    add_editor_lora: Callable[[PromptRequest, str, float], EditorLoraSelection]
+    remove_last_editor_lora: Callable[[PromptRequest], bool]
+    clear_editor_loras: Callable[[PromptRequest], int]
+    editor_lora_count: Callable[[PromptRequest], int]
     merge_prompt_with_words: Callable[[str, list[str]], str]
     list_available_loras: Callable[[], list[str]]
     show_reference_menu: Callable[..., Awaitable[None]]
@@ -200,6 +205,10 @@ def register_prompt_editor_subhandlers(deps: PromptEditorSubhandlersDeps) -> Non
             lora_picker_items=deps.lora_picker_items,
             lora_compatibility=deps.lora_compatibility,
             lora_trained_words=deps.lora_trained_words,
+            add_editor_lora=deps.add_editor_lora,
+            remove_last_editor_lora=deps.remove_last_editor_lora,
+            clear_editor_loras=deps.clear_editor_loras,
+            editor_lora_count=deps.editor_lora_count,
             merge_prompt_with_words=deps.merge_prompt_with_words,
             open_paginated_choice=deps.open_paginated_choice,
             change_paginated_choice_page=deps.change_paginated_choice_page,

@@ -14,6 +14,7 @@ from .model_source_clients import (
     HuggingFaceApiClient,
     RemoteFileDownloader,
 )
+from .tipo_backend import TipoBackend, TipoBackendError, TipoBackendProtocol
 
 __all__ = [
     "CivitaiApiClient",
@@ -26,5 +27,8 @@ __all__ = [
     "HuggingFaceApiClient",
     "ModelMetadataIndexRepository",
     "RemoteFileDownloader",
+    "TipoBackend",
+    "TipoBackendError",
+    "TipoBackendProtocol",
     "build_comfy_workflow",
 ]

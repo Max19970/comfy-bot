@@ -1,12 +1,9 @@
 from __future__ import annotations
 
 import asyncio
-import importlib
-import importlib.util
-import logging
 import random
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any
 
 from application.smart_prompt_text import (
     dedupe_tags,
@@ -17,8 +14,7 @@ from application.smart_prompt_text import (
     split_tags,
 )
 from config import Config
-
-logger = logging.getLogger(__name__)
+from infrastructure.tipo_backend import TipoBackend, TipoBackendError, TipoBackendProtocol
 
 _MAX_DESCRIPTION_LEN = 4000
 
@@ -44,7 +40,7 @@ class SmartPromptError(RuntimeError):
 
 
 class SmartPromptService:
-    def __init__(self, cfg: Config) -> None:
+    def __init__(self, cfg: Config, *, backend: TipoBackendProtocol | None = None) -> None:
         self.provider = self._normalize_provider(cfg.smart_prompt_provider)
         raw_model = cfg.smart_prompt_model.strip()
         if raw_model in {"", "gpt-4o-mini", "gemini-2.0-flash", "llama3.2-vision"}:
@@ -71,20 +67,11 @@ class SmartPromptService:
                 "mutilated, out of frame, duplicate, watermark, signature, text"
             )
 
-        self._load_lock = asyncio.Lock()
         self._infer_lock = asyncio.Lock()
-        self._backend_ready = False
-        self._backend_error = ""
-        self._loaded_model_key = ""
-        self._runtime_device = ""
-        self._supports_min_p = True
-
-        self._torch: Any = None
-        self._kgen_models: Any = None
-        self._tipo_executor: Any = None
-        self._separate_tags: Any = None
-        self._apply_format: Any = None
-        self._tipo_default_format: Any = None
+        self._backend: TipoBackendProtocol = backend or TipoBackend(
+            model=self.model,
+            device=self.device,
+        )
 
     # ------------------------------------------------------------------
     # Static helpers
@@ -152,22 +139,12 @@ class SmartPromptService:
             return False
         if self._missing_dependencies():
             return False
-        if self._backend_error:
+        if self._backend.backend_error:
             return False
         return True
 
-    @staticmethod
-    def _missing_dependencies() -> list[str]:
-        required = {
-            "torch": "torch",
-            "transformers": "transformers",
-            "kgen": "tipo-kgen",
-        }
-        missing: list[str] = []
-        for module_name, package_name in required.items():
-            if importlib.util.find_spec(module_name) is None:
-                missing.append(package_name)
-        return missing
+    def _missing_dependencies(self) -> list[str]:
+        return self._backend.missing_dependencies()
 
     def configuration_hint(self) -> str:
         if self.provider == "disabled":
@@ -181,144 +158,28 @@ class SmartPromptService:
         if missing:
             return f"Отсутствуют зависимости для TIPO. Установите: pip install {' '.join(missing)}"
 
-        if self._backend_error:
-            return self._backend_error
+        if self._backend.backend_error:
+            return self._backend.backend_error
         return ""
 
     async def close(self) -> None:
-        if self._kgen_models is not None:
-            self._kgen_models.text_model = None
-            self._kgen_models.tokenizer = None
-        self._backend_ready = False
+        await self._backend.close()
 
     # ------------------------------------------------------------------
     # Backend loading
     # ------------------------------------------------------------------
 
     async def _ensure_backend_loaded(self) -> None:
-        if self._backend_ready:
-            return
-        async with self._load_lock:
-            if self._backend_ready:
-                return
-            await asyncio.to_thread(self._ensure_backend_loaded_sync)
-
-    def _resolve_runtime_device(self, torch_module: Any) -> str:
-        if self.device == "auto":
-            return "cuda" if torch_module.cuda.is_available() else "cpu"
-        if self.device.startswith("cuda") and not torch_module.cuda.is_available():
-            return "cpu"
-        return self.device
-
-    def _load_tipo_model(self, *, device: str) -> tuple[Any, Any]:
-        self._kgen_models.load_model(
-            model_name=self.model,
-            device=device,
-        )
-        model = self._kgen_models.text_model
-        tokenizer = self._kgen_models.tokenizer
-        if model is None or tokenizer is None:
-            raise SmartPromptError(f"TIPO model {self.model} loaded without tokenizer/model")
-        return model, tokenizer
-
-    def _patch_min_p_compat(self) -> None:
-        if self._supports_min_p:
-            return
-        if getattr(self._tipo_executor, "_comfybot_min_p_patch", False):
-            return
-
-        original_generate = self._tipo_executor.generate
-
-        def compat_generate(*args: Any, **kwargs: Any):
-            kwargs.pop("min_p", None)
-            return original_generate(*args, **kwargs)
-
-        self._tipo_executor.generate = compat_generate
-        self._tipo_executor._comfybot_min_p_patch = True
+        try:
+            await self._backend.ensure_loaded()
+        except TipoBackendError as exc:
+            raise SmartPromptError(str(exc)) from exc
 
     def _ensure_backend_loaded_sync(self) -> None:
-        if self._backend_ready:
-            return
-
         try:
-            torch = importlib.import_module("torch")
-            transformers_module = importlib.import_module("transformers")
-            GenerationConfig = transformers_module.GenerationConfig
-            kgen_models = importlib.import_module("kgen.models")
-            tipo_executor = importlib.import_module("kgen.executor.tipo")
-            kgen_formatter = importlib.import_module("kgen.formatter")
-            kgen_metainfo = importlib.import_module("kgen.metainfo")
-            seperate_tags = kgen_formatter.seperate_tags
-            apply_format_fn = kgen_formatter.apply_format
-            tipo_default_format = kgen_metainfo.TIPO_DEFAULT_FORMAT
-        except (ImportError, AttributeError) as exc:
-            missing = self._missing_dependencies()
-            deps_hint = f" Установите: pip install {' '.join(missing)}" if missing else ""
-            self._backend_error = "Не удалось загрузить зависимости TIPO." + deps_hint
-            raise SmartPromptError(self._backend_error) from exc
-
-        self._torch = torch
-        self._kgen_models = kgen_models
-        self._tipo_executor = tipo_executor
-        self._separate_tags = seperate_tags
-        self._apply_format = apply_format_fn
-        self._tipo_default_format = tipo_default_format
-        self._supports_min_p = hasattr(GenerationConfig(), "min_p")
-        self._patch_min_p_compat()
-
-        runtime_device = self._resolve_runtime_device(torch)
-        if self.device.startswith("cuda") and runtime_device == "cpu":
-            self._backend_error = (
-                "SMART_PROMPT_DEVICE настроен на CUDA, но CUDA недоступна в PyTorch. "
-                "Установите CUDA-сборку torch или переключите SMART_PROMPT_DEVICE=cpu."
-            )
-            raise SmartPromptError(self._backend_error)
-
-        model_key = f"{self.model}@{runtime_device}"
-        if self._loaded_model_key == model_key:
-            self._backend_ready = True
-            return
-
-        kgen_models_any = cast(Any, self._kgen_models)
-        kgen_models_any.text_model = None
-        kgen_models_any.tokenizer = None
-
-        try:
-            model, tokenizer = self._load_tipo_model(device=runtime_device)
-        except (OSError, RuntimeError, ValueError) as exc:
-            allow_cpu_fallback = self.device == "auto" and runtime_device != "cpu"
-            if allow_cpu_fallback:
-                logger.warning(
-                    "TIPO load on %s failed, retrying on CPU",
-                    runtime_device,
-                    exc_info=True,
-                )
-                runtime_device = "cpu"
-                try:
-                    model, tokenizer = self._load_tipo_model(device=runtime_device)
-                except (OSError, RuntimeError, ValueError) as cpu_exc:
-                    self._backend_error = (
-                        f"Не удалось загрузить TIPO модель {self.model} (CUDA и CPU): {cpu_exc}"
-                    )
-                    raise SmartPromptError(self._backend_error) from cpu_exc
-            else:
-                self._backend_error = f"Не удалось загрузить TIPO модель {self.model}: {exc}"
-                raise SmartPromptError(self._backend_error) from exc
-
-        kgen_models_any.text_model = model
-        kgen_models_any.tokenizer = tokenizer
-        kgen_models_any.current_model_name = self.model.split("/")[-1]
-
-        self._loaded_model_key = f"{self.model}@{runtime_device}"
-        self._runtime_device = runtime_device
-        self._backend_ready = True
-        self._backend_error = ""
-
-        logger.info(
-            "TIPO model loaded: %s on %s",
-            self.model,
-            runtime_device,
-        )
+            self._backend.ensure_loaded_sync()
+        except TipoBackendError as exc:
+            raise SmartPromptError(str(exc)) from exc
 
     # ------------------------------------------------------------------
     # Public API
@@ -373,7 +234,7 @@ class SmartPromptService:
         description: str,
         checkpoint: str,
     ) -> SmartPromptResult:
-        if not self._backend_ready:
+        if not self._backend.is_ready():
             self._ensure_backend_loaded_sync()
 
         # 1. Determine quality tags based on checkpoint
@@ -387,7 +248,7 @@ class SmartPromptService:
 
         # 3. Build seed tags = quality + NL-extracted anchors, then separate
         seed_tags = self._dedupe_tags(quality_tags + anchor_tags)
-        tag_map = self._separate_tags(seed_tags)
+        tag_map = self._backend.separate_tags(seed_tags)
 
         # 4. Use parse_tipo_request for multi-step pipeline.
         #    With non-empty general tags + NL prompt it picks the optimal chain:
@@ -395,20 +256,16 @@ class SmartPromptService:
         nl_prompt = description
         want_nl = self.output_format != "tag_only"
 
-        meta, operations, general, parsed_nl = self._tipo_executor.parse_tipo_request(
-            tag_map,
-            nl_prompt,
-            expand_tags=True,
-            expand_prompt=want_nl,
-            generate_extra_nl_prompt=False,
-            tag_first=True,
-            tag_length_target=self.tag_length,
-            nl_length_target=self.nl_length,
+        meta, operations, general, parsed_nl = self._backend.parse_request(
+            tag_map=tag_map,
+            nl_prompt=nl_prompt,
+            want_nl=want_nl,
+            tag_length=self.tag_length,
+            nl_length=self.nl_length,
         )
-        meta["aspect_ratio"] = "1.0"
 
         # 5. Set banned tags
-        self._tipo_executor.BAN_TAGS = self._split_tags(self.ban_tags)
+        self._backend.set_ban_tags(self._split_tags(self.ban_tags))
 
         # 6. Run the TIPO pipeline with retry logic
         seed = self.seed if self.seed >= 0 else random.randint(0, 2**31 - 1)
@@ -420,19 +277,19 @@ class SmartPromptService:
             "max_retry": 4,
             "max_same_output": 3,
         }
-        if self._supports_min_p:
+        if self._backend.supports_min_p:
             runner_kwargs["min_p"] = self.min_p
 
         try:
-            result_map, _ = self._tipo_executor.tipo_runner(
+            result_map, _ = self._backend.run(
                 meta,
                 operations,
                 general,
                 parsed_nl,
-                **runner_kwargs,
+                runner_kwargs=runner_kwargs,
             )
-        except (RuntimeError, ValueError, TypeError) as exc:
-            raise SmartPromptError(f"Ошибка TIPO: {exc}") from exc
+        except TipoBackendError as exc:
+            raise SmartPromptError(str(exc)) from exc
 
         # 7. Ensure quality tags are present in result_map
         existing_quality = result_map.get("quality", [])
@@ -468,9 +325,10 @@ class SmartPromptService:
     def _build_positive_prompt(self, result_map: dict[str, Any]) -> str:
         """Build positive prompt using kgen's apply_format with templates."""
         format_key = _FORMAT_KEYS.get(self.output_format, _FORMAT_KEYS["both_tag_first"])
-        template = self._tipo_default_format[format_key]
-
-        prompt = self._apply_format(result_map, template)
+        try:
+            prompt = self._backend.apply_format(result_map, format_key)
+        except TipoBackendError as exc:
+            raise SmartPromptError(str(exc)) from exc
 
         # Apply ban-list filtering
         banned = {tag.casefold() for tag in self._split_tags(self.ban_tags)}

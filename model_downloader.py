@@ -17,6 +17,7 @@ import aiohttp
 
 from config import Config
 from core.formatting import human_size, short_number
+from domain.loras import LoraCatalogEntry, lora_catalog_entry_from_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -368,6 +369,15 @@ class ModelDownloader:
         if not meta:
             return []
         return _clean_words(meta.get("trained_words", []), limit=24)
+
+    def get_lora_entry(self, lora_name: str) -> LoraCatalogEntry | None:
+        meta = self.get_model_metadata(lora_name, model_type="lora")
+        if not meta:
+            return None
+        entry = lora_catalog_entry_from_metadata(lora_name, meta)
+        if not entry.name:
+            return None
+        return entry
 
     def infer_base_model(self, text: str) -> str:
         value = str(text or "").strip().lower()

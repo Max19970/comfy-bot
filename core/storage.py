@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from core.models import GenerationParams
+from domain.loras import legacy_lora_pairs
 
 PRESETS_DIR = Path(__file__).resolve().parent.parent / "presets"
 SMART_PROMPT_GUIDES_DIR = Path(__file__).resolve().parent.parent / "smart_prompt_guides"
@@ -101,14 +102,14 @@ def save_runtime_session(payload: dict[str, Any]) -> None:
 
 def params_to_dict(params: GenerationParams) -> dict[str, Any]:
     data = asdict(params)
-    data["loras"] = [list(item) for item in data.get("loras", [])]
+    data["loras"] = [list(item) for item in legacy_lora_pairs(data.get("loras", []))]
     data["reference_images"] = _normalize_reference_images(data.get("reference_images", []))
     return data
 
 
 def dict_to_params(data: dict[str, Any]) -> GenerationParams:
     payload = dict(data)
-    payload["loras"] = [tuple(item) for item in payload.get("loras", [])]
+    payload["loras"] = legacy_lora_pairs(payload.get("loras", []))
     payload["reference_images"] = _normalize_reference_images(payload.get("reference_images", []))
     known = {f.name for f in _dc.fields(GenerationParams)}
     payload = {k: v for k, v in payload.items() if k in known}

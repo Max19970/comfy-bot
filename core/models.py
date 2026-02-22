@@ -2,6 +2,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from domain.loras import (
+    EditorLoraSelection,
+    WorkflowLoraAttachment,
+    legacy_lora_pairs,
+    workflow_lora_attachments_from_legacy,
+)
+
 
 @dataclass
 class GenerationParams:
@@ -37,3 +44,12 @@ class GenerationParams:
     tile_size: int = 256
     tile_overlap: int = 64
     vae_tile_size: int = 512
+
+    def lora_selections(self) -> list[EditorLoraSelection]:
+        return [EditorLoraSelection.create(name, strength) for name, strength in self.loras]
+
+    def set_lora_selections(self, selections: list[EditorLoraSelection]) -> None:
+        self.loras = legacy_lora_pairs([item.to_legacy_pair() for item in selections])
+
+    def workflow_lora_attachments(self) -> list[WorkflowLoraAttachment]:
+        return workflow_lora_attachments_from_legacy(self.loras)

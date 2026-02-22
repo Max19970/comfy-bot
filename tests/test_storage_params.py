@@ -19,3 +19,21 @@ def test_params_serialization_roundtrip() -> None:
     assert restored.negative == params.negative
     assert restored.loras == params.loras
     assert restored.reference_images == params.reference_images
+
+
+def test_dict_to_params_normalizes_loras_from_mixed_payload() -> None:
+    payload = {
+        "positive": "a cat",
+        "loras": [
+            ["style.safetensors", "0.9"],
+            {"name": "detail.safetensors", "strength_model": 1.5},
+            ["", 0.5],
+        ],
+    }
+
+    restored = dict_to_params(payload)
+
+    assert restored.loras == [
+        ("style.safetensors", 0.9),
+        ("detail.safetensors", 1.5),
+    ]

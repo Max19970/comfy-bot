@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any, cast
 
+from domain.loras import LoraCatalogEntry
 from handlers.prompt_editor_lora import (
     checkpoint_base_model,
     lora_compatibility,
@@ -32,6 +33,12 @@ class _DownloaderStub:
         if lora_name == "anime.safetensors":
             return ["anime_style", "best quality", "masterpiece"]
         return []
+
+    def get_lora_entry(self, lora_name: str) -> LoraCatalogEntry | None:
+        meta = self.get_model_metadata(lora_name, model_type="lora")
+        if not meta:
+            return None
+        return LoraCatalogEntry.from_metadata(lora_name, meta)
 
     def base_models_compatible(self, checkpoint_base: str, lora_base: str) -> bool:
         return checkpoint_base == lora_base

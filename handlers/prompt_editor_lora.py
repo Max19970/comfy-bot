@@ -33,14 +33,17 @@ def lora_base_model(lora_name: str, downloader: ModelDownloader) -> str:
     if not name:
         return ""
 
-    meta = downloader.get_model_metadata(name, model_type="lora")
-    base = str(meta.get("base_model") if meta else "").strip()
+    entry = downloader.get_lora_entry(name)
+    base = entry.base_model if entry else ""
     if base:
         return base
     return downloader.infer_base_model(name)
 
 
 def lora_trained_words(lora_name: str, downloader: ModelDownloader) -> list[str]:
+    entry = downloader.get_lora_entry(lora_name)
+    if entry and entry.trained_words:
+        return entry.trigger_words(limit=12)
     return downloader.get_lora_trained_words(lora_name)[:12]
 
 

@@ -375,13 +375,13 @@ class ComfyUIClient:
             vae_out = [vae_loader_id, 0]
 
         # 2. LoRA chain (0 or more)
-        for lora_name, lora_strength in params.loras:
+        for attachment in params.workflow_lora_attachments():
             lora_id = _node(
                 "LoraLoader",
                 {
-                    "lora_name": lora_name,
-                    "strength_model": lora_strength,
-                    "strength_clip": lora_strength,
+                    "lora_name": attachment.lora_name,
+                    "strength_model": attachment.strength_model,
+                    "strength_clip": attachment.strength_clip,
                     "model": model_out,
                     "clip": clip_out,
                 },

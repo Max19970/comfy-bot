@@ -157,6 +157,17 @@
 
 Правила безопасной миграции и quality gate описаны в `docs/REFACTOR_GUARDRAILS.md`.
 
+### Типизированные LoRA-объекты (Stage 1)
+
+В `domain/loras.py` добавлены базовые объекты для миграции с tuple/dict структур:
+
+- `LoraCatalogEntry` — модель LoRA из локального индекса/каталога.
+- `EditorLoraSelection` — LoRA в контексте редактора (имя + сила применения).
+- `WorkflowLoraAttachment` — LoRA в контексте передачи в ComfyUI workflow.
+
+До полной миграции эти объекты работают через совместимые адаптеры к legacy
+структурам `GenerationParams.loras` и JSON-представлениям в `core/storage.py`.
+
 ## UI-архитектура
 
 Подробные правила интерфейсного слоя и шаблон расширения описаны в

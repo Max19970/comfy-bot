@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from core.models import GenerationParams
 from core.runtime import ActiveGeneration, PreviewArtifact, PromptRequest, RuntimeStore
+from domain.loras import EditorLoraSelection
 
 
 def test_runtime_store_roundtrip_preserves_persisted_fields() -> None:
@@ -14,10 +15,21 @@ def test_runtime_store_roundtrip_preserves_persisted_fields() -> None:
         seed=777,
     )
 
+    req = PromptRequest(params=params, operation="generate")
+    req.set_editor_loras(
+        [
+            EditorLoraSelection.create(
+                "anime_style.safetensors",
+                0.8,
+                file_path="models/loras/anime_style.safetensors",
+            )
+        ]
+    )
+
     runtime = RuntimeStore(
         last_params={uid: params},
         last_seeds={uid: 777},
-        active_prompt_requests={uid: PromptRequest(params=params, operation="generate")},
+        active_prompt_requests={uid: req},
         user_preferences={uid: {"pro_mode": True, "download_source": "all"}},
         user_ui_panels={uid: {"chat_id": 10, "message_id": 20}},
     )
@@ -46,6 +58,9 @@ def test_runtime_store_roundtrip_preserves_persisted_fields() -> None:
     assert restored.last_seeds[uid] == 777
     assert restored.last_params[uid].checkpoint == "sdxl.safetensors"
     assert restored.active_prompt_requests[uid].params.loras == [("anime_style.safetensors", 0.8)]
+    assert restored.active_prompt_requests[uid].editor_loras[0].file_path == (
+        "models/loras/anime_style.safetensors"
+    )
     assert restored.user_preferences[uid]["pro_mode"] is True
     assert restored.user_ui_panels[uid] == {"chat_id": 10, "message_id": 20}
 
@@ -79,3 +94,35 @@ def test_runtime_store_from_persisted_ignores_invalid_user_payloads() -> None:
     assert restored.last_seeds == {}
     assert restored.user_ui_panels == {}
     assert restored.active_prompt_requests == {}
+
+
+def test_runtime_store_migrates_legacy_prompt_request_payload_to_schema_v2() -> None:
+    restored = RuntimeStore.from_persisted_dict(
+        {
+            "schema_version": 1,
+            "active_prompt_requests": {
+                "1001": {
+                    "operation": "generate",
+                    "params": {
+                        "checkpoint": "sdxl.safetensors",
+                        "loras": [["anime_style.safetensors", 0.9]],
+                    },
+                }
+            },
+        }
+    )
+
+    req = restored.active_prompt_requests[1001]
+    assert req.params.loras == [("anime_style.safetensors", 0.9)]
+    assert req.editor_loras == [EditorLoraSelection(name="anime_style.safetensors", strength=0.9)]
+
+    persisted = restored.to_persisted_dict()
+    assert persisted["schema_version"] == 2
+    entry = persisted["active_prompt_requests"]["1001"]
+    assert entry["editor_loras"] == [
+        {
+            "name": "anime_style.safetensors",
+            "strength": 0.9,
+            "file_path": "",
+        }
+    ]

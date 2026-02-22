@@ -18,9 +18,11 @@ from core.storage import (
     save_runtime_session,
 )
 from core.user_preferences import normalize_user_preferences
-from domain.loras import EditorLoraSelection
+from domain.loras import EditorLoraSelection, editor_lora_selections_from_legacy
 
 logger = logging.getLogger(__name__)
+
+RUNTIME_SCHEMA_VERSION = 2
 
 
 @dataclass
@@ -178,20 +180,164 @@ class RuntimeStore:
             self.drop_preview_artifact(item.artifact_id)
 
     def to_persisted_dict(self) -> dict[str, Any]:
+        snapshot = _RuntimeSessionSnapshot.from_runtime(self)
+        return snapshot.to_dict()
+
+    def persist(self) -> None:
+        try:
+            save_runtime_session(self.to_persisted_dict())
+        except (OSError, TypeError, ValueError):
+            logger.warning("Failed to persist runtime session", exc_info=True)
+
+    @classmethod
+    def from_persisted_dict(cls, raw: dict[str, Any]) -> RuntimeStore:
+        snapshot = _RuntimeSessionSnapshot.from_raw(raw)
+        return snapshot.to_runtime_store()
+
+
+def _clone_prompt_request(req: PromptRequest) -> PromptRequest:
+    clone = PromptRequest(
+        params=GenerationParams.from_generation_request(req.params.to_generation_request()),
+        operation=req.operation,
+        editor_loras=list(req.editor_loras),
+    )
+    clone.ui_chat_id = req.ui_chat_id
+    clone.ui_message_id = req.ui_message_id
+    return clone
+
+
+def _editor_loras_to_dict(items: list[EditorLoraSelection]) -> list[dict[str, Any]]:
+    payload: list[dict[str, Any]] = []
+    for item in items:
+        name = str(item.name or "").strip()
+        if not name:
+            continue
+        payload.append(
+            {
+                "name": name,
+                "strength": float(item.strength),
+                "file_path": str(item.file_path or "").strip(),
+            }
+        )
+    return payload
+
+
+def _editor_loras_from_raw(raw: Any) -> list[EditorLoraSelection]:
+    if not isinstance(raw, list):
+        return []
+
+    parsed: list[EditorLoraSelection] = []
+    for item in raw:
+        if isinstance(item, dict):
+            selection = EditorLoraSelection.from_legacy(item)
+            if selection is not None:
+                parsed.append(selection)
+    return parsed
+
+
+def _migrate_runtime_payload(raw: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(raw, dict):
+        return {}
+
+    try:
+        schema_version = int(raw.get("schema_version") or 1)
+    except (TypeError, ValueError):
+        schema_version = 1
+    if schema_version >= RUNTIME_SCHEMA_VERSION:
+        return raw
+
+    migrated: dict[str, Any] = dict(raw)
+    migrated["schema_version"] = RUNTIME_SCHEMA_VERSION
+
+    active_requests = raw.get("active_prompt_requests")
+    if isinstance(active_requests, dict):
+        upgraded_active: dict[str, Any] = {}
+        for raw_uid, payload in active_requests.items():
+            if not isinstance(payload, dict):
+                continue
+
+            upgraded_payload = dict(payload)
+            if "editor_loras" not in upgraded_payload:
+                params_raw = upgraded_payload.get("params")
+                loras_raw = params_raw.get("loras", []) if isinstance(params_raw, dict) else []
+                upgraded_payload["editor_loras"] = _editor_loras_to_dict(
+                    editor_lora_selections_from_legacy(loras_raw)
+                )
+            upgraded_active[str(raw_uid)] = upgraded_payload
+        migrated["active_prompt_requests"] = upgraded_active
+
+    return migrated
+
+
+@dataclass
+class _RuntimeSessionSnapshot:
+    schema_version: int = RUNTIME_SCHEMA_VERSION
+    last_params: dict[int, GenerationParams] = field(default_factory=dict)
+    last_seeds: dict[int, int] = field(default_factory=dict)
+    active_prompt_requests: dict[int, PromptRequest] = field(default_factory=dict)
+    user_preferences: dict[int, dict[str, Any]] = field(default_factory=dict)
+    user_ui_panels: dict[int, dict[str, int]] = field(default_factory=dict)
+    preview_artifacts: dict[str, PreviewArtifact] = field(default_factory=dict)
+    active_generations: dict[str, ActiveGeneration] = field(default_factory=dict)
+
+    @classmethod
+    def from_runtime(cls, runtime: RuntimeStore) -> _RuntimeSessionSnapshot:
+        snapshot = cls()
+        snapshot.last_params = {
+            uid: GenerationParams.from_generation_request(params.to_generation_request())
+            for uid, params in runtime.last_params.items()
+            if uid > 0
+        }
+        snapshot.last_seeds = {
+            uid: int(seed)
+            for uid, seed in runtime.last_seeds.items()
+            if uid > 0 and isinstance(seed, int)
+        }
+        snapshot.active_prompt_requests = {
+            uid: _clone_prompt_request(req)
+            for uid, req in runtime.active_prompt_requests.items()
+            if uid > 0
+        }
+        snapshot.user_preferences = {
+            uid: _normalize_user_preferences(prefs)
+            for uid, prefs in runtime.user_preferences.items()
+            if uid > 0
+        }
+        snapshot.user_ui_panels = {
+            uid: panel
+            for uid, panel in (
+                (uid, _normalize_user_ui_panel(payload))
+                for uid, payload in runtime.user_ui_panels.items()
+                if uid > 0
+            )
+            if panel
+        }
+        snapshot.preview_artifacts = {
+            artifact_id: item
+            for artifact_id, item in runtime.preview_artifacts.items()
+            if item.owner_uid > 0
+        }
+        snapshot.active_generations = {
+            generation_id: item
+            for generation_id, item in runtime.active_generations.items()
+            if item.owner_uid > 0
+        }
+        return snapshot
+
+    def to_dict(self) -> dict[str, Any]:
         return {
-            "schema_version": 1,
+            "schema_version": self.schema_version,
             "last_params": {
                 str(uid): params_to_dict(params) for uid, params in self.last_params.items()
             },
-            "last_seeds": {
-                str(uid): int(seed)
-                for uid, seed in self.last_seeds.items()
-                if isinstance(seed, int)
-            },
+            "last_seeds": {str(uid): int(seed) for uid, seed in self.last_seeds.items()},
             "active_prompt_requests": {
                 str(uid): {
                     "operation": req.operation,
                     "params": params_to_dict(req.params),
+                    "editor_loras": _editor_loras_to_dict(req.editor_loras),
+                    "ui_chat_id": req.ui_chat_id,
+                    "ui_message_id": req.ui_message_id,
                 }
                 for uid, req in self.active_prompt_requests.items()
             },
@@ -215,31 +361,28 @@ class RuntimeStore:
             },
         }
 
-    def persist(self) -> None:
-        try:
-            save_runtime_session(self.to_persisted_dict())
-        except (OSError, TypeError, ValueError):
-            logger.warning("Failed to persist runtime session", exc_info=True)
-
     @classmethod
-    def from_persisted_dict(cls, raw: dict[str, Any]) -> RuntimeStore:
-        runtime = cls()
+    def from_raw(cls, raw: dict[str, Any]) -> _RuntimeSessionSnapshot:
+        migrated = _migrate_runtime_payload(raw)
+        snapshot = cls(
+            schema_version=_to_int(migrated.get("schema_version"), default=RUNTIME_SCHEMA_VERSION)
+        )
 
-        for uid, payload in _iter_user_dict(raw.get("last_params")):
+        for uid, payload in _iter_user_dict(migrated.get("last_params")):
             if not isinstance(payload, dict):
                 continue
             try:
-                runtime.last_params[uid] = dict_to_params(payload)
+                snapshot.last_params[uid] = dict_to_params(payload)
             except (TypeError, ValueError, KeyError):
                 continue
 
-        for uid, payload in _iter_user_dict(raw.get("last_seeds")):
+        for uid, payload in _iter_user_dict(migrated.get("last_seeds")):
             try:
-                runtime.last_seeds[uid] = int(payload)
+                snapshot.last_seeds[uid] = int(payload)
             except (TypeError, ValueError):
                 continue
 
-        for uid, payload in _iter_user_dict(raw.get("active_prompt_requests")):
+        for uid, payload in _iter_user_dict(migrated.get("active_prompt_requests")):
             if not isinstance(payload, dict):
                 continue
             params_raw = payload.get("params")
@@ -250,20 +393,27 @@ class RuntimeStore:
             except (TypeError, ValueError, KeyError):
                 continue
             operation = str(payload.get("operation") or "generate")
-            runtime.active_prompt_requests[uid] = PromptRequest(
+            editor_loras = _editor_loras_from_raw(payload.get("editor_loras"))
+            if not editor_loras:
+                editor_loras = params.lora_selections()
+            req = PromptRequest(
                 params=params,
                 operation=operation,
+                editor_loras=editor_loras,
             )
+            req.ui_chat_id = _as_int_or_none(payload.get("ui_chat_id"))
+            req.ui_message_id = _as_int_or_none(payload.get("ui_message_id"))
+            snapshot.active_prompt_requests[uid] = req
 
-        for uid, payload in _iter_user_dict(raw.get("user_preferences")):
-            runtime.user_preferences[uid] = _normalize_user_preferences(payload)
+        for uid, payload in _iter_user_dict(migrated.get("user_preferences")):
+            snapshot.user_preferences[uid] = _normalize_user_preferences(payload)
 
-        for uid, payload in _iter_user_dict(raw.get("user_ui_panels")):
+        for uid, payload in _iter_user_dict(migrated.get("user_ui_panels")):
             panel = _normalize_user_ui_panel(payload)
             if panel:
-                runtime.user_ui_panels[uid] = panel
+                snapshot.user_ui_panels[uid] = panel
 
-        artifacts_raw = raw.get("preview_artifacts")
+        artifacts_raw = migrated.get("preview_artifacts")
         if isinstance(artifacts_raw, dict):
             for artifact_id, payload in artifacts_raw.items():
                 if not isinstance(payload, dict):
@@ -271,9 +421,9 @@ class RuntimeStore:
                 artifact = _preview_artifact_from_dict(str(artifact_id), payload)
                 if artifact is None:
                     continue
-                runtime.preview_artifacts[artifact.artifact_id] = artifact
+                snapshot.preview_artifacts[artifact.artifact_id] = artifact
 
-        active_raw = raw.get("active_generations")
+        active_raw = migrated.get("active_generations")
         if isinstance(active_raw, dict):
             for generation_id, payload in active_raw.items():
                 if not isinstance(payload, dict):
@@ -281,8 +431,19 @@ class RuntimeStore:
                 generation = _active_generation_from_dict(str(generation_id), payload)
                 if generation is None:
                     continue
-                runtime.active_generations[generation.generation_id] = generation
+                snapshot.active_generations[generation.generation_id] = generation
 
+        return snapshot
+
+    def to_runtime_store(self) -> RuntimeStore:
+        runtime = RuntimeStore()
+        runtime.last_params.update(self.last_params)
+        runtime.last_seeds.update(self.last_seeds)
+        runtime.active_prompt_requests.update(self.active_prompt_requests)
+        runtime.user_preferences.update(self.user_preferences)
+        runtime.user_ui_panels.update(self.user_ui_panels)
+        runtime.preview_artifacts.update(self.preview_artifacts)
+        runtime.active_generations.update(self.active_generations)
         return runtime
 
 

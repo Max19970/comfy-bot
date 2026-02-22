@@ -235,6 +235,19 @@ Handler-модули `handlers/prompt_editor_generation.py` и
 Публичные интерфейсы сервисов (`ComfyUIClient`, `SmartPromptService`,
 `ModelDownloader`) сохранены совместимыми.
 
+### Runtime session DTO + migration (Stage 7)
+
+Слой runtime persistence переведен на typed snapshot-модель:
+
+- `core/runtime.py` использует `_RuntimeSessionSnapshot` как единый DTO для
+  сериализации/десериализации `RuntimeStore`.
+- В persisted `active_prompt_requests` добавлены typed `editor_loras` и
+  UI-panel ссылки (`ui_chat_id`, `ui_message_id`).
+- Добавлен мигратор legacy payload (`schema_version: 1 -> 2`) с автоматическим
+  заполнением `editor_loras` из старого формата `params.loras`.
+
+Формат сохранения остается backward-compatible для существующих `sessions/runtime.json`.
+
 ## UI-архитектура
 
 Подробные правила интерфейсного слоя и шаблон расширения описаны в

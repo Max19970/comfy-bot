@@ -14,6 +14,7 @@ from aiogram.types import (
 )
 
 from application.lora_catalog_service import LoraCatalogService
+from application.prompt_generation_use_case import PromptGenerationUseCase
 from comfyui_client import ComfyUIClient
 from config import Config
 from core.models import GenerationParams
@@ -301,10 +302,14 @@ def register_prompt_editor_handlers(
         runtime=runtime,
         logger=logger,
         client=client,
-        normalize_params=normalize_params,
-        incompatible_loras=incompatible_loras,
+        generation_use_case=PromptGenerationUseCase(
+            normalize_params=normalize_params,
+            incompatible_loras=incompatible_loras,
+            denoise_from_reference_strength=denoise_from_reference_strength,
+            supports_ipadapter=client.supports_ipadapter,
+            resolve_reference_mode=client.resolve_reference_mode,
+        ),
         collect_reference_images=collect_reference_images,
-        denoise_from_reference_strength=denoise_from_reference_strength,
         show_prompt_editor=show_prompt_editor,
         show_prompt_panel=_show_prompt_panel,
         move_prompt_panel_to_bottom=_move_prompt_panel_to_bottom,

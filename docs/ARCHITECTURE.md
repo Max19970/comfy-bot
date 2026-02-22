@@ -208,6 +208,19 @@ LoRA-flow редактора переведен на `EditorLoraSelection` в р
 Построение workflow в `comfyui_client.py` использует typed request как источник
 данных, сохраняя текущие внешние контракты вызова.
 
+### Explicit application use-cases (Stage 5)
+
+Часть сценарной логики вынесена из handler-модулей в application слой:
+
+- `application/prompt_generation_use_case.py` — подготовка запуска генерации
+  (нормализация, seed, проверка референсов, выбор reference mode, корректировка denoise).
+- `application/download_search_use_case.py` — построение search-критериев для
+  download-flow и вывод base-фильтра по checkpoint.
+
+Handler-модули `handlers/prompt_editor_generation.py` и
+`handlers/download_flow_handlers.py` теперь выступают тонкими контроллерами,
+делегируя бизнес-решения в use-case классы.
+
 ## UI-архитектура
 
 Подробные правила интерфейсного слоя и шаблон расширения описаны в

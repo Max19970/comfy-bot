@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import random
 import time
 import uuid
 from collections.abc import Awaitable, Callable
@@ -14,6 +13,7 @@ from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 
+from application.prompt_generation_use_case import PromptGenerationUseCase
 from core.html_utils import h, progress_bar, truncate
 from core.image_utils import image_dimensions
 from core.models import GenerationParams
@@ -25,12 +25,10 @@ class PromptEditorGenerationDeps:
     runtime: RuntimeStore
     logger: logging.Logger
     client: _ClientLike
-    normalize_params: Callable[[GenerationParams], GenerationParams]
-    incompatible_loras: Callable[[GenerationParams], list[tuple[str, str, str]]]
+    generation_use_case: PromptGenerationUseCase
     collect_reference_images: Callable[
         [Message, list[dict[str, str]]], Awaitable[tuple[list[bytes], int]]
     ]
-    denoise_from_reference_strength: Callable[[float], float]
     show_prompt_editor: Callable[..., Awaitable[None]]
     show_prompt_panel: Callable[..., Awaitable[Message]]
     move_prompt_panel_to_bottom: Callable[..., Awaitable[Message]]
@@ -53,7 +51,8 @@ async def run_generate_operation(
         await message.answer("❌ Активный запрос не найден. Используйте /generate.")
         return
 
-    params = deps.normalize_params(req.params)
+    prepared = deps.generation_use_case.prepare(req.params)
+    params = prepared.params
     if not params.checkpoint:
         await deps.show_prompt_editor(
             message,
@@ -64,52 +63,46 @@ async def run_generate_operation(
         )
         return
 
-    bad_loras = deps.incompatible_loras(params)
+    bad_loras = prepared.incompatible_loras
     lora_warning = ""
-    if bad_loras:
-        listed = ", ".join(name for name, _, _ in bad_loras[:3])
-        suffix = "" if len(bad_loras) <= 3 else f" и ещё {len(bad_loras) - 3}"
+    warning_payload = deps.generation_use_case.lora_warning_payload(bad_loras)
+    if warning_payload is not None:
+        listed, suffix = warning_payload
         lora_warning = (
             "⚠️ <b>Внимание:</b> потенциально несовместимые LoRA: "
             f"<code>{h(listed)}</code>{h(suffix)}"
         )
 
-    used_seed = params.seed if params.seed >= 0 else random.randint(0, 2**63 - 1)
-    generation_params = GenerationParams(**asdict(params))
-    generation_params.seed = used_seed
+    used_seed = prepared.used_seed
+    generation_params = prepared.generation_params
 
     reference_images, failed_refs = await deps.collect_reference_images(
         message,
         params.reference_images,
     )
-    if params.controlnet_name and not reference_images:
+    ref_notice = deps.generation_use_case.reference_validation_notice(
+        params,
+        reference_image_count=len(reference_images),
+    )
+    if ref_notice:
         await deps.show_prompt_editor(
             message,
             state,
             uid,
             edit=True,
-            notice="❌ Для ControlNet нужно добавить хотя бы один референс.",
-        )
-        return
-    if params.reference_images and not reference_images:
-        await deps.show_prompt_editor(
-            message,
-            state,
-            uid,
-            edit=True,
-            notice="❌ Не удалось загрузить референс-картинки. Загрузите их заново в редакторе.",
+            notice=ref_notice,
         )
         return
 
-    if params.controlnet_name and reference_images:
-        reference_mode = "ipadapter" if deps.client.supports_ipadapter() else "none"
-    else:
-        reference_mode = deps.client.resolve_reference_mode(bool(reference_images))
-    if reference_mode == "img2img" and reference_images:
-        generation_params.denoise = min(
-            generation_params.denoise,
-            deps.denoise_from_reference_strength(generation_params.reference_strength),
-        )
+    reference_mode = deps.generation_use_case.resolve_mode(
+        params,
+        has_reference_images=bool(reference_images),
+    )
+    deps.generation_use_case.apply_reference_adjustments(
+        generation_params,
+        reference_mode=reference_mode,
+        has_reference_images=bool(reference_images),
+    )
 
     ckpt_short = h(truncate(params.checkpoint, 30))
     start_lines = [f"⏳ <b>Генерация</b> | {ckpt_short} | {params.width}×{params.height}"]
@@ -383,10 +376,6 @@ async def run_generate_operation(
 
 
 class _ClientLike(Protocol):
-    def supports_ipadapter(self) -> bool: ...
-
-    def resolve_reference_mode(self, has_reference_images: bool) -> str: ...
-
     async def generate(
         self,
         params: GenerationParams,

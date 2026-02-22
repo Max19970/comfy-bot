@@ -12,8 +12,8 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
+from application.download_search_use_case import DownloadSearchUseCase
 from core.callbacks import ValueSelectionCallback
-from core.download_filters import base_code_from_base_model
 from core.html_utils import h
 from core.interaction import require_callback_message
 from core.states import DownloadStates
@@ -23,7 +23,6 @@ from core.ui_kit.buttons import button, cancel_button, menu_root_button
 from .download_flow_utils import (
     apply_download_profile,
     download_defaults_for_user,
-    parse_author_filters,
 )
 
 
@@ -61,6 +60,13 @@ class DownloadFlowDeps:
 def register_download_flow_handlers(deps: DownloadFlowDeps) -> None:
     router = deps.router
     default_page_size = 8
+    search_use_case = DownloadSearchUseCase(
+        base_code_to_api=deps.base_code_to_api,
+        sort_code_to_api=deps.sort_code_to_api,
+        period_code_to_api=deps.period_code_to_api,
+        supports_base_filter=deps.supports_base_filter,
+        supports_nsfw_filter=deps.supports_nsfw_filter,
+    )
 
     def _models_back_keyboard() -> InlineKeyboardMarkup:
         return build_keyboard(
@@ -82,31 +88,22 @@ def register_download_flow_handlers(deps: DownloadFlowDeps) -> None:
 
     async def _run_search(state: FSMContext, *, limit: int) -> list[Any]:
         data = await state.get_data()
-        query = str(data.get("dl_query", "")).strip()
-        model_type = data.get("dl_type", "checkpoint")
-        source = data.get("dl_source", "all")
-        sort_code = data.get("dl_sort", "downloads")
-        period_code = data.get("dl_period", "all")
-        base_code = data.get("dl_base", "all")
-        include_nsfw = bool(data.get("dl_nsfw", False))
-        author_nick = str(data.get("dl_author", "")).strip()
-        author_filters = parse_author_filters(author_nick)
-        page_size = int(data.get("dl_page_size", default_page_size) or default_page_size)
-
-        base_models = deps.base_code_to_api.get(base_code, [])
-        if not deps.supports_base_filter(model_type=model_type, source=source):
-            base_models = []
+        criteria = search_use_case.build_search_criteria(
+            data,
+            requested_limit=limit,
+            default_page_size=default_page_size,
+        )
 
         return await deps.downloader.search(
-            query,
-            model_type,
-            source,
-            limit=max(page_size, limit),
-            sort=deps.sort_code_to_api.get(sort_code, "Most Downloaded"),
-            base_models=base_models,
-            include_nsfw=include_nsfw and deps.supports_nsfw_filter(source),
-            period=deps.period_code_to_api.get(period_code, "AllTime"),
-            civitai_authors=(author_filters if source in {"civitai", "all"} else []),
+            criteria.query,
+            criteria.model_type,
+            criteria.source,
+            limit=criteria.limit,
+            sort=criteria.sort,
+            base_models=list(criteria.base_models),
+            include_nsfw=criteria.include_nsfw,
+            period=criteria.period,
+            civitai_authors=list(criteria.civitai_authors),
         )
 
     async def _callback_message(cb: CallbackQuery) -> Message | None:
@@ -157,14 +154,12 @@ def register_download_flow_handlers(deps: DownloadFlowDeps) -> None:
         uid = deps.callback_user_id(cb)
         req = deps.runtime.active_prompt_requests.get(uid)
         if req and req.params.checkpoint:
-            meta = deps.downloader.get_model_metadata(
+            inferred_base = search_use_case.infer_base_code_for_checkpoint(
                 req.params.checkpoint,
-                model_type="checkpoint",
+                get_model_metadata=deps.downloader.get_model_metadata,
+                infer_base_model=deps.downloader.infer_base_model,
+                default="all",
             )
-            base_model = str(meta.get("base_model") if meta else "").strip()
-            if not base_model:
-                base_model = deps.downloader.infer_base_model(req.params.checkpoint)
-            inferred_base = base_code_from_base_model(base_model)
 
         defaults = download_defaults_for_user(
             deps.runtime.user_preferences,
@@ -305,7 +300,7 @@ def register_download_flow_handlers(deps: DownloadFlowDeps) -> None:
             await deps.show_filter_menu(msg, state, edit=False)
             return
 
-        author = "" if raw in {"-", "*"} else ",".join(parse_author_filters(raw))
+        author = "" if raw in {"-", "*"} else ",".join(search_use_case.parse_author_filters(raw))
         await state.update_data(dl_author=author)
         await state.set_state(DownloadStates.choosing_filters)
         await deps.show_filter_menu(msg, state, edit=False)

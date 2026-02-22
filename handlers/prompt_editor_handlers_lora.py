@@ -13,7 +13,6 @@ from aiogram.types import (
     Message,
 )
 
-from core.callbacks import IndexedSelectionCallback, ValueSelectionCallback
 from core.html_utils import h
 from core.interaction import require_callback_message
 from core.runtime import PromptRequest, RuntimeStore
@@ -22,6 +21,9 @@ from core.ui import custom_btn
 from core.ui_kit import build_keyboard
 from core.ui_kit.buttons import button
 from domain.loras import EditorLoraSelection
+
+from .prompt_editor_handler_guards import require_message_and_request
+from .prompt_editor_selection_utils import parse_indexed_selection, parse_value_selection
 
 
 @dataclass
@@ -209,20 +211,22 @@ def register_prompt_editor_lora_handlers(
 
     @router.callback_query(F.data.startswith("pe_lora_pick:"))
     async def pe_lora_pick(cb: CallbackQuery, state: FSMContext):
-        message = await require_callback_message(cb)
-        if message is None:
+        context = await require_message_and_request(
+            cb,
+            require_prompt_request_for_callback=deps.require_prompt_request_for_callback,
+        )
+        if context is None:
             return
-        payload = await deps.require_prompt_request_for_callback(cb)
-        if not payload:
+        message, _, req = context
+
+        idx = await parse_indexed_selection(
+            cb,
+            prefix="pe_lora_pick",
+            invalid_text="❌ Неверный формат выбора LoRA.",
+        )
+        if idx is None:
             return
 
-        _, req = payload
-
-        parsed = IndexedSelectionCallback.parse(cb.data or "", prefix="pe_lora_pick")
-        if parsed is None:
-            await cb.answer("❌ Неверный формат выбора LoRA.", show_alert=True)
-            return
-        idx = parsed.index
         data = await state.get_data()
         items = data.get("pe_lora_pick_names")
         if not isinstance(items, list) or not items:
@@ -289,19 +293,22 @@ def register_prompt_editor_lora_handlers(
 
     @router.callback_query(F.data.startswith("pe_lstr:"))
     async def pe_lora_strength(cb: CallbackQuery, state: FSMContext):
-        message = await require_callback_message(cb)
-        if message is None:
-            return
-        payload = await deps.require_prompt_request_for_callback(cb)
-        if not payload:
+        context = await require_message_and_request(
+            cb,
+            require_prompt_request_for_callback=deps.require_prompt_request_for_callback,
+        )
+        if context is None:
             return
 
-        uid, req = payload
-        parsed = ValueSelectionCallback.parse(cb.data or "", prefix="pe_lstr")
-        if parsed is None:
-            await cb.answer("❌ Неверный формат силы LoRA.", show_alert=True)
+        message, uid, req = context
+        value = await parse_value_selection(
+            cb,
+            prefix="pe_lstr",
+            invalid_text="❌ Неверный формат силы LoRA.",
+        )
+        if value is None:
             return
-        value = parsed.value
+
         if value == "custom":
             await state.set_state(PromptEditorStates.entering_custom_lora_strength)
             await message.edit_text(
@@ -368,16 +375,21 @@ def register_prompt_editor_lora_handlers(
         F.data.startswith("pe:lora:trg:"),
     )
     async def pe_lora_trigger_choice(cb: CallbackQuery, state: FSMContext):
-        message = await require_callback_message(cb)
-        if message is None:
-            return
-        payload = await deps.require_prompt_request_for_callback(cb)
-        if not payload:
+        context = await require_message_and_request(
+            cb,
+            require_prompt_request_for_callback=deps.require_prompt_request_for_callback,
+        )
+        if context is None:
             return
 
-        uid, req = payload
-        parsed = ValueSelectionCallback.parse(cb.data or "", prefix="pe:lora:trg")
-        action = parsed.value if parsed else ""
+        message, uid, req = context
+        action = await parse_value_selection(
+            cb,
+            prefix="pe:lora:trg",
+            invalid_text="❌ Некорректное действие.",
+        )
+        if action is None:
+            return
 
         data = await state.get_data()
         words_raw = data.get("pe_pending_trigger_words")
@@ -400,14 +412,14 @@ def register_prompt_editor_lora_handlers(
 
     @router.callback_query(F.data == "pe:lora:remove_last")
     async def pe_lora_remove_last(cb: CallbackQuery, state: FSMContext):
-        message = await require_callback_message(cb)
-        if message is None:
-            return
-        payload = await deps.require_prompt_request_for_callback(cb)
-        if not payload:
+        context = await require_message_and_request(
+            cb,
+            require_prompt_request_for_callback=deps.require_prompt_request_for_callback,
+        )
+        if context is None:
             return
 
-        uid, req = payload
+        message, uid, req = context
         notice = "ℹ️ Цепочка LoRA не изменилась."
         if deps.remove_last_editor_lora(req):
             notice = "✅ Последняя LoRA удалена."
@@ -416,14 +428,14 @@ def register_prompt_editor_lora_handlers(
 
     @router.callback_query(F.data == "pe:lora:clear")
     async def pe_lora_clear(cb: CallbackQuery, state: FSMContext):
-        message = await require_callback_message(cb)
-        if message is None:
-            return
-        payload = await deps.require_prompt_request_for_callback(cb)
-        if not payload:
+        context = await require_message_and_request(
+            cb,
+            require_prompt_request_for_callback=deps.require_prompt_request_for_callback,
+        )
+        if context is None:
             return
 
-        uid, req = payload
+        message, uid, req = context
         count = deps.editor_lora_count(req)
         if count == 0:
             await deps.show_lora_menu(
@@ -447,14 +459,14 @@ def register_prompt_editor_lora_handlers(
 
     @router.callback_query(F.data == "pe:lora:clear:yes")
     async def pe_lora_clear_yes(cb: CallbackQuery, state: FSMContext):
-        message = await require_callback_message(cb)
-        if message is None:
-            return
-        payload = await deps.require_prompt_request_for_callback(cb)
-        if not payload:
+        context = await require_message_and_request(
+            cb,
+            require_prompt_request_for_callback=deps.require_prompt_request_for_callback,
+        )
+        if context is None:
             return
 
-        uid, req = payload
+        message, uid, req = context
         deps.clear_editor_loras(req)
         await deps.show_lora_menu(
             message,
@@ -467,14 +479,14 @@ def register_prompt_editor_lora_handlers(
 
     @router.callback_query(F.data == "pe:lora:clear:no")
     async def pe_lora_clear_no(cb: CallbackQuery, state: FSMContext):
-        message = await require_callback_message(cb)
-        if message is None:
-            return
-        payload = await deps.require_prompt_request_for_callback(cb)
-        if not payload:
+        context = await require_message_and_request(
+            cb,
+            require_prompt_request_for_callback=deps.require_prompt_request_for_callback,
+        )
+        if context is None:
             return
 
-        uid, _ = payload
+        message, uid, _ = context
         await deps.show_lora_menu(
             message,
             state,

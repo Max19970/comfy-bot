@@ -15,9 +15,9 @@
 ## Сводка статуса
 
 - Всего этапов: **15**
-- Закрыто: **11**
+- Закрыто: **13**
 - В работе: **0**
-- Ожидают выполнения: **4**
+- Ожидают выполнения: **2**
 
 ---
 
@@ -136,7 +136,7 @@
 
 ### Этап 11 — Prompt editor wiring и ISP
 - Статус: ✅ Закрыт, ✅ Закоммичен
-- Commit: `<будет заполнено после коммита этапа 11>`
+- Commit: `844ee11`
 - Цель: уменьшить «god-deps» и перегруженный wiring в prompt editor.
 - Сделано:
   - `PromptEditorSubhandlersDeps` переведен с «плоского» god-deps на узкие feature-deps (`flow/smart/edit/exchange/thematic/lora/references/send`): `handlers/prompt_editor_subhandlers.py`
@@ -147,24 +147,26 @@
 - Что улучшено: ниже сцепка и уже интерфейсы deps в prompt editor; фоновая генерация больше не падает с `Task exception was never retrieved` при кратковременных сетевых сбоях Telegram.
 
 ### Этап 12 — Prompt generation/send flows
-- Статус: ⏳ Ожидает выполнения
+- Статус: ✅ Закрыт, ✅ Закоммичен
+- Commit: `75da05c`
 - Цель: разделить orchestration генерации, прогресса и доставки артефактов.
-- План:
-  - Декомпозировать `handlers/prompt_editor_generation.py`
-  - Упростить `handlers/prompt_editor_handlers_send.py` и связанные send-utils
-  - Унифицировать обработку ошибок/отмены и пост-генерационного меню
-- Ожидаемый результат: предсказуемый lifecycle генерации, меньше ветвлений в одном модуле.
+- Сделано:
+  - Вынесен enhancement-runner из `handlers/prompt_editor_handlers_send.py` в отдельный модуль `handlers/prompt_editor_enhancement.py`.
+  - В `handlers/prompt_editor_generation.py` выделены helpers для intro/status/done-текста и cancel/back клавиатур.
+  - Усилены guard-ветки обновления статуса в enhancement flow при Telegram API ошибках.
+- Что улучшено: жизненный цикл генерации/улучшения стал предсказуемее, а send-handlers заметно уменьшились и лучше разделены по ответственности.
 
 ### Этап 13 — Prompt edit/thematic/lora/references/session cleanup
-- Статус: ⏳ Ожидает выполнения
+- Статус: ✅ Закрыт, ✅ Закоммичен
+- Commit: `<будет заполнено после коммита этапа 13>`
 - Цель: разукрупнить крупные handler-модули редактора.
-- План:
-  - Рефактор `handlers/prompt_editor_handlers_edit.py`
-  - Рефактор `handlers/prompt_editor_handlers_thematic.py`
-  - Рефактор `handlers/prompt_editor_handlers_lora.py`
-  - Рефактор `handlers/prompt_editor_handlers_references.py`
-  - Рефактор `handlers/prompt_editor_session.py`
-  - Централизация повторов payload guards/валидаций/scalar-потоков
+- Сделано:
+  - Централизованы callback-guards в `handlers/prompt_editor_handler_guards.py` и подключены в edit/thematic/lora/references handlers.
+  - Централизован scalar parsing/validation в `handlers/prompt_editor_scalar_utils.py` и повторно использован в edit/thematic scalar flows.
+  - Убраны дубли `require_prompt_request_for_callback + require_callback_message` в `handlers/prompt_editor_handlers_edit.py` и `handlers/prompt_editor_handlers_thematic.py`.
+  - Референсные и LoRA callback flows переведены на единый guard-паттерн: `handlers/prompt_editor_handlers_references.py`, `handlers/prompt_editor_handlers_lora.py`.
+  - Нормализация runtime-параметров декомпозирована в `handlers/prompt_editor_session.py` (clamp helpers + reference normalization helpers).
+  - Добавлены тесты на новые utility/guard/session-paths: `tests/test_prompt_editor_handler_guards.py`, `tests/test_prompt_editor_scalar_utils.py`, `tests/test_prompt_editor_session.py`.
 - Ожидаемый результат: выше cohesion, ниже coupling, меньше дублирования.
 
 ### Этап 14 — Presets и финальная интеграционная стабилизация

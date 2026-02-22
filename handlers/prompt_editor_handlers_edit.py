@@ -20,6 +20,8 @@ from core.runtime import PromptRequest, RuntimeStore
 from core.states import PromptEditorStates
 from core.ui import custom_btn
 
+from .prompt_editor_handler_guards import require_message_and_request
+from .prompt_editor_scalar_utils import parse_scalar_value
 from .prompt_editor_selection_utils import (
     parse_indexed_selection,
     parse_value_selection,
@@ -82,6 +84,14 @@ def register_prompt_editor_edit_handlers(
     router: Router,
     deps: PromptEditorEditHandlersDeps,
 ) -> None:
+    async def _callback_context(
+        cb: CallbackQuery,
+    ) -> tuple[Message, int, PromptRequest] | None:
+        return await require_message_and_request(
+            cb,
+            require_prompt_request_for_callback=deps.require_prompt_request_for_callback,
+        )
+
     def _register_paginated_param(config: PaginatedParamConfig) -> None:
         @router.callback_query(F.data == config.open_callback)
         async def _open(cb: CallbackQuery):
@@ -135,14 +145,11 @@ def register_prompt_editor_edit_handlers(
 
         @router.callback_query(F.data.startswith(f"{config.prefix}:"))
         async def _selected(cb: CallbackQuery, state: FSMContext):
-            message = await require_callback_message(cb)
-            if message is None:
-                return
-            payload = await deps.require_prompt_request_for_callback(cb)
-            if not payload:
+            context = await _callback_context(cb)
+            if context is None:
                 return
 
-            uid, req = payload
+            message, uid, req = context
             raw_value = await parse_value_selection(cb, prefix=config.prefix)
             if raw_value is None:
                 return
@@ -159,8 +166,12 @@ def register_prompt_editor_edit_handlers(
             try:
                 parsed = config.value_aliases.get(raw_value)
                 if parsed is None:
-                    parsed = config.parse_value(raw_value)
-                if not config.validate_value(parsed):
+                    parsed = parse_scalar_value(
+                        raw_value,
+                        parse_value=config.parse_value,
+                        validate_value=config.validate_value,
+                    )
+                if parsed is None:
                     raise ValueError
             except ValueError:
                 await cb.answer("❌ Некорректное значение.", show_alert=True)
@@ -183,11 +194,12 @@ def register_prompt_editor_edit_handlers(
                 return
 
             uid, req = payload
-            try:
-                parsed = config.parse_value((msg.text or "").strip())
-                if not config.validate_value(parsed):
-                    raise ValueError
-            except ValueError:
+            parsed = parse_scalar_value(
+                (msg.text or ""),
+                parse_value=config.parse_value,
+                validate_value=config.validate_value,
+            )
+            if parsed is None:
                 await msg.answer(config.invalid_input_text)
                 return
 
@@ -197,14 +209,11 @@ def register_prompt_editor_edit_handlers(
 
     @router.callback_query(F.data == "pe:edit:positive")
     async def pe_edit_positive(cb: CallbackQuery, state: FSMContext):
-        message = await require_callback_message(cb)
-        if message is None:
-            return
-        payload = await deps.require_prompt_request_for_callback(cb)
-        if not payload:
+        context = await _callback_context(cb)
+        if context is None:
             return
 
-        _, req = payload
+        message, _, req = context
         await state.set_state(PromptEditorStates.entering_positive)
         await message.edit_text(
             deps.prompt_input_text("positive", req.params.positive),
@@ -225,14 +234,11 @@ def register_prompt_editor_edit_handlers(
 
     @router.callback_query(F.data == "pe:edit:negative")
     async def pe_edit_negative(cb: CallbackQuery, state: FSMContext):
-        message = await require_callback_message(cb)
-        if message is None:
-            return
-        payload = await deps.require_prompt_request_for_callback(cb)
-        if not payload:
+        context = await _callback_context(cb)
+        if context is None:
             return
 
-        _, req = payload
+        message, _, req = context
         await state.set_state(PromptEditorStates.entering_negative)
         await message.edit_text(
             deps.prompt_input_text(
@@ -283,11 +289,11 @@ def register_prompt_editor_edit_handlers(
             await cb.answer("❌ Неверный индекс.", show_alert=True)
             return
 
-        payload = await deps.require_prompt_request_for_callback(cb)
-        if not payload:
+        context = await _callback_context(cb)
+        if context is None:
             return
 
-        uid, req = payload
+        message, uid, req = context
         req.params.checkpoint = items[idx]
 
         notice = "✅ Checkpoint обновлён."
@@ -297,9 +303,6 @@ def register_prompt_editor_edit_handlers(
             suffix = "" if len(bad_loras) <= 3 else f" и ещё {len(bad_loras) - 3}"
             notice += f" ⚠️ Несовместимые LoRA: {names}{suffix}."
 
-        message = await require_callback_message(cb)
-        if message is None:
-            return
         await deps.show_prompt_editor(message, state, uid, edit=True, notice=notice)
         await cb.answer()
 
@@ -415,14 +418,11 @@ def register_prompt_editor_edit_handlers(
 
     @router.callback_query(F.data.startswith("pe_size:"))
     async def pe_size_chosen(cb: CallbackQuery, state: FSMContext):
-        message = await require_callback_message(cb)
-        if message is None:
-            return
-        payload = await deps.require_prompt_request_for_callback(cb)
-        if not payload:
+        context = await _callback_context(cb)
+        if context is None:
             return
 
-        uid, req = payload
+        message, uid, req = context
         value = await parse_value_selection(cb, prefix="pe_size")
         if value is None:
             return
@@ -566,14 +566,11 @@ def register_prompt_editor_edit_handlers(
 
     @router.callback_query(F.data.startswith("pe_seed:"))
     async def pe_seed_chosen(cb: CallbackQuery, state: FSMContext):
-        message = await require_callback_message(cb)
-        if message is None:
-            return
-        payload = await deps.require_prompt_request_for_callback(cb)
-        if not payload:
+        context = await _callback_context(cb)
+        if context is None:
             return
 
-        uid, req = payload
+        message, uid, req = context
         value = await parse_value_selection(cb, prefix="pe_seed")
         if value is None:
             return
@@ -631,13 +628,10 @@ def register_prompt_editor_edit_handlers(
 
     @router.callback_query(F.data == "pe:toggle:mode")
     async def pe_toggle_mode(cb: CallbackQuery, state: FSMContext):
-        message = await require_callback_message(cb)
-        if message is None:
+        context = await _callback_context(cb)
+        if context is None:
             return
-        payload = await deps.require_prompt_request_for_callback(cb)
-        if not payload:
-            return
-        uid, _ = payload
+        message, uid, _ = context
         current = deps.get_user_pro_mode(deps.runtime, uid)
         deps.set_user_pro_mode(deps.runtime, uid, not current)
         mode_name = "\U0001f527 Про" if not current else "\U0001f7e2 Простой"

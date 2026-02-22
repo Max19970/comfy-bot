@@ -13,12 +13,14 @@ from aiogram.types import (
     Message,
 )
 
-from core.callbacks import ValueSelectionCallback
 from core.interaction import require_callback_message
 from core.runtime import PromptRequest, RuntimeStore
 from core.states import PromptEditorStates
 from core.ui_kit import build_keyboard
 from core.ui_kit.buttons import button
+
+from .prompt_editor_handler_guards import require_message_and_request
+from .prompt_editor_selection_utils import parse_value_selection
 
 
 @dataclass
@@ -116,14 +118,14 @@ def register_prompt_editor_reference_handlers(
 
     @router.callback_query(F.data == "pe:refs:view")
     async def pe_refs_view(cb: CallbackQuery):
-        message = await require_callback_message(cb)
-        if message is None:
-            return
-        payload = await deps.require_prompt_request_for_callback(cb)
-        if not payload:
+        context = await require_message_and_request(
+            cb,
+            require_prompt_request_for_callback=deps.require_prompt_request_for_callback,
+        )
+        if context is None:
             return
 
-        _, req = payload
+        message, _, req = context
         refs = req.params.reference_images
         if not refs:
             await cb.answer("Список картинок пуст.", show_alert=True)
@@ -165,14 +167,14 @@ def register_prompt_editor_reference_handlers(
 
     @router.callback_query(F.data == "pe:refs:remove_last")
     async def pe_refs_remove_last(cb: CallbackQuery, state: FSMContext):
-        message = await require_callback_message(cb)
-        if message is None:
-            return
-        payload = await deps.require_prompt_request_for_callback(cb)
-        if not payload:
+        context = await require_message_and_request(
+            cb,
+            require_prompt_request_for_callback=deps.require_prompt_request_for_callback,
+        )
+        if context is None:
             return
 
-        uid, req = payload
+        message, uid, req = context
         notice = "Список уже пуст."
         if req.params.reference_images:
             req.params.reference_images.pop()
@@ -183,14 +185,14 @@ def register_prompt_editor_reference_handlers(
 
     @router.callback_query(F.data == "pe:refs:clear")
     async def pe_refs_clear(cb: CallbackQuery, state: FSMContext):
-        message = await require_callback_message(cb)
-        if message is None:
-            return
-        payload = await deps.require_prompt_request_for_callback(cb)
-        if not payload:
+        context = await require_message_and_request(
+            cb,
+            require_prompt_request_for_callback=deps.require_prompt_request_for_callback,
+        )
+        if context is None:
             return
 
-        uid, req = payload
+        message, uid, req = context
         count = len(req.params.reference_images)
         if count == 0:
             await deps.show_reference_menu(
@@ -214,14 +216,14 @@ def register_prompt_editor_reference_handlers(
 
     @router.callback_query(F.data == "pe:refs:clear:yes")
     async def pe_refs_clear_yes(cb: CallbackQuery, state: FSMContext):
-        message = await require_callback_message(cb)
-        if message is None:
-            return
-        payload = await deps.require_prompt_request_for_callback(cb)
-        if not payload:
+        context = await require_message_and_request(
+            cb,
+            require_prompt_request_for_callback=deps.require_prompt_request_for_callback,
+        )
+        if context is None:
             return
 
-        uid, req = payload
+        message, uid, req = context
         req.params.reference_images = []
         await deps.show_reference_menu(
             message,
@@ -234,14 +236,14 @@ def register_prompt_editor_reference_handlers(
 
     @router.callback_query(F.data == "pe:refs:clear:no")
     async def pe_refs_clear_no(cb: CallbackQuery, state: FSMContext):
-        message = await require_callback_message(cb)
-        if message is None:
-            return
-        payload = await deps.require_prompt_request_for_callback(cb)
-        if not payload:
+        context = await require_message_and_request(
+            cb,
+            require_prompt_request_for_callback=deps.require_prompt_request_for_callback,
+        )
+        if context is None:
             return
 
-        uid, _ = payload
+        message, uid, _ = context
         await deps.show_reference_menu(
             message,
             state,
@@ -253,19 +255,25 @@ def register_prompt_editor_reference_handlers(
 
     @router.callback_query(F.data.startswith("pe:refs:del:"))
     async def pe_refs_del(cb: CallbackQuery):
-        message = await require_callback_message(cb)
-        if message is None:
-            return
-        payload = await deps.require_prompt_request_for_callback(cb)
-        if not payload:
+        context = await require_message_and_request(
+            cb,
+            require_prompt_request_for_callback=deps.require_prompt_request_for_callback,
+        )
+        if context is None:
             return
 
-        _, req = payload
-        parsed = ValueSelectionCallback.parse(cb.data or "", prefix="pe:refs:del")
-        if parsed is None or not parsed.value:
+        message, _, req = context
+        ref_id = await parse_value_selection(
+            cb,
+            prefix="pe:refs:del",
+            invalid_text="Некорректный идентификатор референса.",
+        )
+        if ref_id is None:
+            return
+        if not ref_id:
             await cb.answer("Некорректный идентификатор референса.", show_alert=True)
             return
-        ref_id = parsed.value
+
         before = len(req.params.reference_images)
         req.params.reference_images = [
             item for item in req.params.reference_images if item.get("id") != ref_id

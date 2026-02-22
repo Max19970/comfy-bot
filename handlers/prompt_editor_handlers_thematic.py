@@ -14,6 +14,7 @@ from aiogram.types import (
 )
 
 from core.html_utils import h, truncate
+from core.interaction import require_callback_message
 from core.models import GenerationParams
 from core.prompt_enhancements import (
     numeric_control_range_text,
@@ -24,6 +25,8 @@ from core.runtime import PromptRequest, RuntimeStore
 from core.states import PromptEditorStates
 
 from .prompt_editor_enhancements import enhancements_menu_label
+from .prompt_editor_handler_guards import require_message_and_request
+from .prompt_editor_scalar_utils import parse_scalar_value
 from .prompt_editor_selection_utils import parse_value_selection, scalar_choice_keyboard
 from .prompt_editor_session import show_prompt_panel
 
@@ -68,6 +71,14 @@ def register_prompt_editor_thematic_handlers(
     router: Router,
     deps: PromptEditorThematicHandlersDeps,
 ) -> None:
+    async def _callback_context(
+        cb: CallbackQuery,
+    ) -> tuple[Message, int, PromptRequest] | None:
+        return await require_message_and_request(
+            cb,
+            require_prompt_request_for_callback=deps.require_prompt_request_for_callback,
+        )
+
     async def _show_from_request_anchor(
         message: Message,
         req: PromptRequest,
@@ -92,7 +103,10 @@ def register_prompt_editor_thematic_handlers(
     def _register_scalar_param(config: ThematicScalarConfig) -> None:
         @router.callback_query(F.data == config.open_callback)
         async def _open(cb: CallbackQuery):
-            await cast(Message, cb.message).edit_text(
+            message = await require_callback_message(cb)
+            if message is None:
+                return
+            await message.edit_text(
                 config.menu_text,
                 reply_markup=scalar_choice_keyboard(
                     prefix=config.prefix,
@@ -104,16 +118,16 @@ def register_prompt_editor_thematic_handlers(
 
         @router.callback_query(F.data.startswith(f"{config.prefix}:"))
         async def _selected(cb: CallbackQuery, state: FSMContext):
-            payload = await deps.require_prompt_request_for_callback(cb)
-            if not payload:
+            context = await _callback_context(cb)
+            if context is None:
                 return
-            _, req = payload
+            message, _, req = context
             value = await parse_value_selection(cb, prefix=config.prefix)
             if value is None:
                 return
             if value == "custom":
                 await state.set_state(cast(Any, config.custom_state))
-                await cast(Message, cb.message).edit_text(
+                await message.edit_text(
                     config.custom_prompt,
                     reply_markup=deps.back_keyboard(config.back_callback),
                 )
@@ -121,15 +135,19 @@ def register_prompt_editor_thematic_handlers(
                 return
 
             try:
-                parsed = config.parse_value(value)
-                if not config.validate_value(parsed):
+                parsed = parse_scalar_value(
+                    value,
+                    parse_value=config.parse_value,
+                    validate_value=config.validate_value,
+                )
+                if parsed is None:
                     raise ValueError
             except ValueError:
                 await cb.answer("❌ Некорректное значение.", show_alert=True)
                 return
 
             config.set_value(req.params, parsed)
-            await cast(Message, cb.message).edit_text(
+            await message.edit_text(
                 config.render_text(req.params),
                 reply_markup=config.render_keyboard(req.params),
             )
@@ -141,11 +159,12 @@ def register_prompt_editor_thematic_handlers(
             if not payload:
                 return
             _, req = payload
-            try:
-                parsed = config.parse_value((msg.text or "").strip())
-                if not config.validate_value(parsed):
-                    raise ValueError
-            except ValueError:
+            parsed = parse_scalar_value(
+                (msg.text or ""),
+                parse_value=config.parse_value,
+                validate_value=config.validate_value,
+            )
+            if parsed is None:
                 await msg.answer(config.invalid_input_text)
                 return
 
@@ -162,10 +181,10 @@ def register_prompt_editor_thematic_handlers(
     @router.callback_query(F.data == "pe:sub:more")
     async def pe_submenu_more(cb: CallbackQuery):
         """'More settings' hub for simple mode — links to thematic submenus."""
-        payload = await deps.require_prompt_request_for_callback(cb)
-        if not payload:
+        context = await _callback_context(cb)
+        if context is None:
             return
-        _, req = payload
+        message, _, req = context
         params = req.params
 
         enh_label = enhancements_menu_label(params)
@@ -214,7 +233,7 @@ def register_prompt_editor_thematic_handlers(
                 ],
             ]
         )
-        await cast(Message, cb.message).edit_text(
+        await message.edit_text(
             "\u2699\ufe0f <b>\u0414\u043e\u043f\u043e\u043b\u043d\u0438\u0442\u0435\u043b\u044c\u043d\u044b\u0435 \u043d\u0430\u0441\u0442\u0440\u043e\u0439\u043a\u0438</b>\n"
             "\n"
             "\u0417\u0434\u0435\u0441\u044c \u0441\u043e\u0431\u0440\u0430\u043d\u044b \u0432\u0441\u0435 \u043f\u0430\u0440\u0430\u043c\u0435\u0442\u0440\u044b \u0433\u0435\u043d\u0435\u0440\u0430\u0446\u0438\u0438, "
@@ -230,10 +249,10 @@ def register_prompt_editor_thematic_handlers(
     @router.callback_query(F.data == "pe:sub:sampling")
     async def pe_submenu_sampling(cb: CallbackQuery):
         """Sampling thematic submenu: Steps, CFG, Sampler, Scheduler, Denoise, Seed."""
-        payload = await deps.require_prompt_request_for_callback(cb)
-        if not payload:
+        context = await _callback_context(cb)
+        if context is None:
             return
-        _, req = payload
+        message, _, req = context
         params = req.params
         seed_text = str(params.seed) if params.seed >= 0 else "\U0001f3b2"
 
@@ -277,7 +296,7 @@ def register_prompt_editor_thematic_handlers(
                 ],
             ]
         )
-        await cast(Message, cb.message).edit_text(
+        await message.edit_text(
             "\U0001f4d0 <b>\u0421\u044d\u043c\u043f\u043b\u0438\u043d\u0433</b>\n"
             "\n"
             "\u041d\u0430\u0441\u0442\u0440\u043e\u0439\u043a\u0438 \u043f\u0440\u043e\u0446\u0435\u0441\u0441\u0430 \u0433\u0435\u043d\u0435\u0440\u0430\u0446\u0438\u0438 \u0438\u0437\u043e\u0431\u0440\u0430\u0436\u0435\u043d\u0438\u044f.\n"
@@ -303,10 +322,10 @@ def register_prompt_editor_thematic_handlers(
     @router.callback_query(F.data == "pe:sub:image")
     async def pe_submenu_image(cb: CallbackQuery):
         """Image thematic submenu: Size, Batch, References, Ref Strength."""
-        payload = await deps.require_prompt_request_for_callback(cb)
-        if not payload:
+        context = await _callback_context(cb)
+        if context is None:
             return
-        _, req = payload
+        message, _, req = context
         params = req.params
         ref_count = len(params.reference_images)
 
@@ -374,7 +393,7 @@ def register_prompt_editor_thematic_handlers(
                 ],
             ]
         )
-        await cast(Message, cb.message).edit_text(
+        await message.edit_text(
             "\U0001f5bc <b>\u0418\u0437\u043e\u0431\u0440\u0430\u0436\u0435\u043d\u0438\u0435</b>\n"
             "\n"
             "\u041f\u0430\u0440\u0430\u043c\u0435\u0442\u0440\u044b \u0432\u044b\u0445\u043e\u0434\u043d\u043e\u0433\u043e \u0438\u0437\u043e\u0431\u0440\u0430\u0436\u0435\u043d\u0438\u044f.\n"
@@ -409,10 +428,10 @@ def register_prompt_editor_thematic_handlers(
     @router.callback_query(F.data == "pe:sub:enhancements")
     async def pe_submenu_enhancements(cb: CallbackQuery):
         """Enhancements hub: links to Hi-res Fix, FreeU, PAG, Upscaler submenus."""
-        payload = await deps.require_prompt_request_for_callback(cb)
-        if not payload:
+        context = await _callback_context(cb)
+        if context is None:
             return
-        _, req = payload
+        message, _, req = context
         params = req.params
 
         hires_status = "\u2705" if params.enable_hires_fix else "\u274c"
@@ -486,7 +505,7 @@ def register_prompt_editor_thematic_handlers(
             else "<i>\u041d\u0435\u0442 \u0430\u043a\u0442\u0438\u0432\u043d\u044b\u0445 \u0443\u043b\u0443\u0447\u0448\u0435\u043d\u0438\u0439</i>"
         )
 
-        await cast(Message, cb.message).edit_text(
+        await message.edit_text(
             "\u2728 <b>\u0423\u043b\u0443\u0447\u0448\u0435\u043d\u0438\u044f</b>\n"
             "\n"
             "\u0414\u043e\u043f\u043e\u043b\u043d\u0438\u0442\u0435\u043b\u044c\u043d\u044b\u0435 \u043c\u043e\u0434\u0443\u043b\u0438, \u043a\u043e\u0442\u043e\u0440\u044b\u0435 \u0443\u043b\u0443\u0447\u0448\u0430\u044e\u0442 \u043a\u0430\u0447\u0435\u0441\u0442\u0432\u043e "
@@ -562,11 +581,11 @@ def register_prompt_editor_thematic_handlers(
 
     @router.callback_query(F.data == "pe:enh:hires")
     async def pe_enh_hires(cb: CallbackQuery):
-        payload = await deps.require_prompt_request_for_callback(cb)
-        if not payload:
+        context = await _callback_context(cb)
+        if context is None:
             return
-        _, req = payload
-        await cast(Message, cb.message).edit_text(
+        message, _, req = context
+        await message.edit_text(
             _hires_submenu_text(req.params),
             reply_markup=_hires_submenu_kb(req.params),
         )
@@ -574,12 +593,12 @@ def register_prompt_editor_thematic_handlers(
 
     @router.callback_query(F.data == "pe:toggle:hires")
     async def pe_toggle_hires(cb: CallbackQuery, state: FSMContext):
-        payload = await deps.require_prompt_request_for_callback(cb)
-        if not payload:
+        context = await _callback_context(cb)
+        if context is None:
             return
-        _, req = payload
+        message, _, req = context
         req.params.enable_hires_fix = not req.params.enable_hires_fix
-        await cast(Message, cb.message).edit_text(
+        await message.edit_text(
             _hires_submenu_text(req.params),
             reply_markup=_hires_submenu_kb(req.params),
         )
@@ -642,10 +661,10 @@ def register_prompt_editor_thematic_handlers(
 
     @router.callback_query(F.data == "pe:enh:freeu")
     async def pe_enh_freeu(cb: CallbackQuery):
-        payload = await deps.require_prompt_request_for_callback(cb)
-        if not payload:
+        context = await _callback_context(cb)
+        if context is None:
             return
-        _, req = payload
+        message, _, req = context
         status = (
             "\u2705 \u0412\u041a\u041b"
             if req.params.enable_freeu
@@ -678,7 +697,7 @@ def register_prompt_editor_thematic_handlers(
                 ],
             ]
         )
-        await cast(Message, cb.message).edit_text(
+        await message.edit_text(
             "\u26a1 <b>FreeU V2</b>\n"
             "\n"
             "\u0411\u0435\u0441\u043f\u043b\u0430\u0442\u043d\u043e\u0435 \u0443\u043b\u0443\u0447\u0448\u0435\u043d\u0438\u0435 \u043a\u0430\u0447\u0435\u0441\u0442\u0432\u0430 \u0431\u0435\u0437 \u0434\u043e\u043f\u043e\u043b\u043d\u0438\u0442\u0435\u043b\u044c\u043d\u043e\u0439 "
@@ -703,10 +722,10 @@ def register_prompt_editor_thematic_handlers(
                 show_alert=True,
             )
             return
-        payload = await deps.require_prompt_request_for_callback(cb)
-        if not payload:
+        context = await _callback_context(cb)
+        if context is None:
             return
-        uid, req = payload
+        message, uid, req = context
         req.params.enable_freeu = not req.params.enable_freeu
         status_word = (
             "\u0432\u043a\u043b\u044e\u0447\u0435\u043d"
@@ -740,7 +759,7 @@ def register_prompt_editor_thematic_handlers(
                 ],
             ]
         )
-        await cast(Message, cb.message).edit_text(
+        await message.edit_text(
             "\u26a1 <b>FreeU V2</b>\n"
             "\n"
             "\u041f\u0430\u0442\u0447\u0438\u0442 \u043c\u043e\u0434\u0435\u043b\u044c \u0434\u043b\u044f \u0443\u043b\u0443\u0447\u0448\u0435\u043d\u0438\u044f \u0434\u0435\u0442\u0430\u043b\u0435\u0439.\n"
@@ -807,10 +826,10 @@ def register_prompt_editor_thematic_handlers(
 
     @router.callback_query(F.data == "pe:enh:pag")
     async def pe_enh_pag(cb: CallbackQuery):
-        payload = await deps.require_prompt_request_for_callback(cb)
-        if not payload:
+        context = await _callback_context(cb)
+        if context is None:
             return
-        _, req = payload
+        message, _, req = context
 
         if not deps.is_pag_supported():
             kb = InlineKeyboardMarkup(
@@ -823,7 +842,7 @@ def register_prompt_editor_thematic_handlers(
                     ]
                 ]
             )
-            await cast(Message, cb.message).edit_text(
+            await message.edit_text(
                 "\U0001f3af <b>PAG</b>\n\n"
                 "\u26a0\ufe0f PerturbedAttentionGuidance \u043d\u043e\u0434\u0430 \u043d\u0435 \u043d\u0430\u0439\u0434\u0435\u043d\u0430 \u043d\u0430 \u0441\u0435\u0440\u0432\u0435\u0440\u0435.",
                 reply_markup=kb,
@@ -831,7 +850,7 @@ def register_prompt_editor_thematic_handlers(
             await cb.answer()
             return
 
-        await cast(Message, cb.message).edit_text(
+        await message.edit_text(
             _pag_submenu_text(req.params),
             reply_markup=_pag_submenu_kb(req.params),
         )
@@ -845,17 +864,17 @@ def register_prompt_editor_thematic_handlers(
                 show_alert=True,
             )
             return
-        payload = await deps.require_prompt_request_for_callback(cb)
-        if not payload:
+        context = await _callback_context(cb)
+        if context is None:
             return
-        _, req = payload
+        message, _, req = context
         req.params.enable_pag = not req.params.enable_pag
         status_word = (
             "\u0432\u043a\u043b\u044e\u0447\u0435\u043d"
             if req.params.enable_pag
             else "\u0432\u044b\u043a\u043b\u044e\u0447\u0435\u043d"
         )
-        await cast(Message, cb.message).edit_text(
+        await message.edit_text(
             _pag_submenu_text(req.params),
             reply_markup=_pag_submenu_kb(req.params),
         )
@@ -886,10 +905,10 @@ def register_prompt_editor_thematic_handlers(
 
     @router.callback_query(F.data == "pe:enh:upscaler")
     async def pe_enh_upscaler(cb: CallbackQuery):
-        payload = await deps.require_prompt_request_for_callback(cb)
-        if not payload:
+        context = await _callback_context(cb)
+        if context is None:
             return
-        _, req = payload
+        message, _, req = context
         model = req.params.upscale_model
         status = f"\u2705 {h(truncate(model, 30))}" if model else "\u274c \u0412\u042b\u041a\u041b"
 
@@ -920,7 +939,7 @@ def register_prompt_editor_thematic_handlers(
         )
 
         kb = InlineKeyboardMarkup(inline_keyboard=rows)
-        await cast(Message, cb.message).edit_text(
+        await message.edit_text(
             "\U0001f50d <b>Upscaler</b>\n"
             "\n"
             "\u0423\u0432\u0435\u043b\u0438\u0447\u0438\u0432\u0430\u0435\u0442 \u0440\u0430\u0437\u0440\u0435\u0448\u0435\u043d\u0438\u0435 \u0433\u043e\u0442\u043e\u0432\u043e\u0439 \u043a\u0430\u0440\u0442\u0438\u043d\u043a\u0438 "
@@ -939,13 +958,13 @@ def register_prompt_editor_thematic_handlers(
 
     @router.callback_query(F.data == "pe:upsc:off")
     async def pe_upsc_off(cb: CallbackQuery, state: FSMContext):
-        payload = await deps.require_prompt_request_for_callback(cb)
-        if not payload:
+        context = await _callback_context(cb)
+        if context is None:
             return
-        uid, req = payload
+        message, uid, req = context
         req.params.upscale_model = ""
         await deps.show_prompt_editor(
-            cb.message,
+            message,
             state,
             uid,
             edit=True,
@@ -1033,11 +1052,11 @@ def register_prompt_editor_thematic_handlers(
 
     @router.callback_query(F.data == "pe:enh:tiled")
     async def pe_enh_tiled(cb: CallbackQuery):
-        payload = await deps.require_prompt_request_for_callback(cb)
-        if not payload:
+        context = await _callback_context(cb)
+        if context is None:
             return
-        _, req = payload
-        await cast(Message, cb.message).edit_text(
+        message, _, req = context
+        await message.edit_text(
             _tiled_submenu_text(req.params),
             reply_markup=_tiled_submenu_kb(req.params),
         )
@@ -1051,17 +1070,17 @@ def register_prompt_editor_thematic_handlers(
                 show_alert=True,
             )
             return
-        payload = await deps.require_prompt_request_for_callback(cb)
-        if not payload:
+        context = await _callback_context(cb)
+        if context is None:
             return
-        _, req = payload
+        message, _, req = context
         req.params.enable_tiled_diffusion = not req.params.enable_tiled_diffusion
         status_word = (
             "\u0432\u043a\u043b\u044e\u0447\u0435\u043d"
             if req.params.enable_tiled_diffusion
             else "\u0432\u044b\u043a\u043b\u044e\u0447\u0435\u043d"
         )
-        await cast(Message, cb.message).edit_text(
+        await message.edit_text(
             _tiled_submenu_text(req.params),
             reply_markup=_tiled_submenu_kb(req.params),
         )

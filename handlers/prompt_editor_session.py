@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from collections.abc import Iterable
+from typing import Any
 
 import aiohttp
 from aiogram.exceptions import TelegramBadRequest
@@ -128,6 +130,51 @@ async def ensure_models_available(client: ComfyUIClient, message: Message) -> bo
     return True
 
 
+def _clamp_float(
+    value: Any,
+    *,
+    default: float,
+    min_value: float,
+    max_value: float,
+) -> float:
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        numeric = default
+    return max(min_value, min(max_value, numeric))
+
+
+def _normalize_reference_item(item: object) -> dict[str, str] | None:
+    if isinstance(item, dict):
+        file_id = str(item.get("file_id", "")).strip()
+        if not file_id:
+            return None
+        ref_id = str(item.get("id") or uuid.uuid4().hex)
+        return {"id": ref_id, "file_id": file_id}
+
+    if isinstance(item, str):
+        file_id = item.strip()
+        if not file_id:
+            return None
+        return {"id": uuid.uuid4().hex, "file_id": file_id}
+
+    return None
+
+
+def _normalize_reference_images(
+    reference_images: Iterable[object],
+    *,
+    max_reference_images: int,
+) -> list[dict[str, str]]:
+    normalized_refs: list[dict[str, str]] = []
+    for item in reference_images:
+        normalized = _normalize_reference_item(item)
+        if normalized is None:
+            continue
+        normalized_refs.append(normalized)
+    return normalized_refs[:max_reference_images]
+
+
 def build_default_params(cfg: Config) -> GenerationParams:
     return GenerationParams(
         width=cfg.default_width,
@@ -185,11 +232,12 @@ def normalize_generation_params(
     if params.controlnet_name and params.controlnet_name not in client.info.controlnets:
         params.controlnet_name = ""
 
-    try:
-        params.controlnet_strength = float(params.controlnet_strength)
-    except (TypeError, ValueError):
-        params.controlnet_strength = 1.0
-    params.controlnet_strength = max(0.0, min(2.0, params.controlnet_strength))
+    params.controlnet_strength = _clamp_float(
+        params.controlnet_strength,
+        default=1.0,
+        min_value=0.0,
+        max_value=2.0,
+    )
 
     if (
         client.info.embeddings
@@ -202,27 +250,16 @@ def normalize_generation_params(
     else:
         params.loras = []
 
-    normalized_refs: list[dict[str, str]] = []
-    for item in params.reference_images:
-        if isinstance(item, dict):
-            file_id = str(item.get("file_id", "")).strip()
-            if not file_id:
-                continue
-            ref_id = str(item.get("id") or uuid.uuid4().hex)
-            normalized_refs.append({"id": ref_id, "file_id": file_id})
-            continue
-
-        if isinstance(item, str):
-            file_id = item.strip()
-            if file_id:
-                normalized_refs.append({"id": uuid.uuid4().hex, "file_id": file_id})
-
-    params.reference_images = normalized_refs[:max_reference_images]
-    try:
-        params.reference_strength = float(params.reference_strength)
-    except (TypeError, ValueError):
-        params.reference_strength = 0.8
-    params.reference_strength = max(0.0, min(2.0, params.reference_strength))
+    params.reference_images = _normalize_reference_images(
+        params.reference_images,
+        max_reference_images=max_reference_images,
+    )
+    params.reference_strength = _clamp_float(
+        params.reference_strength,
+        default=0.8,
+        min_value=0.0,
+        max_value=2.0,
+    )
     return params
 
 

@@ -27,6 +27,7 @@ from PIL import Image, ImageOps
 from config import Config
 from core.models import GenerationParams
 from core.queue_utils import queue_item_prompt_id
+from infrastructure.comfy_transport import ComfyHttpTransport, ComfyTransportProtocol
 from infrastructure.comfy_workflow_builder import build_comfy_workflow
 
 logger = logging.getLogger(__name__)
@@ -113,22 +114,24 @@ class ComfyUIInfo:
 class ComfyUIClient:
     """Async client for the ComfyUI HTTP API."""
 
-    def __init__(self, config: Config) -> None:
+    def __init__(
+        self,
+        config: Config,
+        *,
+        transport: ComfyTransportProtocol | None = None,
+    ) -> None:
         self.base_url = config.comfyui_url
-        self._session: aiohttp.ClientSession | None = None
+        self._transport: ComfyTransportProtocol = transport or ComfyHttpTransport(self.base_url)
         self.info = ComfyUIInfo()
         self._object_info: dict[str, Any] = {}
 
     # -- session management --------------------------------------------------
 
     async def _get_session(self) -> aiohttp.ClientSession:
-        if self._session is None or self._session.closed:
-            self._session = aiohttp.ClientSession()
-        return self._session
+        return await self._transport.get_session()
 
     async def close(self) -> None:
-        if self._session and not self._session.closed:
-            await self._session.close()
+        await self._transport.close()
 
     # -- fetch server info ---------------------------------------------------
 
@@ -267,12 +270,11 @@ class ComfyUIClient:
 
     async def refresh_info(self) -> ComfyUIInfo:
         """Query ComfyUI /object_info and populate available resources."""
-        session = await self._get_session()
-        url = f"{self.base_url}/object_info"
         try:
-            async with session.get(url, timeout=aiohttp.ClientTimeout(total=30)) as resp:
-                resp.raise_for_status()
-                data: dict[str, Any] = await resp.json()
+            raw_data = await self._transport.get_json("/object_info", timeout=30)
+            if not isinstance(raw_data, dict):
+                raise ValueError("Invalid /object_info payload type")
+            data: dict[str, Any] = raw_data
         except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
             logger.exception("Failed to fetch /object_info")
             raise
@@ -362,7 +364,6 @@ class ComfyUIClient:
 
     async def upload_input_image(self, image_bytes: bytes) -> str:
         """Upload an image to ComfyUI input folder and return its workflow name."""
-        session = await self._get_session()
         filename = f"comfybot_ref_{uuid.uuid4().hex}.png"
         form = aiohttp.FormData()
         form.add_field(
@@ -374,13 +375,14 @@ class ComfyUIClient:
         form.add_field("type", "input")
         form.add_field("overwrite", "true")
 
-        async with session.post(
-            f"{self.base_url}/upload/image",
+        raw_data = await self._transport.post_json(
+            "/upload/image",
             data=form,
-            timeout=aiohttp.ClientTimeout(total=60),
-        ) as resp:
-            resp.raise_for_status()
-            data: dict[str, Any] = await resp.json()
+            timeout=60,
+        )
+        if not isinstance(raw_data, dict):
+            raise ValueError("Invalid /upload/image payload type")
+        data: dict[str, Any] = raw_data
 
         name = str(data.get("name") or filename)
         subfolder = str(data.get("subfolder") or "")
@@ -395,15 +397,17 @@ class ComfyUIClient:
         client_id: str | None = None,
     ) -> str:
         """Send a workflow to the queue. Returns the prompt_id."""
-        session = await self._get_session()
         if not client_id:
             client_id = uuid.uuid4().hex
         payload = {"prompt": workflow, "client_id": client_id}
 
-        url = f"{self.base_url}/prompt"
-        async with session.post(url, json=payload, timeout=aiohttp.ClientTimeout(total=30)) as resp:
-            resp.raise_for_status()
-            data = await resp.json()
+        data = await self._transport.post_json(
+            "/prompt",
+            json_payload=payload,
+            timeout=30,
+        )
+        if not isinstance(data, dict):
+            raise ValueError("Invalid /prompt payload type")
 
         prompt_id = data.get("prompt_id", "")
         if not prompt_id:
@@ -413,28 +417,26 @@ class ComfyUIClient:
 
     async def cancel_prompt(self, prompt_id: str) -> None:
         """Interrupt a running prompt or remove it from the queue."""
-        session = await self._get_session()
-
         # 1. Interrupt current execution
         try:
-            async with session.post(
-                f"{self.base_url}/interrupt",
-                timeout=aiohttp.ClientTimeout(total=10),
-            ) as resp:
-                if resp.status != 200:
-                    logger.warning("Failed to interrupt: %s", resp.status)
+            status = await self._transport.post_status(
+                "/interrupt",
+                timeout=10,
+            )
+            if status != 200:
+                logger.warning("Failed to interrupt: %s", status)
         except (aiohttp.ClientError, asyncio.TimeoutError):
             logger.warning("Failed to interrupt prompt %s", prompt_id, exc_info=True)
 
         # 2. Remove from queue (if pending)
         try:
-            async with session.post(
-                f"{self.base_url}/queue",
-                json={"delete": [prompt_id]},
-                timeout=aiohttp.ClientTimeout(total=10),
-            ) as resp:
-                if resp.status != 200:
-                    logger.warning("Failed to delete from queue: %s", resp.status)
+            status = await self._transport.post_status(
+                "/queue",
+                json_payload={"delete": [prompt_id]},
+                timeout=10,
+            )
+            if status != 200:
+                logger.warning("Failed to delete from queue: %s", status)
         except (aiohttp.ClientError, asyncio.TimeoutError):
             logger.warning("Failed to delete prompt %s from queue", prompt_id, exc_info=True)
 
@@ -545,7 +547,6 @@ class ComfyUIClient:
         return entries
 
     async def _download_image_from_info(self, img_info: dict[str, Any]) -> bytes | None:
-        session = await self._get_session()
         filename = str(img_info.get("filename") or "")
         subfolder = str(img_info.get("subfolder") or "")
         img_type = str(img_info.get("type") or "output")
@@ -554,13 +555,12 @@ class ComfyUIClient:
             "subfolder": subfolder,
             "type": img_type,
         }
-        url = f"{self.base_url}/view"
         try:
-            async with session.get(
-                url, params=params, timeout=aiohttp.ClientTimeout(total=60)
-            ) as resp:
-                resp.raise_for_status()
-                return await resp.read()
+            return await self._transport.get_bytes(
+                "/view",
+                params=params,
+                timeout=60,
+            )
         except (aiohttp.ClientError, asyncio.TimeoutError, OSError):
             logger.exception("Failed to download image %s", filename)
             return None
@@ -576,7 +576,6 @@ class ComfyUIClient:
         image_cb: GenerationImageCallback | None = None,
         delivered_image_keys: set[str] | None = None,
     ) -> bool:
-        session = await self._get_session()
         ws_url = self._ws_url(self.base_url, client_id)
         node_types = self._workflow_node_types(workflow)
         loop = asyncio.get_running_loop()
@@ -597,11 +596,12 @@ class ComfyUIClient:
             await progress_cb(current, total, text)
 
         try:
-            async with session.ws_connect(
+            ws = await self._transport.ws_connect(
                 ws_url,
                 heartbeat=30,
                 timeout=20,
-            ) as ws:
+            )
+            async with ws:
                 await report_progress(
                     ("ws_connected",),
                     0,
@@ -1244,10 +1244,7 @@ class ComfyUIClient:
 
     async def get_queue_status(self) -> dict[str, Any]:
         """Return current queue information."""
-        session = await self._get_session()
-        async with session.get(
-            f"{self.base_url}/queue",
-            timeout=aiohttp.ClientTimeout(total=5),
-        ) as resp:
-            resp.raise_for_status()
-            return await resp.json()
+        data = await self._transport.get_json("/queue", timeout=5)
+        if not isinstance(data, dict):
+            raise ValueError("Invalid /queue payload type")
+        return data

@@ -101,6 +101,7 @@ python -m pytest -q
 - `docs/CHANGELOG.md` — итоговый changelog крупных изменений.
 - `docs/ARCHITECTURE.md` — устройство проекта, поток данных, зоны ответственности.
 - `docs/REFACTOR_GUARDRAILS.md` — протокол безопасного поэтапного рефакторинга.
+- `docs/REFACTOR_COMPLETION.md` — итоговый отчет по этапам архитектурной миграции.
 - `docs/TROUBLESHOOTING.md` — типовые проблемы и решения.
 - `SECURITY.md` — правила безопасной публикации и работы с секретами.
 - `CONTRIBUTING.md` — рекомендации по развитию проекта.

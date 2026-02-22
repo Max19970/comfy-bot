@@ -262,6 +262,13 @@ Handler-модули `handlers/prompt_editor_generation.py` и
 - В `pyproject.toml` добавлены stricter mypy-правила для
   `application/*`, `domain/*`, `infrastructure/*`.
 
+### Closure and handoff (Stage 9)
+
+- Добавлен итоговый документ `docs/REFACTOR_COMPLETION.md` с картой
+  выполненных этапов, acceptance matrix и checklist перед релизом.
+- Добавлены финальные контрактные тесты на ключевые инварианты
+  (runtime schema v2, совместимость download base-code policy).
+
 ## UI-архитектура
 
 Подробные правила интерфейсного слоя и шаблон расширения описаны в

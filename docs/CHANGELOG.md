@@ -1,5 +1,29 @@
 # Changelog
 
+## 2026-02-22 - Архитектурная миграция (этапы 0-9)
+
+### Layered migration и типизация домена
+
+- Добавлены целевые архитектурные слои `domain/`, `application/`,
+  `infrastructure/`, `presentation/` и протокол безопасной миграции.
+- Введены typed модели для LoRA и typed generation request с
+  backward-compatible адаптерами к legacy `GenerationParams`.
+
+### Декомпозиция крупных модулей и use-case слой
+
+- Вынесены use-case сервисы для генерации и download-search.
+- `ComfyUIClient` делегирует сборку workflow в инфраструктурный builder.
+- Логика smart prompt text/policy и base model policy вынесена в
+  специализированные модули.
+
+### Runtime/session и guardrails
+
+- Runtime persistence переведен на typed snapshot DTO с миграцией схемы
+  `runtime.json` (`schema_version: 1 -> 2`).
+- Усилены архитектурные тесты границ импортов и type-гарантии
+  (`mypy` overrides для новых слоев).
+- Итоговый отчет по миграции добавлен в `docs/REFACTOR_COMPLETION.md`.
+
 ## 2026-02-21 - Рефакторинг дублирования (этапы 1-8)
 
 ### Централизация фильтров и пользовательских дефолтов

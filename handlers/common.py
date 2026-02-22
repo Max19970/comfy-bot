@@ -1,18 +1,13 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Awaitable, Callable
 from typing import Any
 
 from aiogram import Router
-from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import (
-    CallbackQuery,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
-    Message,
 )
-from aiogram.types.base import TelegramObject
 
 from comfyui_client import ComfyUIClient
 from config import Config
@@ -27,6 +22,7 @@ from core.ui_kit.buttons import button, cancel_button, noop_button
 from model_downloader import ModelDownloader
 
 from .common_core_handlers import CommonCoreDeps, register_common_core_handlers
+from .common_middleware import register_access_middlewares
 from .common_ops_handlers import (
     CommonDeleteDeps,
     CommonJobsDeps,
@@ -256,50 +252,11 @@ def register_common_handlers(
     downloader: ModelDownloader,
     runtime: RuntimeStore,
 ) -> None:
-    async def wl_msg(
-        handler: Callable[[TelegramObject, dict[str, Any]], Awaitable[Any]],
-        event: TelegramObject,
-        data: dict[str, Any],
-    ) -> Any:
-        if not isinstance(event, Message):
-            return await handler(event, data)
-        command_text = (event.text or "").strip()
-        should_delete_command = command_text.startswith("/")
-        if cfg.allowed_users and event.from_user and event.from_user.id not in cfg.allowed_users:
-            await event.answer(
-                "\u26d4 <b>\u0414\u043e\u0441\u0442\u0443\u043f \u0437\u0430\u043f\u0440\u0435\u0449\u0451\u043d</b>\n\u0412\u0430\u0448 ID \u043d\u0435 \u0432 \u0441\u043f\u0438\u0441\u043a\u0435 \u0440\u0430\u0437\u0440\u0435\u0448\u0451\u043d\u043d\u044b\u0445."
-            )
-            return
-        try:
-            return await handler(event, data)
-        finally:
-            if should_delete_command:
-                try:
-                    await event.delete()
-                except TelegramBadRequest:
-                    pass
-            runtime.persist()
-
-    async def wl_cb(
-        handler: Callable[[TelegramObject, dict[str, Any]], Awaitable[Any]],
-        event: TelegramObject,
-        data: dict[str, Any],
-    ) -> Any:
-        if not isinstance(event, CallbackQuery):
-            return await handler(event, data)
-        if cfg.allowed_users and event.from_user and event.from_user.id not in cfg.allowed_users:
-            await event.answer(
-                "\u26d4 \u0414\u043e\u0441\u0442\u0443\u043f \u0437\u0430\u043f\u0440\u0435\u0449\u0451\u043d.",
-                show_alert=True,
-            )
-            return
-        try:
-            return await handler(event, data)
-        finally:
-            runtime.persist()
-
-    router.message.outer_middleware(wl_msg)
-    router.callback_query.outer_middleware(wl_cb)
+    register_access_middlewares(
+        router,
+        allowed_users=cfg.allowed_users,
+        runtime_persist=runtime.persist,
+    )
 
     register_common_core_handlers(
         CommonCoreDeps(

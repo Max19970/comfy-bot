@@ -16,10 +16,6 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 from core.download_filters import (
     DOWNLOAD_FILTER_PROFILES,
     download_base_label,
-    normalize_download_base_code,
-    normalize_download_period_code,
-    normalize_download_sort_code,
-    normalize_download_source,
 )
 from core.interaction import require_callback_message
 from core.states import ServiceSettingsStates
@@ -35,6 +31,13 @@ from .common_core_utils import (
     set_training_page,
     training_advanced,
     training_pages,
+)
+from .common_settings_logic import (
+    SettingsParseError,
+    parse_download_author,
+    parse_download_callback_value,
+    parse_generation_callback_value,
+    parse_generation_manual_value,
 )
 
 
@@ -950,51 +953,35 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
             return
         key = parts[4]
         value = parts[5]
-        if key == "size":
-            try:
-                width_s, height_s = value.split("x", 1)
-                set_pref(deps.runtime, uid, "gen_width", int(width_s))
-                set_pref(deps.runtime, uid, "gen_height", int(height_s))
-            except (TypeError, ValueError):
+        try:
+            updates = parse_generation_callback_value(key, value)
+        except SettingsParseError as exc:
+            await cb.answer(str(exc), show_alert=True)
+            return
+        except (TypeError, ValueError):
+            if key == "size":
                 await cb.answer("⚠️ Некорректный размер.", show_alert=True)
                 return
-        elif key == "steps":
-            try:
-                set_pref(deps.runtime, uid, "gen_steps", int(value))
-            except ValueError:
+            if key == "steps":
                 await cb.answer("⚠️ Некорректное значение steps.", show_alert=True)
                 return
-        elif key == "cfg":
-            try:
-                set_pref(deps.runtime, uid, "gen_cfg", float(value))
-            except ValueError:
+            if key == "cfg":
                 await cb.answer("⚠️ Некорректное значение cfg.", show_alert=True)
                 return
-        elif key == "denoise":
-            try:
-                set_pref(deps.runtime, uid, "gen_denoise", float(value))
-            except ValueError:
+            if key == "denoise":
                 await cb.answer("⚠️ Некорректное значение denoise.", show_alert=True)
                 return
-        elif key == "sampler":
-            set_pref(deps.runtime, uid, "gen_sampler", value)
-        elif key == "scheduler":
-            set_pref(deps.runtime, uid, "gen_scheduler", value)
-        elif key == "seed":
-            try:
-                set_pref(deps.runtime, uid, "gen_seed", int(value))
-            except ValueError:
+            if key == "seed":
                 await cb.answer("⚠️ Некорректный seed.", show_alert=True)
                 return
-        elif key == "batch":
-            try:
-                set_pref(deps.runtime, uid, "gen_batch", int(value))
-            except ValueError:
+            if key == "batch":
                 await cb.answer("⚠️ Некорректный batch.", show_alert=True)
                 return
-        else:
             await cb.answer("⚠️ Неизвестный параметр.", show_alert=True)
             return
+
+        for pref_key, pref_value in updates.items():
+            set_pref(deps.runtime, uid, pref_key, pref_value)
         await _show_generation_settings(message, uid)
         await cb.answer("✅ Сохранено")
 
@@ -1009,41 +996,23 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
             await cb.answer("⚠️ Некорректный параметр.", show_alert=True)
             return
         key = parts[4]
-        value = parts[5].strip().lower()
-        if key == "source":
-            source = normalize_download_source(value, default="")
-            if not source:
-                await cb.answer("⚠️ Некорректный source.", show_alert=True)
-                return
-            set_pref(deps.runtime, uid, "dl_default_source", source)
-        elif key == "sort":
-            sort_code = normalize_download_sort_code(value, default="")
-            if not sort_code:
-                await cb.answer("⚠️ Некорректный sort.", show_alert=True)
-                return
-            set_pref(deps.runtime, uid, "dl_default_sort", sort_code)
-        elif key == "period":
-            period_code = normalize_download_period_code(value, default="")
-            if not period_code:
-                await cb.answer("⚠️ Некорректный period.", show_alert=True)
-                return
-            set_pref(deps.runtime, uid, "dl_default_period", period_code)
-        elif key == "base":
-            base_code = normalize_download_base_code(value, default="")
-            if not base_code:
-                await cb.answer("⚠️ Некорректная базовая модель.", show_alert=True)
-                return
-            set_pref(deps.runtime, uid, "dl_default_base", base_code)
-        elif key == "profile":
-            if not _apply_download_profile(uid, value):
-                await cb.answer("⚠️ Неизвестный профиль.", show_alert=True)
-                return
-        elif key == "nsfw" and value == "toggle":
-            current = bool(deps.runtime.user_preferences.get(uid, {}).get("dl_default_nsfw", False))
-            set_pref(deps.runtime, uid, "dl_default_nsfw", not current)
-        else:
-            await cb.answer("⚠️ Неизвестный параметр.", show_alert=True)
+        value = parts[5]
+        current_nsfw = bool(
+            deps.runtime.user_preferences.get(uid, {}).get("dl_default_nsfw", False)
+        )
+        try:
+            updates = parse_download_callback_value(
+                key,
+                value,
+                current_nsfw=current_nsfw,
+                apply_profile=lambda profile_code: _apply_download_profile(uid, profile_code),
+            )
+        except SettingsParseError as exc:
+            await cb.answer(str(exc), show_alert=True)
             return
+
+        for pref_key, pref_value in updates.items():
+            set_pref(deps.runtime, uid, pref_key, pref_value)
         await _show_download_settings(message, uid)
         await cb.answer("✅ Сохранено")
 
@@ -1146,52 +1115,8 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
             return
 
         try:
-            if field == "size":
-                width_s, height_s = raw.lower().replace(" ", "").split("x", 1)
-                width = int(width_s)
-                height = int(height_s)
-                if not (64 <= width <= 4096 and 64 <= height <= 4096):
-                    raise ValueError
-                set_pref(deps.runtime, uid, "gen_width", width)
-                set_pref(deps.runtime, uid, "gen_height", height)
-            elif field == "steps":
-                steps_value = int(float(raw.replace(",", ".")))
-                if not (1 <= steps_value <= 200):
-                    raise ValueError
-                set_pref(deps.runtime, uid, "gen_steps", steps_value)
-            elif field == "cfg":
-                cfg_value = float(raw.replace(",", "."))
-                if not (0.0 <= cfg_value <= 30.0):
-                    raise ValueError
-                set_pref(deps.runtime, uid, "gen_cfg", cfg_value)
-            elif field == "denoise":
-                denoise_value = float(raw.replace(",", "."))
-                if not (0.0 <= denoise_value <= 1.0):
-                    raise ValueError
-                set_pref(deps.runtime, uid, "gen_denoise", denoise_value)
-            elif field == "seed":
-                seed_value = int(raw.replace(" ", ""))
-                if seed_value < -1:
-                    raise ValueError
-                set_pref(deps.runtime, uid, "gen_seed", seed_value)
-            elif field == "batch":
-                batch_value = int(raw.replace(" ", ""))
-                if not (1 <= batch_value <= 16):
-                    raise ValueError
-                set_pref(deps.runtime, uid, "gen_batch", batch_value)
-            elif field == "sampler":
-                sampler_value = raw.strip()
-                if not sampler_value:
-                    raise ValueError
-                set_pref(deps.runtime, uid, "gen_sampler", sampler_value)
-            elif field == "scheduler":
-                scheduler_value = raw.strip()
-                if not scheduler_value:
-                    raise ValueError
-                set_pref(deps.runtime, uid, "gen_scheduler", scheduler_value)
-            else:
-                raise ValueError
-        except ValueError:
+            updates = parse_generation_manual_value(field, raw)
+        except (SettingsParseError, TypeError, ValueError):
             await deps.render_user_panel(
                 msg,
                 deps.runtime,
@@ -1211,6 +1136,9 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
             )
             return
 
+        for pref_key, pref_value in updates.items():
+            set_pref(deps.runtime, uid, pref_key, pref_value)
+
         await state.clear()
         await _show_generation_settings(msg, uid)
 
@@ -1228,21 +1156,7 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
             await _show_download_settings(msg, uid)
             return
 
-        if raw in {"-", "*"}:
-            author = ""
-        else:
-            tokens = [item.strip().lstrip("@") for item in raw.split(",")]
-            dedup: list[str] = []
-            seen: set[str] = set()
-            for token in tokens:
-                if not token:
-                    continue
-                key = token.lower()
-                if key in seen:
-                    continue
-                seen.add(key)
-                dedup.append(token[:64])
-            author = ",".join(dedup[:6])
+        author = parse_download_author(raw)
         set_pref(deps.runtime, uid, "dl_default_author", author)
         await state.clear()
         await _show_download_settings(msg, uid)

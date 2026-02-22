@@ -24,10 +24,10 @@ from aiogram import Bot, Dispatcher
 from aiogram.exceptions import TelegramAPIError
 from aiogram.types import BotCommand
 
-from app_context import AppContext, create_app_context
+from app_context import AppContext, create_app_context, create_app_services
 from comfyui_client import ComfyUIClient
 from config import Config
-from handlers.registry import register_handlers
+from handlers.registry import HandlerRegistryDeps, register_handlers_with_deps
 from model_downloader import ModelDownloader
 from smart_prompt import SmartPromptService
 
@@ -39,7 +39,11 @@ logger = logging.getLogger(__name__)
 
 
 async def configure_bot_commands(bot: Bot) -> None:
-    commands = [
+    await bot.set_my_commands(default_bot_commands())
+
+
+def default_bot_commands() -> list[BotCommand]:
+    return [
         BotCommand(command="start", description="Главное меню"),
         BotCommand(command="help", description="Помощь"),
         BotCommand(command="generate", description="Новая генерация"),
@@ -53,7 +57,6 @@ async def configure_bot_commands(bot: Bot) -> None:
         BotCommand(command="training", description="Обучение"),
         BotCommand(command="cancel", description="Отменить операцию"),
     ]
-    await bot.set_my_commands(commands)
 
 
 def create_bot(
@@ -64,14 +67,17 @@ def create_bot(
 
 
 def create_app(cfg: Config) -> AppContext:
-    app = create_app_context(cfg)
-    register_handlers(
+    services = create_app_services(cfg)
+    app = create_app_context(cfg, services=services)
+    register_handlers_with_deps(
         app.router,
-        cfg=cfg,
-        client=app.client,
-        downloader=app.downloader,
-        runtime=app.runtime,
-        smart_prompt=app.smart_prompt,
+        HandlerRegistryDeps(
+            cfg=cfg,
+            client=app.client,
+            downloader=app.downloader,
+            runtime=app.runtime,
+            smart_prompt=app.smart_prompt,
+        ),
     )
     return app
 

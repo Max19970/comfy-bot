@@ -13,6 +13,14 @@ from smart_prompt import SmartPromptService
 
 
 @dataclass(slots=True)
+class AppServices:
+    client: ComfyUIClient
+    downloader: ModelDownloader
+    smart_prompt: SmartPromptService
+    runtime: RuntimeStore
+
+
+@dataclass(slots=True)
 class AppContext:
     cfg: Config
     bot: Bot
@@ -31,7 +39,16 @@ class AppContext:
         await self.bot.session.close()
 
 
-def create_app_context(cfg: Config) -> AppContext:
+def create_app_services(cfg: Config) -> AppServices:
+    return AppServices(
+        client=ComfyUIClient(cfg),
+        downloader=ModelDownloader(cfg),
+        smart_prompt=SmartPromptService(cfg),
+        runtime=load_runtime_store(),
+    )
+
+
+def create_telegram_stack(cfg: Config) -> tuple[Bot, Dispatcher, Router]:
     bot = Bot(
         token=cfg.telegram_token,
         default=DefaultBotProperties(parse_mode="HTML"),
@@ -39,14 +56,20 @@ def create_app_context(cfg: Config) -> AppContext:
     dispatcher = Dispatcher()
     router = Router()
     dispatcher.include_router(router)
+    return bot, dispatcher, router
+
+
+def create_app_context(cfg: Config, *, services: AppServices | None = None) -> AppContext:
+    active_services = services or create_app_services(cfg)
+    bot, dispatcher, router = create_telegram_stack(cfg)
 
     return AppContext(
         cfg=cfg,
         bot=bot,
         dispatcher=dispatcher,
         router=router,
-        client=ComfyUIClient(cfg),
-        downloader=ModelDownloader(cfg),
-        smart_prompt=SmartPromptService(cfg),
-        runtime=load_runtime_store(),
+        client=active_services.client,
+        downloader=active_services.downloader,
+        smart_prompt=active_services.smart_prompt,
+        runtime=active_services.runtime,
     )

@@ -27,6 +27,11 @@ from PIL import Image, ImageOps
 from config import Config
 from core.models import GenerationParams
 from core.queue_utils import queue_item_prompt_id
+from infrastructure.comfy_execution_orchestrator import (
+    ComfyExecutionOrchestrator,
+    GenerationImageCallback,
+    GenerationProgressCallback,
+)
 from infrastructure.comfy_transport import ComfyHttpTransport, ComfyTransportProtocol
 from infrastructure.comfy_workflow_builder import build_comfy_workflow
 
@@ -36,9 +41,6 @@ logger = logging.getLogger(__name__)
 _resampling = getattr(Image, "Resampling", None)
 LANCZOS_RESAMPLE = getattr(_resampling, "LANCZOS", 1)
 _NO_DEFAULT = object()
-
-GenerationProgressCallback = Callable[[int, int, str], Awaitable[None]]
-GenerationImageCallback = Callable[[bytes], Awaitable[None]]
 
 
 def _compose_reference_image(
@@ -124,6 +126,7 @@ class ComfyUIClient:
         self._transport: ComfyTransportProtocol = transport or ComfyHttpTransport(self.base_url)
         self.info = ComfyUIInfo()
         self._object_info: dict[str, Any] = {}
+        self._execution_orchestrator = ComfyExecutionOrchestrator(self)
 
     # -- session management --------------------------------------------------
 
@@ -1082,39 +1085,12 @@ class ComfyUIClient:
         prompt_id_cb: Callable[[str], Awaitable[None]] | None = None,
         image_cb: GenerationImageCallback | None = None,
     ) -> list[bytes]:
-        client_id = uuid.uuid4().hex if progress_cb else None
-        delivered_image_keys: set[str] = set()
-        prompt_id = await self.queue_prompt(workflow, client_id=client_id)
-        if prompt_id_cb:
-            await prompt_id_cb(prompt_id)
-
-        if progress_cb:
-            await progress_cb(0, 0, "Промпт отправлен в очередь ComfyUI...")
-
-        if progress_cb and client_id:
-            history = await self.wait_for_completion_realtime(
-                prompt_id,
-                client_id=client_id,
-                workflow=workflow,
-                progress_cb=progress_cb,
-                image_cb=image_cb,
-                delivered_image_keys=delivered_image_keys,
-            )
-        else:
-            history = await self.wait_for_completion(prompt_id)
-
-        if progress_cb:
-            await progress_cb(1, 1, "Генерация завершена. Получаю изображения...")
-
-        images_with_keys = await self.get_images_with_keys(history)
-        if image_cb:
-            for key, image_bytes in images_with_keys:
-                if key in delivered_image_keys:
-                    continue
-                delivered_image_keys.add(key)
-                await image_cb(image_bytes)
-            return []
-        return [image_bytes for _, image_bytes in images_with_keys]
+        return await self._execution_orchestrator.run_workflow_and_collect(
+            workflow,
+            progress_cb=progress_cb,
+            prompt_id_cb=prompt_id_cb,
+            image_cb=image_cb,
+        )
 
     async def generate_from_image(
         self,

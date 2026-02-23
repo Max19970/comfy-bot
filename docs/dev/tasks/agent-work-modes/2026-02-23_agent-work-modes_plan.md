@@ -190,3 +190,6 @@ If none:
 | 2026-02-23 | Stage 1 implemented; awaiting explicit user approval | `docs/dev/tasks/agent-work-modes/reports/2026-02-23_stage-1_define-mode-policy-model_report.md` |
 | 2026-02-23 | Stage 1 updated after localization follow-up; awaiting explicit user approval | `docs/dev/tasks/agent-work-modes/reports/2026-02-23_stage-1_define-mode-policy-model_report.md` |
 | 2026-02-23 | Stage 1 approved by user | User message: "Этап 1 одобрен" |
+| 2026-02-23 | Stage 1 committed in `6fd06b6` | Local commit created before Stage 2 execution |
+| 2026-02-23 | Stage 2 implemented; awaiting explicit user approval | `docs/dev/tasks/agent-work-modes/reports/2026-02-23_stage-2_mode-aware-gates_report.md` |
+| 2026-02-23 | Stage 2 approved by user | User message: "Этап 2 одобрен" |

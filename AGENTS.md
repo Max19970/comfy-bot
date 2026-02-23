@@ -5,10 +5,10 @@ The rules below are strict and must be followed in order.
 
 ## Core Policy
 
-- Use a strict gated workflow: Topic Validation -> Planning -> Stage Execution.
-- Never skip a gate.
-- Never continue after a gate fails.
-- If a user asks to bypass this protocol, refuse and explain which gate blocks progress.
+- In `Extended` mode, use a strict gated workflow: Topic Validation -> Planning -> Stage Execution.
+- In `Extended` mode, never skip a gate.
+- In `Extended` mode, never continue after a gate fails.
+- If a user asks to bypass this protocol while in `Extended` mode, refuse and explain which gate blocks progress.
 
 ## Work Mode Selection (Mandatory First Decision)
 
@@ -28,12 +28,18 @@ Mode semantics:
   - Prioritize fast, direct execution in a practical format at agent discretion.
   - Do not create low-quality or risky solutions (no temporary hacks/costyls that can damage project maintainability).
   - Keep project operability and safety intact.
+  - Do not require mandatory stage plans, stage approval gates, or stage report artifacts unless the user explicitly asks for them.
 - `Extended` mode:
   - Apply the full strict gated workflow and artifact discipline described below.
 
-## 1) Topic Validation Gate (Mandatory First Step)
+Mode execution routing:
 
-Before any implementation work:
+- If selected mode is `Simple`, execute directly using concise process overhead while preserving quality/safety constraints above.
+- If selected mode is `Extended`, apply Sections 1-5 below in full.
+
+## 1) Topic Validation Gate (Extended Mode Only, Mandatory First Step)
+
+In `Extended` mode, before any implementation work:
 
 1. Analyze the user request and extract all topics it touches.
 2. Decide whether the request is one coherent topic or multiple fundamentally different topics.
@@ -46,9 +52,9 @@ Before any implementation work:
 
 A request is considered "fundamentally different topics" when it combines goals that do not share one direct implementation outcome (for example: backend auth refactor + UI redesign + infrastructure migration in one request).
 
-## 2) Planning Gate (Mandatory Before Any Code Changes)
+## 2) Planning Gate (Extended Mode Only, Mandatory Before Any Code Changes)
 
-If the request is one coherent topic:
+In `Extended` mode, if the request is one coherent topic:
 
 1. Create a detailed implementation plan split into modular Stages.
 2. Each Stage must include:
@@ -77,9 +83,9 @@ If the request is one coherent topic:
    - Report what changed.
    - Stop and wait for approval again.
 
-Hard rule: never execute implementation tasks until the user explicitly approves the plan.
+Hard rule (`Extended` mode): never execute implementation tasks until the user explicitly approves the plan.
 
-## 3) Stage Execution Protocol (Only After Plan Approval)
+## 3) Stage Execution Protocol (Extended Mode Only, Only After Plan Approval)
 
 Execute exactly one Stage at a time. Repeat the loop below until all Stages are completed.
 
@@ -137,15 +143,22 @@ If the user asks follow-up questions, answer them before moving on.
 
 ## 4) Completion Conditions
 
-The request is complete only when all conditions are true:
+In `Extended` mode, the request is complete only when all conditions are true:
 
 - All planned Stages are implemented.
 - All Stages are explicitly approved by the user.
 - Stage commits are created according to step 3.1.
 - Final completion report is delivered.
 
+In `Simple` mode, the request is complete when:
+
+- The requested outcome is delivered.
+- Project operability and safety are preserved.
+- The final response clearly states what was changed.
+
 ## 5) Required Interaction Behavior
 
-- Be explicit about current protocol state: Topic Validation, Planning, or Stage Execution.
-- If blocked by missing user approval, stop and state exactly what approval is required.
-- Do not silently skip protocol steps.
+- In `Extended` mode, be explicit about current protocol state: Topic Validation, Planning, or Stage Execution.
+- In `Extended` mode, if blocked by missing user approval, stop and state exactly what approval is required.
+- In `Extended` mode, do not silently skip protocol steps.
+- In `Simple` mode, keep interaction concise and execution-focused, and report key outcomes and checks.

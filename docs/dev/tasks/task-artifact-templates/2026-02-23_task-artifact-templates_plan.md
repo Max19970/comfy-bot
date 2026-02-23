@@ -140,9 +140,17 @@
 # Unplanned additional tasks
 
 - Added `docs/dev/tasks/_templates/README.md` to make template directory purpose and usage contract explicit.
+- Enhanced markdown presentation for both templates based on user follow-up feedback (denser structure, checklists, metadata tables, and clearer optional blocks).
+- Performed an additional visual pass to further improve hierarchy and readability (navigation blocks, section legends, and snapshot tables).
 
 # Stage approval log
 
 - 2026-02-23: Plan updated to include explicit template file paths per user request.
 - 2026-02-23: Plan approved by user.
 - 2026-02-23: Stage 1 implemented; awaiting explicit user approval.
+- 2026-02-23: Stage 1 approved by user.
+- 2026-02-23: Stage 1 committed in `d8ea901`.
+- 2026-02-23: Stage 2 implemented; awaiting explicit user approval.
+- 2026-02-23: Stage 2 refined with markdown-formatting improvements requested by user; awaiting explicit user approval.
+- 2026-02-23: Stage 2 refined again for stronger visual hierarchy and readability; awaiting explicit user approval.
+- 2026-02-23: Stage 2 approved by user.

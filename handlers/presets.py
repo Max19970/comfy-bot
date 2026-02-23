@@ -9,6 +9,7 @@ from aiogram.types import (
     Message,
 )
 
+from application.user_locale_resolver import DefaultUserLocaleResolver
 from core.html_utils import h
 from core.interaction import require_callback_message
 from core.models import GenerationParams
@@ -16,6 +17,8 @@ from core.panels import render_user_panel
 from core.runtime import PromptRequest, RuntimeStore
 from core.states import PresetStates, PromptEditorStates
 from core.telegram import callback_user_id, message_user_id
+from core.user_preferences import read_user_locale
+from domain.localization import LocalizationService
 
 from .presets_flow import (
     cleanup_overwrite_messages,
@@ -48,7 +51,35 @@ def register_preset_handlers(
     router: Router,
     runtime: RuntimeStore,
     editor: PromptEditorService,
+    localization: LocalizationService,
 ) -> None:
+    locale_resolver = DefaultUserLocaleResolver(localization)
+
+    def _resolve_locale(uid: int, *, telegram_locale: str | None) -> str:
+        prefs = runtime.user_preferences.get(uid, {})
+        user_locale = read_user_locale(
+            prefs,
+            default_locale=localization.default_locale(),
+        )
+        return locale_resolver.resolve(
+            user_locale=user_locale,
+            telegram_locale=telegram_locale,
+        )
+
+    def _t(
+        uid: int,
+        key: str,
+        default: str,
+        *,
+        telegram_locale: str | None,
+        params: dict[str, object] | None = None,
+    ) -> str:
+        locale = _resolve_locale(uid, telegram_locale=telegram_locale)
+        return localization.t(key, locale=locale, params=params, default=default)
+
+    def _ui_translate(key: str, locale: str | None, default: str) -> str:
+        return localization.t(key, locale=locale, default=default)
+
     def _parse_callback_index(cb: CallbackQuery, *, prefix: str) -> int | None:
         raw_value = parse_callback_data(cb.data, prefix=prefix)
         if raw_value is None:
@@ -63,16 +94,23 @@ def register_preset_handlers(
         state: FSMContext,
         *,
         uid: int,
+        telegram_locale: str | None,
         prefer_edit: bool,
     ) -> None:
+        locale = _resolve_locale(uid, telegram_locale=telegram_locale)
         presets = load_user_presets(uid)
         if not presets:
             await render_user_panel(
                 message,
                 runtime,
                 uid,
-                "📂 Нет пресетов. Создайте через /generate.",
-                reply_markup=empty_presets_keyboard(),
+                _t(
+                    uid,
+                    "presets.empty",
+                    "📂 Нет пресетов. Создайте через /generate.",
+                    telegram_locale=telegram_locale,
+                ),
+                reply_markup=empty_presets_keyboard(translate=_ui_translate, locale=locale),
                 prefer_edit=prefer_edit,
             )
             return
@@ -84,11 +122,13 @@ def register_preset_handlers(
             message,
             runtime,
             uid,
-            presets_title_text(),
+            presets_title_text(translate=_ui_translate, locale=locale),
             reply_markup=presets_list_keyboard(
                 uid,
                 names,
                 has_active_prompt_request=uid in runtime.active_prompt_requests,
+                translate=_ui_translate,
+                locale=locale,
             ),
             prefer_edit=prefer_edit,
         )
@@ -106,20 +146,31 @@ def register_preset_handlers(
             return
 
         uid = callback_user_id(cb)
+        locale = _resolve_locale(uid, telegram_locale=cb.from_user.language_code)
         presets = load_user_presets(uid)
         if not presets:
-            await cb.answer("📂 Библиотека пуста.", show_alert=True)
+            await cb.answer(
+                _t(
+                    uid,
+                    "presets.library_empty_alert",
+                    "📂 Библиотека пуста.",
+                    telegram_locale=cb.from_user.language_code,
+                ),
+                show_alert=True,
+            )
             return
 
         names = sorted(presets.keys())
         await _remember_preset_snapshot(state, names)
         await state.set_state(PresetStates.browsing)
         await message.edit_text(
-            presets_title_text(),
+            presets_title_text(translate=_ui_translate, locale=locale),
             reply_markup=presets_list_keyboard(
                 uid,
                 names,
                 has_active_prompt_request=uid in runtime.active_prompt_requests,
+                translate=_ui_translate,
+                locale=locale,
             ),
         )
         await cb.answer()
@@ -132,29 +183,61 @@ def register_preset_handlers(
 
         uid = callback_user_id(cb)
         if uid not in runtime.active_prompt_requests:
-            await cb.answer("⚠️ Нет активного запроса.", show_alert=True)
+            await cb.answer(
+                _t(
+                    uid,
+                    "presets.no_active_request",
+                    "⚠️ Нет активного запроса.",
+                    telegram_locale=cb.from_user.language_code,
+                ),
+                show_alert=True,
+            )
             return
 
         await state.update_data(**overwrite_state_reset(save_source="editor"))
         await state.set_state(PromptEditorStates.entering_preset_name)
         await message.edit_text(
-            "✏️ Введите название пресета:",
-            reply_markup=save_name_keyboard(),
+            _t(
+                uid,
+                "presets.enter_name",
+                "✏️ Введите название пресета:",
+                telegram_locale=cb.from_user.language_code,
+            ),
+            reply_markup=save_name_keyboard(
+                translate=_ui_translate,
+                locale=_resolve_locale(uid, telegram_locale=cb.from_user.language_code),
+            ),
         )
         await cb.answer()
 
     @router.message(PromptEditorStates.entering_preset_name, F.text)
     async def pe_save_name(msg: Message, state: FSMContext):
         uid = message_user_id(msg)
+        telegram_locale = msg.from_user.language_code if msg.from_user else None
+        locale = _resolve_locale(uid, telegram_locale=telegram_locale)
         req = runtime.active_prompt_requests.get(uid)
         if not req:
             await state.clear()
-            await msg.answer("⚠️ Активный запрос не найден. Используйте /generate.")
+            await msg.answer(
+                _t(
+                    uid,
+                    "presets.active_request_not_found",
+                    "⚠️ Активный запрос не найден. Используйте /generate.",
+                    telegram_locale=telegram_locale,
+                )
+            )
             return
 
         name = normalize_preset_name(msg.text or "")
         if not is_valid_preset_name(name):
-            await msg.answer("⚠️ Название: 1–50 символов.")
+            await msg.answer(
+                _t(
+                    uid,
+                    "presets.name_invalid",
+                    "⚠️ Название: 1–50 символов.",
+                    telegram_locale=telegram_locale,
+                )
+            )
             return
 
         presets = load_user_presets(uid)
@@ -170,8 +253,17 @@ def register_preset_handlers(
             )
             await state.set_state(PresetStates.confirming_overwrite)
             confirm_msg = await msg.answer(
-                f"⚠️ Пресет «{h(name)}» уже существует. Перезаписать?",
-                reply_markup=overwrite_confirmation_keyboard(),
+                _t(
+                    uid,
+                    "presets.overwrite_confirm",
+                    "⚠️ Пресет «{name}» уже существует. Перезаписать?",
+                    telegram_locale=telegram_locale,
+                    params={"name": h(name)},
+                ),
+                reply_markup=overwrite_confirmation_keyboard(
+                    translate=_ui_translate,
+                    locale=locale,
+                ),
             )
             await remember_overwrite_messages(
                 state,
@@ -190,7 +282,13 @@ def register_preset_handlers(
             msg,
             state,
             uid,
-            notice=f"✅ Пресет «{h(name)}» сохранён.",
+            notice=_t(
+                uid,
+                "presets.saved",
+                "✅ Пресет «{name}» сохранён.",
+                telegram_locale=telegram_locale,
+                params={"name": h(name)},
+            ),
         )
 
     @router.callback_query(F.data == "save_preset")
@@ -199,11 +297,20 @@ def register_preset_handlers(
         if message is None:
             return
 
+        uid = callback_user_id(cb)
         await state.update_data(**overwrite_state_reset(save_source="result"))
         await state.set_state(PresetStates.entering_name)
         await message.edit_text(
-            "✏️ Введите название пресета:",
-            reply_markup=save_name_keyboard(),
+            _t(
+                uid,
+                "presets.enter_name",
+                "✏️ Введите название пресета:",
+                telegram_locale=cb.from_user.language_code,
+            ),
+            reply_markup=save_name_keyboard(
+                translate=_ui_translate,
+                locale=_resolve_locale(uid, telegram_locale=cb.from_user.language_code),
+            ),
         )
         await cb.answer()
 
@@ -221,7 +328,14 @@ def register_preset_handlers(
             uid = callback_user_id(cb)
             if uid not in runtime.active_prompt_requests:
                 await state.clear()
-                await message.edit_text("⚠️ Активный запрос не найден. Используйте /generate.")
+                await message.edit_text(
+                    _t(
+                        uid,
+                        "presets.active_request_not_found",
+                        "⚠️ Активный запрос не найден. Используйте /generate.",
+                        telegram_locale=cb.from_user.language_code,
+                    )
+                )
                 await cb.answer()
                 return
 
@@ -230,37 +344,74 @@ def register_preset_handlers(
                 state,
                 uid,
                 edit=True,
-                notice="↩️ Сохранение пресета отменено.",
+                notice=_t(
+                    uid,
+                    "presets.save_cancelled",
+                    "↩️ Сохранение пресета отменено.",
+                    telegram_locale=cb.from_user.language_code,
+                ),
             )
             await cb.answer()
             return
 
         await state.clear()
+        uid = callback_user_id(cb)
         await message.edit_text(
-            "💾 Сохранить параметры как пресет?",
-            reply_markup=result_save_keyboard(),
+            _t(
+                uid,
+                "presets.save_from_result",
+                "💾 Сохранить параметры как пресет?",
+                telegram_locale=cb.from_user.language_code,
+            ),
+            reply_markup=result_save_keyboard(
+                translate=_ui_translate,
+                locale=_resolve_locale(uid, telegram_locale=cb.from_user.language_code),
+            ),
         )
         await cb.answer()
 
     @router.message(PresetStates.entering_name, F.text)
     async def save_preset_name(msg: Message, state: FSMContext):
         name = normalize_preset_name(msg.text or "")
+        uid = message_user_id(msg)
+        telegram_locale = msg.from_user.language_code if msg.from_user else None
+        locale = _resolve_locale(uid, telegram_locale=telegram_locale)
         if not is_valid_preset_name(name):
-            await msg.answer("⚠️ Название: 1–50 символов.")
+            await msg.answer(
+                _t(
+                    uid,
+                    "presets.name_invalid",
+                    "⚠️ Название: 1–50 символов.",
+                    telegram_locale=telegram_locale,
+                )
+            )
             return
 
-        uid = message_user_id(msg)
         data = await state.get_data()
         params = data.get("params")
         if not params and uid in runtime.active_prompt_requests:
             params = runtime.active_prompt_requests[uid].params
         if not params:
-            await msg.answer("⚠️ Параметры не найдены.")
+            await msg.answer(
+                _t(
+                    uid,
+                    "presets.params_not_found",
+                    "⚠️ Параметры не найдены.",
+                    telegram_locale=telegram_locale,
+                )
+            )
             await state.clear()
             return
 
         if not isinstance(params, (GenerationParams, dict)):
-            await msg.answer("⚠️ Параметры не найдены.")
+            await msg.answer(
+                _t(
+                    uid,
+                    "presets.params_not_found",
+                    "⚠️ Параметры не найдены.",
+                    telegram_locale=telegram_locale,
+                )
+            )
             await state.clear()
             return
 
@@ -277,8 +428,17 @@ def register_preset_handlers(
             )
             await state.set_state(PresetStates.confirming_overwrite)
             confirm_msg = await msg.answer(
-                f"⚠️ Пресет «{h(name)}» уже существует. Перезаписать?",
-                reply_markup=overwrite_confirmation_keyboard(),
+                _t(
+                    uid,
+                    "presets.overwrite_confirm",
+                    "⚠️ Пресет «{name}» уже существует. Перезаписать?",
+                    telegram_locale=telegram_locale,
+                    params={"name": h(name)},
+                ),
+                reply_markup=overwrite_confirmation_keyboard(
+                    translate=_ui_translate,
+                    locale=locale,
+                ),
             )
             await remember_overwrite_messages(
                 state,
@@ -294,7 +454,13 @@ def register_preset_handlers(
             msg,
             runtime,
             uid,
-            f"✅ Пресет «{h(name)}» сохранён!",
+            _t(
+                uid,
+                "presets.saved_done",
+                "✅ Пресет «{name}» сохранён!",
+                telegram_locale=telegram_locale,
+                params={"name": h(name)},
+            ),
         )
 
     @router.callback_query(
@@ -306,9 +472,19 @@ def register_preset_handlers(
         if message is None:
             return
 
+        uid = callback_user_id(cb)
+        telegram_locale = cb.from_user.language_code
         decision = parse_callback_data(cb.data, prefix="preset:overwrite")
         if not decision:
-            await cb.answer("⚠️ Некорректный ответ.", show_alert=True)
+            await cb.answer(
+                _t(
+                    uid,
+                    "presets.invalid_response",
+                    "⚠️ Некорректный ответ.",
+                    telegram_locale=telegram_locale,
+                ),
+                show_alert=True,
+            )
             return
         data = await state.get_data()
 
@@ -319,13 +495,19 @@ def register_preset_handlers(
         if not name or not isinstance(params_payload, dict):
             await state.clear()
             await cleanup_overwrite_messages(message, data)
-            await message.edit_text("⚠️ Не удалось восстановить данные для сохранения.")
+            await message.edit_text(
+                _t(
+                    uid,
+                    "presets.restore_failed",
+                    "⚠️ Не удалось восстановить данные для сохранения.",
+                    telegram_locale=telegram_locale,
+                )
+            )
             await cb.answer()
             return
 
         if decision != "yes":
             if source == "editor":
-                uid = callback_user_id(cb)
                 req = runtime.active_prompt_requests.get(uid)
                 if req:
                     await editor.show_prompt_editor(
@@ -333,7 +515,12 @@ def register_preset_handlers(
                         state,
                         uid,
                         edit=True,
-                        notice="↩️ Сохранение пресета отменено.",
+                        notice=_t(
+                            uid,
+                            "presets.save_cancelled",
+                            "↩️ Сохранение пресета отменено.",
+                            telegram_locale=telegram_locale,
+                        ),
                     )
                     await cleanup_overwrite_messages(message, data)
                     await state.update_data(**overwrite_state_reset())
@@ -342,10 +529,16 @@ def register_preset_handlers(
 
             await state.clear()
             await cleanup_overwrite_messages(message, data)
-            await cb.answer("↩️ Сохранение пресета отменено.")
+            await cb.answer(
+                _t(
+                    uid,
+                    "presets.save_cancelled",
+                    "↩️ Сохранение пресета отменено.",
+                    telegram_locale=telegram_locale,
+                )
+            )
             return
 
-        uid = callback_user_id(cb)
         presets = load_user_presets(uid)
         presets[name] = params_payload
         save_user_presets(uid, presets)
@@ -356,7 +549,13 @@ def register_preset_handlers(
                 state,
                 uid,
                 edit=True,
-                notice=f"✅ Пресет «{h(name)}» перезаписан.",
+                notice=_t(
+                    uid,
+                    "presets.overwritten",
+                    "✅ Пресет «{name}» перезаписан.",
+                    telegram_locale=telegram_locale,
+                    params={"name": h(name)},
+                ),
             )
             await cleanup_overwrite_messages(message, data)
             await state.update_data(**overwrite_state_reset())
@@ -365,14 +564,24 @@ def register_preset_handlers(
 
         await state.clear()
         await cleanup_overwrite_messages(message, data)
-        await cb.answer(f"✅ Пресет «{h(name)}» перезаписан.")
+        await cb.answer(
+            _t(
+                uid,
+                "presets.overwritten",
+                "✅ Пресет «{name}» перезаписан.",
+                telegram_locale=telegram_locale,
+                params={"name": h(name)},
+            )
+        )
 
     @router.message(Command("presets"))
     async def cmd_presets(msg: Message, state: FSMContext):
+        uid = message_user_id(msg)
         await _show_presets_panel(
             msg,
             state,
-            uid=message_user_id(msg),
+            uid=uid,
+            telegram_locale=msg.from_user.language_code if msg.from_user else None,
             prefer_edit=True,
         )
 
@@ -381,10 +590,12 @@ def register_preset_handlers(
         message = await require_callback_message(cb)
         if message is None:
             return
+        uid = callback_user_id(cb)
         await _show_presets_panel(
             message,
             state,
-            uid=callback_user_id(cb),
+            uid=uid,
+            telegram_locale=cb.from_user.language_code,
             prefer_edit=True,
         )
         await cb.answer()
@@ -395,17 +606,34 @@ def register_preset_handlers(
         if message is None:
             return
 
+        uid = callback_user_id(cb)
+        telegram_locale = cb.from_user.language_code
         index = _parse_callback_index(cb, prefix="preset_load")
         if index is None:
-            await cb.answer("⚠️ Некорректный выбор.", show_alert=True)
+            await cb.answer(
+                _t(
+                    uid,
+                    "presets.invalid_choice",
+                    "⚠️ Некорректный выбор.",
+                    telegram_locale=telegram_locale,
+                ),
+                show_alert=True,
+            )
             return
 
-        uid = callback_user_id(cb)
         presets = load_user_presets(uid)
         data = await state.get_data()
         name = resolve_preset_name(index, presets, data.get("preset_names_snapshot"))
         if not name:
-            await cb.answer("⚠️ Не найден.", show_alert=True)
+            await cb.answer(
+                _t(
+                    uid,
+                    "presets.not_found",
+                    "⚠️ Не найден.",
+                    telegram_locale=telegram_locale,
+                ),
+                show_alert=True,
+            )
             return
 
         await state.update_data(preset_delete_confirm_index=None)
@@ -424,7 +652,13 @@ def register_preset_handlers(
             state,
             uid,
             edit=True,
-            notice=f"📂 Загружен пресет «{h(name)}».",
+            notice=_t(
+                uid,
+                "presets.loaded",
+                "📂 Загружен пресет «{name}».",
+                telegram_locale=telegram_locale,
+                params={"name": h(name)},
+            ),
         )
         await cb.answer()
 
@@ -434,17 +668,35 @@ def register_preset_handlers(
         if message is None:
             return
 
+        uid = callback_user_id(cb)
+        telegram_locale = cb.from_user.language_code
+        locale = _resolve_locale(uid, telegram_locale=telegram_locale)
         index = _parse_callback_index(cb, prefix="preset_del")
         if index is None:
-            await cb.answer("⚠️ Некорректный выбор.", show_alert=True)
+            await cb.answer(
+                _t(
+                    uid,
+                    "presets.invalid_choice",
+                    "⚠️ Некорректный выбор.",
+                    telegram_locale=telegram_locale,
+                ),
+                show_alert=True,
+            )
             return
 
-        uid = callback_user_id(cb)
         presets = load_user_presets(uid)
         data = await state.get_data()
         name = resolve_preset_name(index, presets, data.get("preset_names_snapshot"))
         if not name:
-            await cb.answer("⚠️ Не найден.", show_alert=True)
+            await cb.answer(
+                _t(
+                    uid,
+                    "presets.not_found",
+                    "⚠️ Не найден.",
+                    telegram_locale=telegram_locale,
+                ),
+                show_alert=True,
+            )
             return
 
         pending_index = data.get("preset_delete_confirm_index")
@@ -457,12 +709,21 @@ def register_preset_handlers(
                 names,
                 has_active_prompt_request=uid in runtime.active_prompt_requests,
                 confirm_delete_index=index,
+                translate=_ui_translate,
+                locale=locale,
             )
             await message.edit_text(
-                presets_title_text(),
+                presets_title_text(translate=_ui_translate, locale=locale),
                 reply_markup=rows,
             )
-            await cb.answer("Нажмите ещё раз, чтобы подтвердить удаление.")
+            await cb.answer(
+                _t(
+                    uid,
+                    "presets.delete_confirm_again",
+                    "Нажмите ещё раз, чтобы подтвердить удаление.",
+                    telegram_locale=telegram_locale,
+                )
+            )
             return
 
         presets.pop(name, None)
@@ -470,7 +731,14 @@ def register_preset_handlers(
         await state.update_data(preset_delete_confirm_index=None)
 
         if not presets:
-            await message.edit_text("📂 Все пресеты удалены.")
+            await message.edit_text(
+                _t(
+                    uid,
+                    "presets.all_deleted",
+                    "📂 Все пресеты удалены.",
+                    telegram_locale=telegram_locale,
+                )
+            )
             await state.clear()
             await cb.answer()
             return
@@ -481,9 +749,19 @@ def register_preset_handlers(
             uid,
             names,
             has_active_prompt_request=uid in runtime.active_prompt_requests,
+            translate=_ui_translate,
+            locale=locale,
         )
         await message.edit_text(
-            presets_title_text(),
+            presets_title_text(translate=_ui_translate, locale=locale),
             reply_markup=rows,
         )
-        await cb.answer(f"🗑 «{name}» удалён.")
+        await cb.answer(
+            _t(
+                uid,
+                "presets.deleted",
+                "🗑 «{name}» удалён.",
+                telegram_locale=telegram_locale,
+                params={"name": h(name)},
+            )
+        )

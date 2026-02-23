@@ -17,7 +17,7 @@ from core.panels import render_user_panel
 from core.queue_utils import queue_item_prompt_id
 from core.runtime import RuntimeStore
 from core.telegram import callback_user_id, message_user_id
-from core.ui_copy import FALLBACK_TEXT, START_TEXT, main_menu_keyboard
+from core.ui_copy import main_menu_keyboard
 from core.ui_kit import back_button, build_keyboard
 from core.ui_kit.buttons import button, cancel_button, noop_button
 from domain.localization import LocalizationService
@@ -83,35 +83,119 @@ DELETE_MODEL_TYPES = {
 DELETE_PAGE_SIZE = 8
 
 
-def _generation_menu_keyboard() -> InlineKeyboardMarkup:
+def _tr(localization: LocalizationService, locale: str | None, key: str, default: str) -> str:
+    return localization.t(key, locale=locale, default=default)
+
+
+def _generation_menu_keyboard(
+    *,
+    localization: LocalizationService | None = None,
+    locale: str | None = None,
+) -> InlineKeyboardMarkup:
+    new_label = (
+        _tr(localization, locale, "common.menu.generation.new", "✨ Новая генерация")
+        if localization is not None
+        else "✨ Новая генерация"
+    )
+    repeat_label = (
+        _tr(localization, locale, "common.menu.generation.repeat", "🔁 Повтор")
+        if localization is not None
+        else "🔁 Повтор"
+    )
+    presets_label = (
+        _tr(localization, locale, "common.menu.generation.presets", "📂 Пресеты")
+        if localization is not None
+        else "📂 Пресеты"
+    )
+    back_label = (
+        _tr(localization, locale, "common.menu.back_to_menu", "⬅️ В меню")
+        if localization is not None
+        else "⬅️ В меню"
+    )
+
     return build_keyboard(
         [
-            [button("✨ Новая генерация", "menu:generate")],
-            [button("🔁 Повтор", "menu:repeat")],
-            [button("📂 Пресеты", "menu:presets")],
-            [back_button("menu:root", text="⬅️ В меню")],
+            [button(new_label, "menu:generate")],
+            [button(repeat_label, "menu:repeat")],
+            [button(presets_label, "menu:presets")],
+            [back_button("menu:root", text=back_label)],
         ]
     )
 
 
-def _models_menu_keyboard() -> InlineKeyboardMarkup:
+def _models_menu_keyboard(
+    *,
+    localization: LocalizationService | None = None,
+    locale: str | None = None,
+) -> InlineKeyboardMarkup:
+    download_label = (
+        _tr(localization, locale, "common.menu.models.download", "⬇️ Скачать модель")
+        if localization is not None
+        else "⬇️ Скачать модель"
+    )
+    refresh_label = (
+        _tr(localization, locale, "common.menu.models.refresh", "🧪 Обновить список")
+        if localization is not None
+        else "🧪 Обновить список"
+    )
+    delete_label = (
+        _tr(localization, locale, "common.menu.models.delete_local", "🗑 Удалить локальную")
+        if localization is not None
+        else "🗑 Удалить локальную"
+    )
+    back_label = (
+        _tr(localization, locale, "common.menu.back_to_menu", "⬅️ В меню")
+        if localization is not None
+        else "⬅️ В меню"
+    )
+
     return build_keyboard(
         [
-            [button("⬇️ Скачать модель", "menu:download")],
-            [button("🧪 Обновить список", "menu:models_refresh")],
-            [button("🗑 Удалить локальную", "menu:delete_model")],
-            [back_button("menu:root", text="⬅️ В меню")],
+            [button(download_label, "menu:download")],
+            [button(refresh_label, "menu:models_refresh")],
+            [button(delete_label, "menu:delete_model")],
+            [back_button("menu:root", text=back_label)],
         ]
     )
 
 
-def _service_menu_keyboard() -> InlineKeyboardMarkup:
+def _service_menu_keyboard(
+    *,
+    localization: LocalizationService | None = None,
+    locale: str | None = None,
+) -> InlineKeyboardMarkup:
+    jobs_label = (
+        _tr(localization, locale, "common.menu.service.jobs", "🧵 Мои задачи")
+        if localization is not None
+        else "🧵 Мои задачи"
+    )
+    queue_label = (
+        _tr(localization, locale, "common.menu.service.queue", "📊 Очередь")
+        if localization is not None
+        else "📊 Очередь"
+    )
+    settings_label = (
+        _tr(localization, locale, "common.menu.service.settings", "⚙️ Настройки")
+        if localization is not None
+        else "⚙️ Настройки"
+    )
+    training_label = (
+        _tr(localization, locale, "common.menu.service.training", "🎓 Обучение")
+        if localization is not None
+        else "🎓 Обучение"
+    )
+    back_label = (
+        _tr(localization, locale, "common.menu.back_to_menu", "⬅️ В меню")
+        if localization is not None
+        else "⬅️ В меню"
+    )
+
     return build_keyboard(
         [
-            [button("🧵 Мои задачи", "menu:jobs")],
-            [button("📊 Очередь", "menu:queue"), button("⚙️ Настройки", "menu:settings")],
-            [button("🎓 Обучение", "menu:training")],
-            [back_button("menu:root", text="⬅️ В меню")],
+            [button(jobs_label, "menu:jobs")],
+            [button(queue_label, "menu:queue"), button(settings_label, "menu:settings")],
+            [button(training_label, "menu:training")],
+            [back_button("menu:root", text=back_label)],
         ]
     )
 
@@ -274,13 +358,16 @@ def register_common_handlers(
             render_user_panel=render_user_panel,
             localization=localization,
             resolve_user_locale=locale_resolver.resolve,
-            start_text=START_TEXT,
-            training_text=TRAINING_TEXT,
-            fallback_text=FALLBACK_TEXT,
-            main_menu_keyboard=main_menu_keyboard,
-            generation_menu_keyboard=_generation_menu_keyboard,
-            models_menu_keyboard=_models_menu_keyboard,
-            service_menu_keyboard=_service_menu_keyboard,
+            main_menu_keyboard=lambda locale: main_menu_keyboard(localization, locale=locale),
+            generation_menu_keyboard=(
+                lambda locale: _generation_menu_keyboard(localization=localization, locale=locale)
+            ),
+            models_menu_keyboard=(
+                lambda locale: _models_menu_keyboard(localization=localization, locale=locale)
+            ),
+            service_menu_keyboard=(
+                lambda locale: _service_menu_keyboard(localization=localization, locale=locale)
+            ),
             models_section=_models_section,
             user_generations=_user_generations,
             truncate=truncate,

@@ -44,8 +44,14 @@ def register_handlers_with_deps(router: Router, deps: HandlerRegistryDeps) -> No
         deps.runtime,
         deps.smart_prompt,
     )
-    register_preset_handlers(router, deps.runtime, prompt_editor)
-    register_download_handlers(router, deps.client, deps.downloader, deps.runtime)
+    register_preset_handlers(router, deps.runtime, prompt_editor, deps.localization)
+    register_download_handlers(
+        router,
+        deps.client,
+        deps.downloader,
+        deps.runtime,
+        deps.localization,
+    )
 
 
 def register_handlers(

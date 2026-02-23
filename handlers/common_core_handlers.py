@@ -19,6 +19,7 @@ from core.download_filters import (
 )
 from core.interaction import require_callback_message
 from core.states import ServiceSettingsStates
+from core.ui_copy import FALLBACK_TEXT, START_TEXT
 from core.ui_kit import back_button, build_keyboard
 from core.ui_kit.buttons import button, menu_root_button, noop_button
 from core.user_preferences import read_download_defaults, read_generation_defaults, read_user_locale
@@ -53,13 +54,10 @@ class CommonCoreDeps:
     render_user_panel: Callable[..., Awaitable[Message]]
     localization: Any
     resolve_user_locale: Callable[..., str]
-    start_text: str
-    training_text: str
-    fallback_text: str
-    main_menu_keyboard: Callable[[], Any]
-    generation_menu_keyboard: Callable[[], Any]
-    models_menu_keyboard: Callable[[], Any]
-    service_menu_keyboard: Callable[[], Any]
+    main_menu_keyboard: Callable[[str | None], Any]
+    generation_menu_keyboard: Callable[[str | None], Any]
+    models_menu_keyboard: Callable[[str | None], Any]
+    service_menu_keyboard: Callable[[str | None], Any]
     models_section: Callable[[str, str, list[str], int], str]
     user_generations: Callable[[Any, int], list[Any]]
     truncate: Callable[[str, int], str]
@@ -191,6 +189,14 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
             default=locale_code.upper(),
         )
         return f"{localized_name} ({locale_code})"
+
+    def _start_text_for_uid(uid: int, *, telegram_locale: str | None) -> str:
+        locale = _resolved_locale(uid, telegram_locale=telegram_locale)
+        return deps.localization.t("ui.start", locale=locale, default=START_TEXT)
+
+    def _fallback_text_for_uid(uid: int, *, telegram_locale: str | None) -> str:
+        locale = _resolved_locale(uid, telegram_locale=telegram_locale)
+        return deps.localization.t("ui.fallback", locale=locale, default=FALLBACK_TEXT)
 
     async def _show_locale_settings(
         message: Message,
@@ -714,12 +720,14 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
     @router.message(CommandStart())
     async def cmd_start(message: Message):
         uid = deps.message_user_id(message)
+        telegram_locale = message.from_user.language_code if message.from_user else None
+        locale = _resolved_locale(uid, telegram_locale=telegram_locale)
         await deps.render_user_panel(
             message,
             deps.runtime,
             uid,
-            deps.start_text,
-            reply_markup=deps.main_menu_keyboard(),
+            _start_text_for_uid(uid, telegram_locale=telegram_locale),
+            reply_markup=deps.main_menu_keyboard(locale),
             prefer_edit=False,
         )
 
@@ -733,12 +741,13 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
         if message is None:
             return
         uid = deps.callback_user_id(cb)
+        locale = _resolved_locale(uid, telegram_locale=cb.from_user.language_code)
         await deps.render_user_panel(
             message,
             deps.runtime,
             uid,
-            deps.start_text,
-            reply_markup=deps.main_menu_keyboard(),
+            _start_text_for_uid(uid, telegram_locale=cb.from_user.language_code),
+            reply_markup=deps.main_menu_keyboard(locale),
         )
         await cb.answer()
 
@@ -748,12 +757,17 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
         if message is None:
             return
         uid = deps.callback_user_id(cb)
+        locale = _resolved_locale(uid, telegram_locale=cb.from_user.language_code)
         await deps.render_user_panel(
             message,
             deps.runtime,
             uid,
-            "🎨 <b>Генерация</b>\nВыберите действие:",
-            reply_markup=deps.generation_menu_keyboard(),
+            deps.localization.t(
+                "common.menu.generation.title",
+                locale=locale,
+                default="🎨 <b>Генерация</b>\nВыберите действие:",
+            ),
+            reply_markup=deps.generation_menu_keyboard(locale),
         )
         await cb.answer()
 
@@ -763,12 +777,17 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
         if message is None:
             return
         uid = deps.callback_user_id(cb)
+        locale = _resolved_locale(uid, telegram_locale=cb.from_user.language_code)
         await deps.render_user_panel(
             message,
             deps.runtime,
             uid,
-            "📦 <b>Модели</b>\nВыберите действие:",
-            reply_markup=deps.models_menu_keyboard(),
+            deps.localization.t(
+                "common.menu.models.title",
+                locale=locale,
+                default="📦 <b>Модели</b>\nВыберите действие:",
+            ),
+            reply_markup=deps.models_menu_keyboard(locale),
         )
         await cb.answer()
 
@@ -778,12 +797,17 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
         if message is None:
             return
         uid = deps.callback_user_id(cb)
+        locale = _resolved_locale(uid, telegram_locale=cb.from_user.language_code)
         await deps.render_user_panel(
             message,
             deps.runtime,
             uid,
-            "⚙️ <b>Сервис</b>\nВыберите действие:",
-            reply_markup=deps.service_menu_keyboard(),
+            deps.localization.t(
+                "common.menu.service.title",
+                locale=locale,
+                default="⚙️ <b>Сервис</b>\nВыберите действие:",
+            ),
+            reply_markup=deps.service_menu_keyboard(locale),
         )
         await cb.answer()
 
@@ -794,6 +818,10 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
         await _show_training(msg, uid)
 
     async def _cancel_for_user(msg: Message, state: FSMContext, *, uid: int) -> None:
+        telegram_locale = msg.from_user.language_code if msg.from_user else None
+        locale = _resolved_locale(uid, telegram_locale=telegram_locale)
+        root_keyboard = deps.main_menu_keyboard(locale)
+
         state_name = await state.get_state()
         had_state = state_name is not None
         prompt_req = deps.runtime.active_prompt_requests.get(uid)
@@ -848,24 +876,38 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
                 msg,
                 deps.runtime,
                 uid,
-                "❌ <b>Отменено:</b>\n" + "\n".join(f"• {item}" for item in cancelled_items),
-                reply_markup=deps.main_menu_keyboard(),
+                deps.localization.t(
+                    "common.cancel.summary_title",
+                    locale=locale,
+                    default="❌ <b>Отменено:</b>",
+                )
+                + "\n"
+                + "\n".join(f"• {item}" for item in cancelled_items),
+                reply_markup=root_keyboard,
             )
         elif had_state or had_prompt or had_generation or had_download:
             await deps.render_user_panel(
                 msg,
                 deps.runtime,
                 uid,
-                "❌ Операция отменена.",
-                reply_markup=deps.main_menu_keyboard(),
+                deps.localization.t(
+                    "common.cancel.done",
+                    locale=locale,
+                    default="❌ Операция отменена.",
+                ),
+                reply_markup=root_keyboard,
             )
         else:
             await deps.render_user_panel(
                 msg,
                 deps.runtime,
                 uid,
-                "Нечего отменять.",
-                reply_markup=deps.main_menu_keyboard(),
+                deps.localization.t(
+                    "common.cancel.nothing",
+                    locale=locale,
+                    default="Нечего отменять.",
+                ),
+                reply_markup=root_keyboard,
             )
 
     @router.message(Command("cancel"))
@@ -1339,10 +1381,12 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
     @router.message(F.text, ~F.text.startswith("/"), StateFilter(None))
     async def fallback_text(msg: Message):
         uid = deps.message_user_id(msg)
+        telegram_locale = msg.from_user.language_code if msg.from_user else None
+        locale = _resolved_locale(uid, telegram_locale=telegram_locale)
         await deps.render_user_panel(
             msg,
             deps.runtime,
             uid,
-            deps.fallback_text,
-            reply_markup=deps.main_menu_keyboard(),
+            _fallback_text_for_uid(uid, telegram_locale=telegram_locale),
+            reply_markup=deps.main_menu_keyboard(locale),
         )

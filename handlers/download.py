@@ -11,6 +11,7 @@ from aiogram.types import (
     Message,
 )
 
+from application.user_locale_resolver import DefaultUserLocaleResolver
 from comfyui_client import ComfyUIClient
 from core.download_filters import (
     DOWNLOAD_BASE_CODE_TO_API,
@@ -30,6 +31,8 @@ from core.states import DownloadStates
 from core.telegram import callback_user_id, message_user_id
 from core.ui_kit import back_button, build_keyboard
 from core.ui_kit.buttons import button, cancel_button, noop_button
+from core.user_preferences import read_user_locale
+from domain.localization import LocalizationService
 from model_downloader import (
     ModelDownloader,
     SearchResult,
@@ -311,7 +314,25 @@ def register_download_handlers(
     client: ComfyUIClient,
     downloader: ModelDownloader,
     runtime: RuntimeStore,
+    localization: LocalizationService,
 ) -> None:
+    locale_resolver = DefaultUserLocaleResolver(localization)
+
+    def _resolve_locale(uid: int, *, telegram_locale: str | None) -> str:
+        prefs = runtime.user_preferences.get(uid, {})
+        user_locale = read_user_locale(
+            prefs,
+            default_locale=localization.default_locale(),
+        )
+        return locale_resolver.resolve(
+            user_locale=user_locale,
+            telegram_locale=telegram_locale,
+        )
+
+    def _t(uid: int, key: str, default: str, *, telegram_locale: str | None) -> str:
+        locale = _resolve_locale(uid, telegram_locale=telegram_locale)
+        return localization.t(key, locale=locale, default=default)
+
     async def _render_download_panel(
         message: Message,
         state: FSMContext,
@@ -565,12 +586,18 @@ def register_download_handlers(
         state: FSMContext,
         uid: int,
     ) -> None:
+        telegram_locale = message.from_user.language_code if message.from_user else None
         await state.update_data(dl_uid=uid)
         await state.set_state(DownloadStates.choosing_type)
         await _render_download_panel(
             message,
             state,
-            "📦 <b>Скачивание компонентов</b>\nВыберите тип:",
+            _t(
+                uid,
+                "download.start.choose_type",
+                "📦 <b>Скачивание компонентов</b>\nВыберите тип:",
+                telegram_locale=telegram_locale,
+            ),
             _build_type_keyboard(),
             prefer_edit=True,
         )

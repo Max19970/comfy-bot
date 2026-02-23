@@ -2,281 +2,123 @@
 
 ## Общая схема
 
-Проект состоит из Telegram-бота на `aiogram` и клиента ComfyUI API.
+ComfyBot работает как Telegram-бот на `aiogram`, который оркестрирует генерацию через ComfyUI API.
 
-Поток выглядит так:
+Поток запроса выглядит так:
 
-1. Пользователь отправляет команду/нажимает кнопку в Telegram.
-2. Обработчики (`handlers/*`) меняют состояние FSM и параметры генерации.
-3. `ComfyUIClient` собирает workflow под выбранные параметры.
-4. Workflow отправляется в ComfyUI (`/prompt`), бот отслеживает прогресс.
-5. После завершения бот скачивает изображения (`/view`) и отправляет пользователю.
+1. Пользователь запускает команду или нажимает кнопку в Telegram.
+2. Handler-модули формируют состояние сценария и параметры генерации.
+3. `ComfyUIClient` собирает workflow и отправляет задачу в ComfyUI (`/prompt`).
+4. Бот отслеживает выполнение через WebSocket и polling (`/history`).
+5. Готовые изображения загружаются через `/view` и отправляются пользователю.
 
-## Модули и ответственность
+## Слои и зоны ответственности
+
+- `domain/`
+  - Предметные сущности и политики (например, `base_model_policy`, типизированные LoRA-объекты).
+- `application/`
+  - Use-case логика и сервисная оркестрация (генерация, поиск моделей, локализация и т.д.).
+- `infrastructure/`
+  - Адаптеры внешних систем (ComfyUI transport/execution/workflow builder, файловые и API-репозитории).
+- `presentation/`
+  - Транспортные и UI-адаптеры (используются там, где требуется отдельный слой представления).
+- `core/`
+  - Общие runtime-контракты и UI-утилиты, которые переиспользуются в handler-слое.
+- `handlers/`
+  - Telegram-сценарии и пользовательские flow: команды, callback-ветки, экранные переходы.
+
+## Ключевые модули
 
 - `bot.py`
   - Точка входа.
-  - Собирает `AppContext` и запускает polling.
-  - Проверяет доступность ComfyUI и управляет жизненным циклом приложения.
+  - Инициализирует приложение, настраивает команды Telegram и запускает polling.
 
 - `app_context.py`
-  - Централизованная сборка зависимостей (`Bot`, `Dispatcher`, `Router`, сервисы).
-  - Единая точка закрытия всех сетевых сессий (`close`).
+  - Композиция зависимостей приложения (`Bot`, `Dispatcher`, сервисы, runtime).
+  - Единый lifecycle для закрытия внешних сессий.
 
 - `config.py`
-  - Загружает `.env`.
-  - Хранит runtime-конфигурацию (`Config`).
-  - Даёт вычисляемые пути к папкам моделей (`checkpoints`, `loras`, `upscale_models`).
-
-- `core/*`
-  - `core/states.py` — FSM-состояния.
-  - `core/runtime.py` — runtime-хранилище (`RuntimeStore`) и структуры активных задач.
-  - `core/user_preferences.py` — единый слой чтения и нормализации пользовательских дефолтов.
-  - `core/storage.py` — сериализация параметров и пресеты.
-  - `core/html_utils.py` — безопасное форматирование и компактные представления текста.
-  - `core/ui.py` — совместимый UI helper-слой (summary/пагинация).
-  - `core/ui_kit/*` — shared UI builders (кнопки, навигация, диалоги, пагинация).
-  - `core/interaction.py` — единый callback/message interaction flow.
-  - `core/callbacks.py` — типизированные callback-схемы.
-  - `core/panels.py` — централизованный рендер пользовательских панелей.
-  - `core/download_filters.py` — каталог download-фильтров, профилей и нормализация кодов.
-  - `core/prompt_enhancements.py` — общие контролы/диапазоны enhancement-параметров (Hi-res/PAG).
-  - `core/image_utils.py` — подготовка изображений под ограничения Telegram.
-  - `core/telegram.py` — утилиты для извлечения user id из Message/Callback.
-
-- `bot_core.py`
-  - Совместимый facade для старых импортов (`from bot_core import ...`).
-  - Делегирует реализацию в `core/*`.
+  - Загрузка и нормализация переменных окружения.
+  - Формирование объекта `Config` и вычисляемых путей к каталогам моделей.
 
 - `comfyui_client.py`
-  - HTTP/WebSocket взаимодействие с ComfyUI.
-  - Кэш доступных моделей/самплеров/нод.
-  - Сборка workflow графа под текущие параметры.
-  - Очередь, прогресс, ожидание завершения, скачивание результатов.
+  - Взаимодействие с ComfyUI API.
+  - Обновление доступных ресурсов (`/object_info`), выполнение workflow и получение результатов.
 
 - `model_downloader.py`
-  - Поиск моделей в CivitAI/HuggingFace.
-  - Выбор подходящих файлов под тип модели.
-  - Скачивание в нужную папку ComfyUI.
-  - Локальный индекс метаданных (`.comfybot_model_index.json`) в каталоге моделей ComfyUI.
+  - Поиск и загрузка моделей из CivitAI/HuggingFace.
+  - Подбор целевых файлов и синхронизация локального индекса метаданных.
 
 - `smart_prompt.py`
-  - Локальная интеграция TIPO для Smart Prompt.
-  - Преобразование запроса на естественном языке в теговые `positive/negative`.
-  - Ленивая загрузка модели и семплирование без внешних LLM API.
+  - Интеграция Smart Prompt на базе локальной модели TIPO.
+  - Преобразование естественного языка в структуру positive/negative.
 
-- `handlers/common.py`
-  - Общие команды (`/start`, `/help`, `/models`, `/queue`, `/settings`, `/cancel`).
-  - Whitelist middleware.
-  - Оркестрация и регистрация специализированных common-модулей.
-
-- `handlers/common_core_utils.py`
-  - Shared helper-логика для `common_core_handlers` (training pages/mode/page, операции с prefs).
+## Handler-карта
 
 - `handlers/registry.py`
-  - Единая точка регистрации всех handler-модулей.
+  - Централизованная регистрация всех handler-модулей.
 
-- `handlers/prompt_editor.py`
-  - Основной интерактивный редактор генерации.
-  - Работа с параметрами, референсами, LoRA, Smart Prompt, подменю режимов.
-  - Запуск генерации и доставка результата.
+- `handlers/common.py` + специализированные модули (`handlers/common_core_handlers.py`, `handlers/common_jobs_handlers.py`, `handlers/common_delete_handlers.py`, `handlers/common_middleware.py`)
+  - Главное меню, сервисные команды, middleware доступа, общие пользовательские панели.
 
-- `handlers/prompt_editor_*.py`
-  - `prompt_editor_ui.py` — построение клавиатур и базовых UI-блоков.
-  - `prompt_editor_smart.py` — helper-логика Smart Prompt.
-  - `prompt_editor_lora.py` — helper-логика LoRA и рендер LoRA-меню.
-  - `prompt_editor_references.py` — helper-логика референсов и рендер меню.
-  - `prompt_editor_send.py` — отправка превью/PNG и клавиатура действий.
-  - `prompt_editor_send_menu_utils.py` — reusable клавиатуры/валидация для меню улучшения готовой картинки.
-  - `prompt_editor_selection_utils.py` — общий парсинг selection-callback и сборка scalar-choice клавиатур.
-  - `prompt_editor_enhancements.py` — единый расчёт/лейблы счётчика улучшений.
-  - Используются `prompt_editor.py` как подмодули без изменения поведения сценариев.
+- `handlers/prompt_editor.py` + подмодули редактора (`handlers/prompt_editor_subhandlers.py`, `handlers/prompt_editor_generation.py`, `handlers/prompt_editor_send.py`, `handlers/prompt_editor_enhancement.py`)
+  - Редактор генерации: ввод параметров, LoRA, референсы, Smart Prompt, запуск и выдача результата.
 
-- `handlers/download_flow_utils.py`
-  - Shared helper-логика для `/download` flow (дефолты пользователя, профили фильтров, парсинг author filters).
+- `handlers/download.py` + модули download-flow (`handlers/download_flow_handlers.py`, `handlers/download_flow_state.py`, `handlers/download_flow_utils.py`, `handlers/download_flow_version_view.py`)
+  - Пошаговый flow поиска и загрузки моделей с фильтрами, версиями и навигацией.
 
-- `handlers/presets.py`
-  - CRUD пресетов пользователя.
+- `handlers/presets.py` + модули preset-flow (`handlers/presets_storage.py`, `handlers/presets_ui.py`, `handlers/presets_flow.py`)
+  - CRUD пресетов и связанный UI/flow.
 
-- `handlers/download.py`
-  - Пошаговый мастер скачивания моделей.
+## Runtime-состояние
 
-## Runtime-состояние пользователя
+`RuntimeStore` хранит пользовательское состояние и рабочие артефакты:
 
-`RuntimeStore` хранит:
-
-- `active_prompt_requests` — текущая сессия редактора и параметры.
-- `active_generations` — активные задачи генерации.
-- `active_downloads` — активные задачи скачивания моделей.
+- `active_prompt_requests` — активные сессии редактора.
 - `last_params`, `last_seeds` — данные последней генерации для `/repeat`.
-- `user_preferences` — пользовательские настройки интерфейса (например, pro mode).
+- `user_preferences` — настройки пользователя (режим UI, локаль и др.).
+- `user_ui_panels` — привязка пользовательских панелей интерфейса.
+- `preview_artifacts` — артефакты превью и параметры улучшения.
+- `active_generations` — метаданные активных/восстановленных задач генерации.
+- `active_downloads`, `active_image_jobs` — текущие асинхронные задачи процесса.
 
-При каждом входящем апдейте runtime-состояние синхронизируется на диск.
-После перезапуска автоматически восстанавливаются:
+### Что восстанавливается после рестарта
 
-- `active_prompt_requests` (можно продолжить редактор с сохранёнными параметрами);
-- `last_params` и `last_seeds` (команда `/repeat` доступна после рестарта);
-- `user_preferences` (например, выбранный режим интерфейса).
+Слой persistence (`core/runtime_snapshot.py`, `core/runtime_persistence.py`) восстанавливает:
 
-`active_generations` и `active_downloads` не восстанавливаются (это живые async-задачи).
+- `active_prompt_requests`;
+- `last_params` и `last_seeds`;
+- `user_preferences` и `user_ui_panels`;
+- `preview_artifacts`;
+- `active_generations` как восстановленные записи (`restored=True`) без живых `asyncio.Task`.
+
+Живые объекты задач (`active_downloads`, `active_image_jobs`, `task` внутри `active_generations`) не переносятся между процессами и создаются заново в новых сессиях.
 
 ## Персистентные данные
 
-- `presets/<telegram_user_id>.json` — пресеты пользователя.
-- `sessions/runtime.json` — снимок пользовательских runtime-сессий между перезапусками.
-- `<COMFYUI_MODELS_PATH>/.comfybot_model_index.json` — индекс скачанных моделей и метаданных.
+- `presets/<telegram_user_id>.json` — пользовательские пресеты.
+- `sessions/runtime.json` — снимок runtime-состояния.
+- `<COMFYUI_MODELS_PATH>/.comfybot_model_index.json` — локальный индекс загруженных моделей.
 
 ## Особенности генерации
 
-- Референсы автоматически компонуются в одно изображение для ComfyUI input.
-- Если IP-Adapter доступен, используется он; иначе fallback в img2img.
-- Поддержаны цепочки LoRA (`loras: list[(name, strength)]`).
-- Дополнительно можно включать Hi-res Fix, FreeU, PAG и upscaler.
-- Прогресс может идти через WebSocket + fallback на polling `/history`.
+- Референсы объединяются в единый входной артефакт перед отправкой в ComfyUI.
+- При доступном IP-Adapter используется режим `ipadapter`, иначе применяется `img2img` fallback.
+- LoRA-цепочка хранится и нормализуется через типизированные объекты (`EditorLoraSelection` и связанные модели).
+- Улучшения (`Hi-res`, `FreeU`, `PAG`, upscaler-пути) управляются из editor flow и runtime preview-артефактов.
+
+## Проверка архитектурных границ
+
+- Границы импортов и layer-правила контролируются тестом `tests/test_architecture_boundaries.py`.
+- Контрактные ограничения по callback/runtime покрываются тестами:
+  - `tests/test_callback_payload_contracts.py`
+  - `tests/test_handler_callback_contracts.py`
+  - `tests/test_runtime_session_contracts.py`
+  - `tests/test_refactor_completion_contracts.py`
 
 ## Где расширять проект
 
-- Новый источник моделей: `model_downloader.py`.
-- Тонкая настройка Smart Prompt (TIPO): `smart_prompt.py`.
-- Новые пользовательские команды: `handlers/common.py`.
-- Новый параметр генерации: `GenerationParams` + UI в `handlers/prompt_editor.py` + сборка workflow в `comfyui_client.py`.
-
-## Целевая архитектура миграции
-
-Проект находится в инкрементной миграции к layered architecture.
-
-Новые модули добавляются в пакеты:
-
-- `domain/` — типизированные сущности и value objects.
-- `application/` — use-cases и сервисы orchestration.
-- `infrastructure/` — адаптеры внешних API/FS.
-- `presentation/` — транспорт и UI-адаптеры.
-
-Текущие `core/*`, `handlers/*` и корневые сервисы остаются legacy-слоем до
-полной декомпозиции.
-
-Правила безопасной миграции и quality gate описаны в `docs/REFACTOR_GUARDRAILS.md`.
-
-### Типизированные LoRA-объекты (Stage 1)
-
-В `domain/loras.py` добавлены базовые объекты для миграции с tuple/dict структур:
-
-- `LoraCatalogEntry` — модель LoRA из локального индекса/каталога.
-- `EditorLoraSelection` — LoRA в контексте редактора (имя + сила применения).
-- `WorkflowLoraAttachment` — LoRA в контексте передачи в ComfyUI workflow.
-
-До полной миграции эти объекты работают через совместимые адаптеры к legacy
-структурам `GenerationParams.loras` и JSON-представлениям в `core/storage.py`.
-
-### Metadata index и LoRA catalog service (Stage 2)
-
-Для декомпозиции `model_downloader.py` добавлены:
-
-- `infrastructure/model_metadata_index.py` — репозиторий локального индекса
-  `.comfybot_model_index.json` (load/get/upsert/delete).
-- `application/lora_catalog_service.py` — typed service для работы с LoRA-данными
-  (entry, trigger words, base-model resolve, compatibility).
-
-`ModelDownloader` остается фасадом, но хранение/доступ к индексу вынесены в
-отдельный инфраструктурный компонент, а UI flow использует сервис каталога.
-
-### LoRA editor vertical slice (Stage 3)
-
-LoRA-flow редактора переведен на `EditorLoraSelection` в рамках vertical slice:
-
-- добавление LoRA в цепочку теперь идет через typed selection + адаптер в
-  `GenerationParams`;
-- при наличии метаданных в индексе сохраняется `file_path` для editor-object;
-- удаление/очистка цепочки и проверка совместимости работают через typed chain,
-  сохраняя совместимость с текущим UI и workflow.
-
-### Typed generation request (Stage 4)
-
-Добавлен типизированный `GenerationRequest` (`domain/generation_request.py`) с
-декомпозицией на подмодели:
-
-- `GenerationPromptText`
-- `GenerationModelStack`
-- `GenerationSamplingConfig`
-- `GenerationImageConfig`
-- `GenerationEnhancementConfig`
-
-`GenerationParams` сохраняется как backward-compatible DTO, но теперь умеет
-конвертироваться в typed request (`to_generation_request`) и обратно
-(`from_generation_request`).
-
-Построение workflow в `comfyui_client.py` использует typed request как источник
-данных, сохраняя текущие внешние контракты вызова.
-
-### Explicit application use-cases (Stage 5)
-
-Часть сценарной логики вынесена из handler-модулей в application слой:
-
-- `application/prompt_generation_use_case.py` — подготовка запуска генерации
-  (нормализация, seed, проверка референсов, выбор reference mode, корректировка denoise).
-- `application/download_search_use_case.py` — построение search-критериев для
-  download-flow и вывод base-фильтра по checkpoint.
-
-Handler-модули `handlers/prompt_editor_generation.py` и
-`handlers/download_flow_handlers.py` теперь выступают тонкими контроллерами,
-делегируя бизнес-решения в use-case классы.
-
-### Large module decomposition (Stage 6)
-
-Продолжена декомпозиция крупных модулей с сохранением фасадов:
-
-- `comfyui_client.py` делегирует построение workflow в
-  `infrastructure/comfy_workflow_builder.py`.
-- `smart_prompt.py` использует выделенный text/policy модуль
-  `application/smart_prompt_text.py` (preset/anchor/tag sanitation logic).
-- `model_downloader.py` делегирует эвристики базовых семейств и совместимости в
-  `domain/base_model_policy.py`.
-
-Публичные интерфейсы сервисов (`ComfyUIClient`, `SmartPromptService`,
-`ModelDownloader`) сохранены совместимыми.
-
-### Runtime session DTO + migration (Stage 7)
-
-Слой runtime persistence переведен на typed snapshot-модель:
-
-- `core/runtime.py` использует `_RuntimeSessionSnapshot` как единый DTO для
-  сериализации/десериализации `RuntimeStore`.
-- В persisted `active_prompt_requests` добавлены typed `editor_loras` и
-  UI-panel ссылки (`ui_chat_id`, `ui_message_id`).
-- Добавлен мигратор legacy payload (`schema_version: 1 -> 2`) с автоматическим
-  заполнением `editor_loras` из старого формата `params.loras`.
-
-Формат сохранения остается backward-compatible для существующих `sessions/runtime.json`.
-
-### Final hardening (Stage 8)
-
-Финальный этап фокусируется на зачистке legacy-зависимостей и контрольных
-ограничениях архитектуры:
-
-- `application/download_search_use_case.py` больше не зависит от
-  `core.download_filters`; маппинг base-code перенесен в `domain/base_model_policy.py`.
-- `core/download_filters.py` сохраняет backward-compatible API, но делегирует
-  базовую эвристику в domain policy.
-- `tests/test_architecture_boundaries.py` расширен проверкой запрещенных
-  абсолютных импортов для новых слоев.
-- В `pyproject.toml` добавлены stricter mypy-правила для
-  `application/*`, `domain/*`, `infrastructure/*`.
-
-### Closure and handoff (Stage 9)
-
-- Добавлен итоговый документ `docs/REFACTOR_COMPLETION.md` с картой
-  выполненных этапов, acceptance matrix и checklist перед релизом.
-- Добавлены финальные контрактные тесты на ключевые инварианты
-  (runtime schema v2, совместимость download base-code policy).
-
-## UI-архитектура
-
-Подробные правила интерфейсного слоя и шаблон расширения описаны в
-`docs/UI_MIGRATION_PLAN.md`.
-
-Ключевые принципы:
-
-- UI собирается из shared компонентов (`core/ui_kit/*`, `core/ui.py`).
-- Рендер панелей и callback-message fallback централизованы (`core/interaction.py`, `core/panels.py`).
-- Callback-контракты описываются схемами в `core/callbacks.py`.
-- Новые экраны добавляются через переиспользуемые builders и interaction helper-ы.
+- Новый источник моделей: `model_downloader.py` и адаптеры в `infrastructure/`.
+- Новый параметр генерации: доменная/прикладная модель + UI в handler-модулях редактора + сборка workflow в `comfyui_client.py`.
+- Новые команды меню: `handlers/common.py` и профильные handler-модули.
+- Новые локали интерфейса: `locales/<locale>/locale.meta.json` и `locales/<locale>/messages.json`.

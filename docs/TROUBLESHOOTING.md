@@ -1,4 +1,4 @@
-# Troubleshooting
+# Диагностика и решения
 
 ## Бот не стартует: `TELEGRAM_BOT_TOKEN is not set`
 

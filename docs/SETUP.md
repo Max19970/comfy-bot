@@ -53,8 +53,8 @@ Copy-Item .env.example .env
 Минимум для старта:
 
 - `TELEGRAM_BOT_TOKEN` — токен бота от BotFather
-- `COMFYUI_URL` — URL ComfyUI API (например `http://127.0.0.1:8000`)
-- `ALLOWED_USERS` — Telegram ID разрешённых пользователей через запятую
+- `COMFYUI_URL` — опциональный URL ComfyUI API (по умолчанию `http://127.0.0.1:8000`)
+- `ALLOWED_USERS` — опциональный список Telegram ID разрешенных пользователей через запятую
 
 Если `ALLOWED_USERS` оставить пустым, бот будет отвечать всем.
 

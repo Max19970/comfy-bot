@@ -127,9 +127,9 @@
 | `docs/ARCHITECTURE_BOUNDARIES_FINAL.md` | `app_context.py`, `handlers/registry.py`, `handlers/prompt_editor.py`, `core/runtime_snapshot.py`, `core/runtime_persistence.py`, `tests/test_architecture_boundaries.py` | подтвержден | Фактических расхождений не выявлено. |
 | `docs/REFACTOR_GUARDRAILS.md` | `tests/test_architecture_boundaries.py`, `docs/UI_MIGRATION_PLAN.md`, `pyproject.toml` | частично подтвержден | Процедурные требования актуальны; на этапе 3 локализовать заголовок и убрать ретроспективные формулировки. |
 | `docs/UI_MIGRATION_PLAN.md` | `core/ui_kit/`, `core/interaction.py`, `core/panels.py`, `core/callbacks.py`, `docs/REGRESSION_R01_R13_REPORT.md` | подтвержден | Фактических расхождений не выявлено. |
-| `docs/dev/tasks/_templates/README.md` | `AGENTS.md`, `docs/dev/tasks/_templates/task_plan_template.md`, `docs/dev/tasks/_templates/stage_completion_report_template.md` | частично подтвержден | Пути и контракт корректны, но текст англоязычный; на этапе 3 локализовать шаблонный README. |
-| `docs/dev/tasks/_templates/task_plan_template.md` | `AGENTS.md` (раздел `2) Planning Gate`) | частично подтвержден | Структура шаблона соответствует протоколу, но текст англоязычный; на этапе 3 локализовать все секции на русский язык. |
-| `docs/dev/tasks/_templates/stage_completion_report_template.md` | `AGENTS.md` (раздел `3.4 Stage Completion Report`) | частично подтвержден | Структура шаблона соответствует протоколу, но текст англоязычный; на этапе 3 локализовать все секции на русский язык. |
+| `docs/dev/tasks/_templates/README.md` | `AGENTS.md`, `docs/dev/tasks/_templates/task_plan_template.md`, `docs/dev/tasks/_templates/stage_completion_report_template.md` | частично подтвержден | Пути и контракт корректны; по запросу пользователя на этапе 3 шаблон сохраняется в исходном виде без локализации. |
+| `docs/dev/tasks/_templates/task_plan_template.md` | `AGENTS.md` (раздел `2) Planning Gate`) | частично подтвержден | Структура шаблона соответствует протоколу; по запросу пользователя на этапе 3 шаблон сохраняется в исходном виде без локализации. |
+| `docs/dev/tasks/_templates/stage_completion_report_template.md` | `AGENTS.md` (раздел `3.4 Stage Completion Report`) | частично подтвержден | Структура шаблона соответствует протоколу; по запросу пользователя на этапе 3 шаблон сохраняется в исходном виде без локализации. |
 | `docs/dev/tasks/docs-cleanup-ru/2026-02-23_docs-cleanup-ru_plan.md` | `AGENTS.md`, `docs/dev/tasks/_templates/task_plan_template.md` | подтвержден | Фактических расхождений не выявлено; документ поддерживает текущий workflow. |
 | `docs/dev/tasks/docs-cleanup-ru/2026-02-23_docs-cleanup-ru_inventory.md` | `git ls-files "*.md"`, `git ls-files --others --ignored --exclude-standard "*.md"` | подтвержден | Фактических расхождений не выявлено; после корректировки статусов отражает актуальную классификацию. |
 | `docs/dev/tasks/docs-cleanup-ru/reports/2026-02-23_stage-1_inventory-and-classification_report.md` | `docs/dev/tasks/docs-cleanup-ru/2026-02-23_docs-cleanup-ru_plan.md`, `docs/dev/tasks/docs-cleanup-ru/2026-02-23_docs-cleanup-ru_inventory.md` | подтвержден | Фактических расхождений не выявлено; отчет отражает текущее состояние этапа 1. |
@@ -147,3 +147,20 @@
 2. `docs/CONFIG.md`: добавить описание `SMART_PROMPT_FORMAT`.
 3. `docs/ARCHITECTURE.md`: исправить блок восстановления runtime (`active_generations`).
 4. `docs/CHANGELOG.md`: переработать формат под целевые требования проекта.
+
+## Этап 3: Статус устранения расхождений и русификации
+
+| Документ | Статус после этапа 3 | Что выполнено |
+| --- | --- | --- |
+| `docs/SETUP.md` | выполнено | Раздел переменных обновлен: `COMFYUI_URL` и `ALLOWED_USERS` обозначены как опциональные. |
+| `docs/CONFIG.md` | выполнено | Добавлен параметр `SMART_PROMPT_FORMAT` (таблица и примеры). |
+| `docs/ARCHITECTURE.md` | выполнено | Раздел runtime приведен к фактическому поведению, удален устаревший ретроспективный блок стадий. |
+| `docs/CHANGELOG.md` | выполнено | Документ переработан в формат актуального состояния на русском языке в настоящем времени. |
+| `docs/TROUBLESHOOTING.md` | выполнено | Заголовок локализован, стиль выровнен под единый русскоязычный формат. |
+| `CONTRIBUTING.md` | выполнено | Документ локализован и структурирован, нумерация исправлена. |
+| `SECURITY.md` | выполнено | Документ локализован и синхронизирован со структурой runtime-данных из `.gitignore`. |
+| `docs/REFACTOR_GUARDRAILS.md` | выполнено | Документ локализован и приведен к текущим процессным правилам в настоящем времени. |
+| `docs/dev/tasks/_templates/README.md` | отменено по запросу пользователя | Локализация отменена; шаблон возвращен в исходный вид. |
+| `docs/dev/tasks/_templates/task_plan_template.md` | отменено по запросу пользователя | Локализация отменена; шаблон возвращен в исходный вид. |
+| `docs/dev/tasks/_templates/stage_completion_report_template.md` | отменено по запросу пользователя | Локализация отменена; шаблон возвращен в исходный вид. |
+| `docs/COMMANDS.md` | выполнено | Исправлены дубли нумерации и редакторские несоответствия в сценариях. |

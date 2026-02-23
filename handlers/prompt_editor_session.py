@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from typing import Any
 
 import aiohttp
@@ -22,6 +22,14 @@ from core.models import GenerationParams
 from core.runtime import PromptRequest, RuntimeStore
 from core.telegram import callback_user_id, message_user_id
 from core.user_preferences import read_generation_defaults
+
+TranslateText = Callable[[str, str | None, str], str]
+
+
+def _tx(translate: TranslateText | None, key: str, locale: str | None, default: str) -> str:
+    if translate is None:
+        return default
+    return translate(key, locale, default)
 
 
 def remember_prompt_panel(runtime: RuntimeStore, req: PromptRequest, panel_msg: Message) -> None:
@@ -114,18 +122,44 @@ async def move_prompt_panel_to_bottom(
     return sent
 
 
-async def ensure_models_available(client: ComfyUIClient, message: Message) -> bool:
+async def ensure_models_available(
+    client: ComfyUIClient,
+    message: Message,
+    *,
+    translate: TranslateText | None = None,
+    locale: str | None = None,
+) -> bool:
     if not client.info.checkpoints:
-        await message.answer("⏳ Загружаю список моделей…")
+        await message.answer(
+            _tx(
+                translate,
+                "prompt_editor.session.notice.loading_models",
+                locale,
+                "⏳ Загружаю список моделей…",
+            )
+        )
         try:
             await client.refresh_info()
         except (aiohttp.ClientError, asyncio.TimeoutError, RuntimeError, ValueError) as exc:
             await message.answer(
-                f"❌ <b>Не удалось подключиться к ComfyUI</b>\n<code>{h(exc)}</code>"
+                _tx(
+                    translate,
+                    "prompt_editor.session.error.comfyui_connection_failed",
+                    locale,
+                    "❌ <b>Не удалось подключиться к ComfyUI</b>",
+                )
+                + f"\n<code>{h(exc)}</code>"
             )
             return False
     if not client.info.checkpoints:
-        await message.answer("❌ На сервере ComfyUI нет ни одного checkpoint.")
+        await message.answer(
+            _tx(
+                translate,
+                "prompt_editor.session.error.no_checkpoints",
+                locale,
+                "❌ На сервере ComfyUI нет ни одного checkpoint.",
+            )
+        )
         return False
     return True
 
@@ -267,19 +301,32 @@ async def require_prompt_request_for_message(
     runtime: RuntimeStore,
     msg: Message,
     state: FSMContext,
+    *,
+    translate: TranslateText | None = None,
+    locale: str | None = None,
 ) -> tuple[int, PromptRequest] | None:
     uid = message_user_id(msg)
     req = runtime.active_prompt_requests.get(uid)
     if req:
         return uid, req
     await state.clear()
-    await msg.answer("❌ Активный запрос не найден. Используйте /generate.")
+    await msg.answer(
+        _tx(
+            translate,
+            "prompt_editor.session.error.active_request_not_found",
+            locale,
+            "❌ Активный запрос не найден. Используйте /generate.",
+        )
+    )
     return None
 
 
 async def require_prompt_request_for_callback(
     runtime: RuntimeStore,
     cb: CallbackQuery,
+    *,
+    translate: TranslateText | None = None,
+    locale: str | None = None,
 ) -> tuple[int, PromptRequest] | None:
     message = await require_callback_message(cb)
     if message is None:
@@ -289,7 +336,15 @@ async def require_prompt_request_for_callback(
     req = runtime.active_prompt_requests.get(uid)
     if req:
         return uid, req
-    await cb.answer("❌ Нет активного запроса.", show_alert=True)
+    await cb.answer(
+        _tx(
+            translate,
+            "prompt_editor.session.error.no_active_request",
+            locale,
+            "❌ Нет активного запроса.",
+        ),
+        show_alert=True,
+    )
     return None
 
 

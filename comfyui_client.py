@@ -15,7 +15,7 @@ import json
 import logging
 import math
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from io import BytesIO
 from typing import Any
@@ -27,6 +27,7 @@ from PIL import Image, ImageOps
 from config import Config
 from core.models import GenerationParams
 from core.queue_utils import queue_item_prompt_id
+from domain.localization import LocalizationService
 from infrastructure.comfy_execution_orchestrator import (
     ComfyExecutionOrchestrator,
     GenerationImageCallback,
@@ -41,6 +42,19 @@ logger = logging.getLogger(__name__)
 _resampling = getattr(Image, "Resampling", None)
 LANCZOS_RESAMPLE = getattr(_resampling, "LANCZOS", 1)
 _NO_DEFAULT = object()
+
+
+def _t(
+    localization: LocalizationService | None,
+    key: str,
+    *,
+    locale: str | None,
+    default: str,
+    params: Mapping[str, object] | None = None,
+) -> str:
+    if localization is None:
+        return default
+    return localization.t(key, locale=locale, params=params, default=default)
 
 
 def _compose_reference_image(
@@ -121,12 +135,31 @@ class ComfyUIClient:
         config: Config,
         *,
         transport: ComfyTransportProtocol | None = None,
+        localization: LocalizationService | None = None,
+        locale: str | None = None,
     ) -> None:
         self.base_url = config.comfyui_url
         self._transport: ComfyTransportProtocol = transport or ComfyHttpTransport(self.base_url)
+        self._localization = localization
+        self._locale = locale
         self.info = ComfyUIInfo()
         self._object_info: dict[str, Any] = {}
         self._execution_orchestrator = ComfyExecutionOrchestrator(self)
+
+    def _translate(
+        self,
+        key: str,
+        default: str,
+        *,
+        params: Mapping[str, object] | None = None,
+    ) -> str:
+        return _t(
+            self._localization,
+            key,
+            locale=self._locale,
+            default=default,
+            params=params,
+        )
 
     # -- session management --------------------------------------------------
 
@@ -463,37 +496,105 @@ class ComfyUIClient:
                 node_types[str(node_id)] = class_type
         return node_types
 
-    @staticmethod
-    def _stage_name(class_type: str) -> str:
+    def _stage_name(self, class_type: str) -> str:
         labels = {
-            "CheckpointLoaderSimple": "подготовка модели",
-            "LoraLoader": "применение LoRA",
-            "VAELoader": "загрузка VAE",
-            "CLIPTextEncode": "кодирование промпта",
-            "ControlNetLoader": "загрузка ControlNet",
-            "ControlNetApply": "применение ControlNet",
-            "ControlNetApplyAdvanced": "применение ControlNet",
-            "CLIPVisionLoader": "загрузка CLIP Vision",
-            "IPAdapterModelLoader": "загрузка IP-Adapter",
-            "IPAdapterApply": "применение IP-Adapter",
-            "IPAdapterApplyAdvanced": "применение IP-Adapter",
-            "LoadImage": "загрузка изображения",
-            "VAEEncode": "кодирование референса",
-            "EmptyLatentImage": "подготовка латента",
-            "RepeatLatentBatch": "подготовка батча",
-            "KSampler": "сэмплинг",
-            "VAEDecode": "декодирование изображения",
-            "UpscaleModelLoader": "загрузка апскейлера",
-            "ImageUpscaleWithModel": "апскейл",
-            "SaveImage": "сохранение результата",
-            "FreeU_V2": "применение FreeU",
-            "PerturbedAttentionGuidance": "применение PAG",
-            "LatentUpscale": "Hi-res: апскейл латента",
-            "HyperTile": "настройка HyperTile",
-            "VAEDecodeTiled": "тайловое декодирование",
-            "VAEEncodeTiled": "тайловое кодирование",
+            "CheckpointLoaderSimple": self._translate(
+                "comfyui.progress.stage.checkpoint_loader",
+                "подготовка модели",
+            ),
+            "LoraLoader": self._translate("comfyui.progress.stage.lora_loader", "применение LoRA"),
+            "VAELoader": self._translate("comfyui.progress.stage.vae_loader", "загрузка VAE"),
+            "CLIPTextEncode": self._translate(
+                "comfyui.progress.stage.clip_text_encode",
+                "кодирование промпта",
+            ),
+            "ControlNetLoader": self._translate(
+                "comfyui.progress.stage.controlnet_loader",
+                "загрузка ControlNet",
+            ),
+            "ControlNetApply": self._translate(
+                "comfyui.progress.stage.controlnet_apply",
+                "применение ControlNet",
+            ),
+            "ControlNetApplyAdvanced": self._translate(
+                "comfyui.progress.stage.controlnet_apply",
+                "применение ControlNet",
+            ),
+            "CLIPVisionLoader": self._translate(
+                "comfyui.progress.stage.clip_vision_loader",
+                "загрузка CLIP Vision",
+            ),
+            "IPAdapterModelLoader": self._translate(
+                "comfyui.progress.stage.ipadapter_model_loader",
+                "загрузка IP-Adapter",
+            ),
+            "IPAdapterApply": self._translate(
+                "comfyui.progress.stage.ipadapter_apply",
+                "применение IP-Adapter",
+            ),
+            "IPAdapterApplyAdvanced": self._translate(
+                "comfyui.progress.stage.ipadapter_apply",
+                "применение IP-Adapter",
+            ),
+            "LoadImage": self._translate(
+                "comfyui.progress.stage.load_image", "загрузка изображения"
+            ),
+            "VAEEncode": self._translate(
+                "comfyui.progress.stage.vae_encode",
+                "кодирование референса",
+            ),
+            "EmptyLatentImage": self._translate(
+                "comfyui.progress.stage.empty_latent_image",
+                "подготовка латента",
+            ),
+            "RepeatLatentBatch": self._translate(
+                "comfyui.progress.stage.repeat_latent_batch",
+                "подготовка батча",
+            ),
+            "KSampler": self._translate("comfyui.progress.stage.ksampler", "сэмплинг"),
+            "VAEDecode": self._translate(
+                "comfyui.progress.stage.vae_decode",
+                "декодирование изображения",
+            ),
+            "UpscaleModelLoader": self._translate(
+                "comfyui.progress.stage.upscale_model_loader",
+                "загрузка апскейлера",
+            ),
+            "ImageUpscaleWithModel": self._translate(
+                "comfyui.progress.stage.image_upscale_with_model",
+                "апскейл",
+            ),
+            "SaveImage": self._translate(
+                "comfyui.progress.stage.save_image",
+                "сохранение результата",
+            ),
+            "FreeU_V2": self._translate("comfyui.progress.stage.freeu", "применение FreeU"),
+            "PerturbedAttentionGuidance": self._translate(
+                "comfyui.progress.stage.pag",
+                "применение PAG",
+            ),
+            "LatentUpscale": self._translate(
+                "comfyui.progress.stage.latent_upscale",
+                "Hi-res: апскейл латента",
+            ),
+            "HyperTile": self._translate(
+                "comfyui.progress.stage.hypertile",
+                "настройка HyperTile",
+            ),
+            "VAEDecodeTiled": self._translate(
+                "comfyui.progress.stage.vae_decode_tiled",
+                "тайловое декодирование",
+            ),
+            "VAEEncodeTiled": self._translate(
+                "comfyui.progress.stage.vae_encode_tiled",
+                "тайловое кодирование",
+            ),
         }
-        return labels.get(class_type, class_type or "выполнение узла")
+        return labels.get(
+            class_type,
+            class_type
+            or self._translate("comfyui.progress.stage.node_execution", "выполнение узла"),
+        )
 
     @staticmethod
     def _status_queue_remaining(data: Any) -> int | None:
@@ -609,7 +710,10 @@ class ComfyUIClient:
                     ("ws_connected",),
                     0,
                     0,
-                    "🔌 Live-прогресс подключен",
+                    self._translate(
+                        "comfyui.progress.ws_connected",
+                        "🔌 Live-прогресс подключен",
+                    ),
                 )
 
                 while loop.time() - started_at < timeout:
@@ -663,14 +767,21 @@ class ComfyUIClient:
                                         ("queue_remaining", queue_remaining),
                                         0,
                                         0,
-                                        f"⏳ В очереди ComfyUI: осталось задач {queue_remaining}",
+                                        self._translate(
+                                            "comfyui.progress.queue_remaining",
+                                            "⏳ В очереди ComfyUI: осталось задач {remaining}",
+                                            params={"remaining": queue_remaining},
+                                        ),
                                     )
                                 else:
                                     await report_progress(
                                         ("queue_remaining", 0),
                                         0,
                                         0,
-                                        "⏳ Ожидаю запуск workflow...",
+                                        self._translate(
+                                            "comfyui.progress.queue_waiting_start",
+                                            "⏳ Ожидаю запуск workflow...",
+                                        ),
                                     )
                             continue
 
@@ -679,7 +790,10 @@ class ComfyUIClient:
                                 ("execution_start",),
                                 0,
                                 0,
-                                "▶️ Workflow запущен...",
+                                self._translate(
+                                    "comfyui.progress.execution_started",
+                                    "▶️ Workflow запущен...",
+                                ),
                             )
                             continue
 
@@ -693,7 +807,11 @@ class ComfyUIClient:
                                     ("execution_cached", cached_count),
                                     0,
                                     0,
-                                    f"💾 Использую кэш ({cached_count} узл.)...",
+                                    self._translate(
+                                        "comfyui.progress.cached_nodes",
+                                        "💾 Использую кэш ({count} узл.)...",
+                                        params={"count": cached_count},
+                                    ),
                                 )
                             continue
 
@@ -704,7 +822,10 @@ class ComfyUIClient:
                                     ("executing_done",),
                                     1,
                                     1,
-                                    "✅ Генерация завершена. Финализирую...",
+                                    self._translate(
+                                        "comfyui.progress.execution_done",
+                                        "✅ Генерация завершена. Финализирую...",
+                                    ),
                                 )
                                 return True
 
@@ -714,7 +835,11 @@ class ComfyUIClient:
                                 ("executing", node_id),
                                 0,
                                 0,
-                                f"⚙️ {self._stage_name(class_type)}...",
+                                self._translate(
+                                    "comfyui.progress.executing_stage",
+                                    "⚙️ {stage}...",
+                                    params={"stage": self._stage_name(class_type)},
+                                ),
                             )
                             continue
 
@@ -741,7 +866,15 @@ class ComfyUIClient:
                                 ("progress", node_id, current, total),
                                 current,
                                 total,
-                                f"🔄 {stage_name}: шаг {current}/{total}",
+                                self._translate(
+                                    "comfyui.progress.stage_steps",
+                                    "🔄 {stage}: шаг {current}/{total}",
+                                    params={
+                                        "stage": stage_name,
+                                        "current": current,
+                                        "total": total,
+                                    },
+                                ),
                             )
                             continue
 
@@ -791,7 +924,10 @@ class ComfyUIClient:
                                 ("execution_success",),
                                 1,
                                 1,
-                                "✅ Генерация завершена. Финализирую...",
+                                self._translate(
+                                    "comfyui.progress.execution_done",
+                                    "✅ Генерация завершена. Финализирую...",
+                                ),
                             )
                             return True
 
@@ -944,14 +1080,21 @@ class ComfyUIClient:
                             ("queue", pending_position, pending_total),
                             0,
                             0,
-                            f"⏳ В очереди: позиция {pending_position}/{pending_total}",
+                            self._translate(
+                                "comfyui.progress.queue_position",
+                                "⏳ В очереди: позиция {position}/{total}",
+                                params={"position": pending_position, "total": pending_total},
+                            ),
                         )
                     elif self._queue_contains_prompt(queue_running, prompt_id):
                         await report_progress(
                             ("running",),
                             0,
                             0,
-                            "⚙️ Выполняю workflow...",
+                            self._translate(
+                                "comfyui.progress.running_workflow",
+                                "⚙️ Выполняю workflow...",
+                            ),
                         )
 
                 async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
@@ -970,7 +1113,10 @@ class ComfyUIClient:
                                         ("sampler", current_step, total_steps),
                                         current_step,
                                         total_steps,
-                                        "🔄 Выполняю шаги сэмплера...",
+                                        self._translate(
+                                            "comfyui.progress.sampler_steps",
+                                            "🔄 Выполняю шаги сэмплера...",
+                                        ),
                                     )
                                 elif self._queue_contains_prompt(
                                     queue_running,
@@ -980,7 +1126,10 @@ class ComfyUIClient:
                                         ("running",),
                                         0,
                                         0,
-                                        "⚙️ Выполняю workflow...",
+                                        self._translate(
+                                            "comfyui.progress.running_workflow",
+                                            "⚙️ Выполняю workflow...",
+                                        ),
                                     )
 
                             if (

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import asdict, dataclass
 from typing import Any
 
@@ -43,9 +43,9 @@ class DownloadFlowDeps:
     message_user_id: Callable[[Message], int]
     start_download: Callable[[Message, FSMContext, int], Awaitable[None]]
     render_download_panel: Callable[..., Awaitable[Message]]
-    build_type_keyboard: Callable[[], InlineKeyboardMarkup]
-    build_source_keyboard: Callable[[], InlineKeyboardMarkup]
-    type_title: Callable[[str], str]
+    build_type_keyboard: Callable[[str | None], InlineKeyboardMarkup]
+    build_source_keyboard: Callable[[str | None], InlineKeyboardMarkup]
+    type_title: Callable[[str, str | None], str]
     show_filter_menu: Callable[..., Awaitable[None]]
     show_author_prompt: Callable[..., Awaitable[None]]
     show_base_filter_menu: Callable[..., Awaitable[None]]
@@ -62,6 +62,8 @@ class DownloadFlowDeps:
     apply_version_option: Callable[[Any, Any], Any]
     show_download_confirmation: Callable[..., Awaitable[None]]
     filter_profiles: dict[str, dict[str, Any]]
+    translate: Callable[[str, str | None, str, Mapping[str, object] | None], str]
+    resolve_locale: Callable[..., str]
 
 
 def register_download_flow_handlers(deps: DownloadFlowDeps) -> None:
@@ -75,21 +77,115 @@ def register_download_flow_handlers(deps: DownloadFlowDeps) -> None:
         supports_nsfw_filter=deps.supports_nsfw_filter,
     )
 
-    def _models_back_keyboard() -> InlineKeyboardMarkup:
+    def _resolved_locale(uid: int, *, telegram_locale: str | None) -> str:
+        return deps.resolve_locale(uid, telegram_locale=telegram_locale)
+
+    def _t(
+        uid: int,
+        key: str,
+        default: str,
+        *,
+        telegram_locale: str | None,
+        params: Mapping[str, object] | None = None,
+    ) -> str:
+        locale = _resolved_locale(uid, telegram_locale=telegram_locale)
+        return deps.translate(key, locale, default, params)
+
+    def _t_cb(
+        cb: CallbackQuery,
+        key: str,
+        default: str,
+        *,
+        params: Mapping[str, object] | None = None,
+    ) -> str:
+        uid = deps.callback_user_id(cb)
+        telegram_locale = cb.from_user.language_code if cb.from_user else None
+        return _t(uid, key, default, telegram_locale=telegram_locale, params=params)
+
+    def _t_msg(
+        msg: Message,
+        key: str,
+        default: str,
+        *,
+        params: Mapping[str, object] | None = None,
+    ) -> str:
+        uid = deps.message_user_id(msg)
+        telegram_locale = msg.from_user.language_code if msg.from_user else None
+        return _t(uid, key, default, telegram_locale=telegram_locale, params=params)
+
+    def _models_back_keyboard(*, uid: int, telegram_locale: str | None) -> InlineKeyboardMarkup:
         return build_keyboard(
             [
-                [back_button("menu:models", text="⬅️ Модели")],
-                [menu_root_button()],
+                [
+                    back_button(
+                        "menu:models",
+                        text=_t(
+                            uid,
+                            "common.menu.back_to_models",
+                            "⬅️ Модели",
+                            telegram_locale=telegram_locale,
+                        ),
+                    )
+                ],
+                [
+                    menu_root_button(
+                        text=_t(
+                            uid,
+                            "common.menu.root",
+                            "🏠 В меню",
+                            telegram_locale=telegram_locale,
+                        )
+                    )
+                ],
             ]
         )
 
-    def _download_done_keyboard() -> InlineKeyboardMarkup:
+    def _download_done_keyboard(*, uid: int, telegram_locale: str | None) -> InlineKeyboardMarkup:
         return build_keyboard(
             [
-                [back_button("dldone:results", text="⬅️ К результатам")],
-                [button("🔎 Новый поиск", "dldone:new")],
-                [back_button("menu:models", text="⬅️ Модели")],
-                [menu_root_button()],
+                [
+                    back_button(
+                        "dldone:results",
+                        text=_t(
+                            uid,
+                            "download.done.back_to_results",
+                            "⬅️ К результатам",
+                            telegram_locale=telegram_locale,
+                        ),
+                    )
+                ],
+                [
+                    button(
+                        _t(
+                            uid,
+                            "download.done.new_search",
+                            "🔎 Новый поиск",
+                            telegram_locale=telegram_locale,
+                        ),
+                        "dldone:new",
+                    )
+                ],
+                [
+                    back_button(
+                        "menu:models",
+                        text=_t(
+                            uid,
+                            "common.menu.back_to_models",
+                            "⬅️ Модели",
+                            telegram_locale=telegram_locale,
+                        ),
+                    )
+                ],
+                [
+                    menu_root_button(
+                        text=_t(
+                            uid,
+                            "common.menu.root",
+                            "🏠 В меню",
+                            telegram_locale=telegram_locale,
+                        )
+                    )
+                ],
             ]
         )
 
@@ -173,16 +269,30 @@ def register_download_flow_handlers(deps: DownloadFlowDeps) -> None:
     @router.callback_query(DownloadStates.choosing_type, F.data.startswith("dltype:"))
     async def dl_type_chosen(cb: CallbackQuery, state: FSMContext):
         model_type = await _callback_value(
-            cb, prefix="dltype", invalid_text="❌ Неверный выбор типа."
+            cb,
+            prefix="dltype",
+            invalid_text=_t_cb(
+                cb,
+                "download.flow.error.invalid_type",
+                "❌ Неверный выбор типа.",
+            ),
         )
         if model_type is None:
             return
         if model_type == "cancel":
             await state.clear()
             message = await _callback_message(cb)
+            uid = deps.callback_user_id(cb)
+            telegram_locale = cb.from_user.language_code if cb.from_user else None
             if message is not None:
                 await message.edit_text(
-                    "❌ Скачивание отменено.", reply_markup=_models_back_keyboard()
+                    _t(
+                        uid,
+                        "download.flow.cancelled",
+                        "❌ Скачивание отменено.",
+                        telegram_locale=telegram_locale,
+                    ),
+                    reply_markup=_models_back_keyboard(uid=uid, telegram_locale=telegram_locale),
                 )
             await cb.answer()
             return
@@ -206,25 +316,49 @@ def register_download_flow_handlers(deps: DownloadFlowDeps) -> None:
         await state.update_data(dl_type=model_type, **defaults)
         await state.set_state(DownloadStates.choosing_source)
         message = await _callback_message(cb)
+        telegram_locale = cb.from_user.language_code if cb.from_user else None
+        locale = _resolved_locale(uid, telegram_locale=telegram_locale)
         if message is not None:
             await message.edit_text(
-                f"🔍 <b>Где искать {h(deps.type_title(model_type))}?</b>",
-                reply_markup=deps.build_source_keyboard(),
+                _t(
+                    uid,
+                    "download.flow.choose_source",
+                    "🔍 <b>Где искать {type_title}?</b>",
+                    telegram_locale=telegram_locale,
+                    params={"type_title": h(deps.type_title(model_type, locale))},
+                ),
+                reply_markup=deps.build_source_keyboard(locale),
             )
         await cb.answer()
 
     @router.callback_query(DownloadStates.choosing_source, F.data.startswith("dlsrc:"))
     async def dl_src_chosen(cb: CallbackQuery, state: FSMContext):
-        source = await _callback_value(cb, prefix="dlsrc", invalid_text="❌ Неверный источник.")
+        source = await _callback_value(
+            cb,
+            prefix="dlsrc",
+            invalid_text=_t_cb(
+                cb,
+                "download.flow.error.invalid_source",
+                "❌ Неверный источник.",
+            ),
+        )
         if source is None:
             return
         if source == "back":
             await state.set_state(DownloadStates.choosing_type)
             message = await _callback_message(cb)
+            uid = deps.callback_user_id(cb)
+            telegram_locale = cb.from_user.language_code if cb.from_user else None
+            locale = _resolved_locale(uid, telegram_locale=telegram_locale)
             if message is not None:
                 await message.edit_text(
-                    "📦 <b>Скачивание компонентов</b>\nВыберите тип:",
-                    reply_markup=deps.build_type_keyboard(),
+                    _t(
+                        uid,
+                        "download.start.choose_type",
+                        "📦 <b>Скачивание компонентов</b>\nВыберите тип:",
+                        telegram_locale=telegram_locale,
+                    ),
+                    reply_markup=deps.build_type_keyboard(locale),
                 )
             await cb.answer()
             return
@@ -261,21 +395,47 @@ def register_download_flow_handlers(deps: DownloadFlowDeps) -> None:
             updated = apply_download_profile(data, deps.filter_profiles.get(payload[2]))
             await state.update_data(**updated)
             await deps.show_filter_menu(message, state, edit=True)
-            await cb.answer("✅ Профиль применён")
+            await cb.answer(
+                _t_cb(
+                    cb,
+                    "download.flow.filter.profile_applied",
+                    "✅ Профиль применён",
+                )
+            )
             return
 
         if action == "pagesize" and len(payload) >= 3:
             try:
                 page_size = int(payload[2])
             except ValueError:
-                await cb.answer("Некорректный размер страницы.", show_alert=True)
+                await cb.answer(
+                    _t_cb(
+                        cb,
+                        "download.flow.error.invalid_page_size",
+                        "Некорректный размер страницы.",
+                    ),
+                    show_alert=True,
+                )
                 return
             if page_size not in {5, 8, 10}:
-                await cb.answer("Некорректный размер страницы.", show_alert=True)
+                await cb.answer(
+                    _t_cb(
+                        cb,
+                        "download.flow.error.invalid_page_size",
+                        "Некорректный размер страницы.",
+                    ),
+                    show_alert=True,
+                )
                 return
             await state.update_data(dl_page_size=page_size)
             await deps.show_filter_menu(message, state, edit=True)
-            await cb.answer("✅ Размер страницы обновлён")
+            await cb.answer(
+                _t_cb(
+                    cb,
+                    "download.flow.filter.page_size_updated",
+                    "✅ Размер страницы обновлён",
+                )
+            )
             return
 
         if action == "base_menu":
@@ -286,10 +446,19 @@ def register_download_flow_handlers(deps: DownloadFlowDeps) -> None:
         if action == "back":
             data = await state.get_data()
             model_type = data.get("dl_type", "checkpoint")
+            uid = deps.callback_user_id(cb)
+            telegram_locale = cb.from_user.language_code if cb.from_user else None
+            locale = _resolved_locale(uid, telegram_locale=telegram_locale)
             await state.set_state(DownloadStates.choosing_source)
             await message.edit_text(
-                f"🔍 <b>Где искать {h(deps.type_title(model_type))}?</b>",
-                reply_markup=deps.build_source_keyboard(),
+                _t(
+                    uid,
+                    "download.flow.choose_source",
+                    "🔍 <b>Где искать {type_title}?</b>",
+                    telegram_locale=telegram_locale,
+                    params={"type_title": h(deps.type_title(model_type, locale))},
+                ),
+                reply_markup=deps.build_source_keyboard(locale),
             )
             await cb.answer()
             return
@@ -354,8 +523,17 @@ def register_download_flow_handlers(deps: DownloadFlowDeps) -> None:
     @router.message(DownloadStates.entering_query, F.text)
     async def dl_query(msg: Message, state: FSMContext):
         query = (msg.text or "").strip()
+        uid = deps.message_user_id(msg)
+        telegram_locale = msg.from_user.language_code if msg.from_user else None
         if not query:
-            await msg.answer("Введите запрос:")
+            await msg.answer(
+                _t(
+                    uid,
+                    "download.flow.query.enter_query",
+                    "Введите запрос:",
+                    telegram_locale=telegram_locale,
+                )
+            )
             return
 
         try:
@@ -368,7 +546,13 @@ def register_download_flow_handlers(deps: DownloadFlowDeps) -> None:
         status = await deps.render_download_panel(
             msg,
             state,
-            f"🔍 Ищу <code>{h(query)}</code>…",
+            _t(
+                uid,
+                "download.flow.query.searching",
+                "🔍 Ищу <code>{query}</code>…",
+                telegram_locale=telegram_locale,
+                params={"query": h(query)},
+            ),
             None,
             prefer_edit=False,
         )
@@ -379,18 +563,53 @@ def register_download_flow_handlers(deps: DownloadFlowDeps) -> None:
             results = await _run_search(state, limit=initial_limit)
         except (aiohttp.ClientError, asyncio.TimeoutError, RuntimeError, ValueError) as exc:
             await status.edit_text(
-                f"❌ <b>Ошибка поиска:</b> <code>{h(exc)}</code>",
+                _t(
+                    uid,
+                    "download.flow.query.search_error",
+                    "❌ <b>Ошибка поиска:</b> <code>{error}</code>",
+                    telegram_locale=telegram_locale,
+                    params={"error": h(exc)},
+                ),
                 reply_markup=build_keyboard(
-                    [[back_button("dlqry:back", text="⬅️ Назад к фильтрам")]]
+                    [
+                        [
+                            back_button(
+                                "dlqry:back",
+                                text=_t(
+                                    uid,
+                                    "download.query.back_to_filters",
+                                    "⬅️ Назад к фильтрам",
+                                    telegram_locale=telegram_locale,
+                                ),
+                            )
+                        ]
+                    ]
                 ),
             )
             return
 
         if not results:
             await status.edit_text(
-                "❌ Ничего не найдено. Попробуйте другой запрос или измените фильтры.",
+                _t(
+                    uid,
+                    "download.flow.query.not_found",
+                    "❌ Ничего не найдено. Попробуйте другой запрос или измените фильтры.",
+                    telegram_locale=telegram_locale,
+                ),
                 reply_markup=build_keyboard(
-                    [[back_button("dlqry:back", text="⬅️ Назад к фильтрам")]]
+                    [
+                        [
+                            back_button(
+                                "dlqry:back",
+                                text=_t(
+                                    uid,
+                                    "download.query.back_to_filters",
+                                    "⬅️ Назад к фильтрам",
+                                    telegram_locale=telegram_locale,
+                                ),
+                            )
+                        ]
+                    ]
                 ),
             )
             return
@@ -418,14 +637,29 @@ def register_download_flow_handlers(deps: DownloadFlowDeps) -> None:
         message = await _callback_message(cb)
         if message is None:
             return
-        value = await _callback_value(cb, prefix="dlpick", invalid_text="❌ Неверный выбор.")
+        value = await _callback_value(
+            cb,
+            prefix="dlpick",
+            invalid_text=_t_cb(
+                cb,
+                "download.flow.error.invalid_pick",
+                "❌ Неверный выбор.",
+            ),
+        )
         if value is None:
             return
         if value == "cancel":
             await state.clear()
+            uid = deps.callback_user_id(cb)
+            telegram_locale = cb.from_user.language_code if cb.from_user else None
             await message.edit_text(
-                "❌ Скачивание отменено.",
-                reply_markup=_models_back_keyboard(),
+                _t(
+                    uid,
+                    "download.flow.cancelled",
+                    "❌ Скачивание отменено.",
+                    telegram_locale=telegram_locale,
+                ),
+                reply_markup=_models_back_keyboard(uid=uid, telegram_locale=telegram_locale),
             )
             await cb.answer()
             return
@@ -438,6 +672,9 @@ def register_download_flow_handlers(deps: DownloadFlowDeps) -> None:
 
         if value in {"first", "prev", "next", "last", "more"}:
             data = await state.get_data()
+            uid = deps.callback_user_id(cb)
+            telegram_locale = cb.from_user.language_code if cb.from_user else None
+            locale = _resolved_locale(uid, telegram_locale=telegram_locale)
             view = read_results_view_state(
                 data,
                 default_page_size=default_page_size,
@@ -467,7 +704,12 @@ def register_download_flow_handlers(deps: DownloadFlowDeps) -> None:
                 next_limit = next_search_limit(loaded_limit=loaded_limit, page_size=page_size)
                 if next_limit == loaded_limit:
                     exhausted = True
-                    notice = "Больше результатов не найдено."
+                    notice = _t(
+                        uid,
+                        "download.flow.results.no_more",
+                        "Больше результатов не найдено.",
+                        telegram_locale=telegram_locale,
+                    )
                     await state.update_data(dl_more_exhausted=True)
                     max_page = max(0, (len(results) - 1) // page_size)
                     page = max(0, min(page, max_page))
@@ -485,7 +727,15 @@ def register_download_flow_handlers(deps: DownloadFlowDeps) -> None:
                 try:
                     results = await _run_search(state, limit=next_limit)
                 except (aiohttp.ClientError, asyncio.TimeoutError, RuntimeError, ValueError) as exc:
-                    await message.answer(f"⚠️ Ошибка поиска: {h(exc)}")
+                    await message.answer(
+                        _t(
+                            uid,
+                            "download.flow.results.search_error",
+                            "⚠️ Ошибка поиска: {error}",
+                            telegram_locale=telegram_locale,
+                            params={"error": h(exc)},
+                        )
+                    )
                     return
                 loaded_limit = next_limit
                 exhausted = len(results) <= prev_count
@@ -497,9 +747,19 @@ def register_download_flow_handlers(deps: DownloadFlowDeps) -> None:
                 max_page = max(0, (len(results) - 1) // page_size)
                 page = min(page, max_page)
                 if exhausted:
-                    notice = "Больше результатов не найдено."
+                    notice = _t(
+                        uid,
+                        "download.flow.results.no_more",
+                        "Больше результатов не найдено.",
+                        telegram_locale=telegram_locale,
+                    )
                 else:
-                    notice = "Подгрузил ещё результаты."
+                    notice = _t(
+                        uid,
+                        "download.flow.results.loaded_more",
+                        "Подгрузил ещё результаты.",
+                        telegram_locale=telegram_locale,
+                    )
 
             max_page = max(0, (len(results) - 1) // page_size)
             page = max(0, min(page, max_page))
@@ -523,13 +783,27 @@ def register_download_flow_handlers(deps: DownloadFlowDeps) -> None:
         try:
             index = int(value)
         except ValueError:
-            await cb.answer("❌ Неверный выбор.", show_alert=True)
+            await cb.answer(
+                _t_cb(
+                    cb,
+                    "download.flow.error.invalid_pick",
+                    "❌ Неверный выбор.",
+                ),
+                show_alert=True,
+            )
             return
 
         data = await state.get_data()
         results_data = data.get("dl_results", [])
         if index < 0 or index >= len(results_data):
-            await cb.answer("❌ Неверный выбор.", show_alert=True)
+            await cb.answer(
+                _t_cb(
+                    cb,
+                    "download.flow.error.invalid_pick",
+                    "❌ Неверный выбор.",
+                ),
+                show_alert=True,
+            )
             return
 
         result = deps.hydrate_result(results_data[index])
@@ -538,11 +812,16 @@ def register_download_flow_handlers(deps: DownloadFlowDeps) -> None:
             await state.update_data(dl_chosen_base=asdict(result))
             await state.set_state(DownloadStates.choosing_version)
 
+            uid = deps.callback_user_id(cb)
+            telegram_locale = cb.from_user.language_code if cb.from_user else None
+            locale = _resolved_locale(uid, telegram_locale=telegram_locale)
             text, kb = build_version_selection_view(
                 result,
                 human_size=deps.human_size,
                 short_number=deps.short_number,
                 escape_html=h,
+                translate=deps.translate,
+                locale=locale,
             )
             await message.edit_text(text, reply_markup=kb)
             await cb.answer()
@@ -558,14 +837,29 @@ def register_download_flow_handlers(deps: DownloadFlowDeps) -> None:
         message = await _callback_message(cb)
         if message is None:
             return
-        value = await _callback_value(cb, prefix="dlver", invalid_text="❌ Неверный выбор версии.")
+        value = await _callback_value(
+            cb,
+            prefix="dlver",
+            invalid_text=_t_cb(
+                cb,
+                "download.flow.error.invalid_version",
+                "❌ Неверный выбор версии.",
+            ),
+        )
         if value is None:
             return
         if value == "cancel":
             await state.clear()
+            uid = deps.callback_user_id(cb)
+            telegram_locale = cb.from_user.language_code if cb.from_user else None
             await message.edit_text(
-                "❌ Скачивание отменено.",
-                reply_markup=_models_back_keyboard(),
+                _t(
+                    uid,
+                    "download.flow.cancelled",
+                    "❌ Скачивание отменено.",
+                    telegram_locale=telegram_locale,
+                ),
+                reply_markup=_models_back_keyboard(uid=uid, telegram_locale=telegram_locale),
             )
             await cb.answer()
             return
@@ -574,7 +868,13 @@ def register_download_flow_handlers(deps: DownloadFlowDeps) -> None:
             shown = await _show_results_from_state(message, state)
             if not shown:
                 await state.clear()
-                await message.edit_text("❌ Сессия истекла. Запустите /download заново.")
+                await message.edit_text(
+                    _t_cb(
+                        cb,
+                        "download.flow.error.session_expired",
+                        "❌ Сессия истекла. Запустите /download заново.",
+                    )
+                )
                 await cb.answer()
                 return
             await cb.answer()
@@ -583,20 +883,40 @@ def register_download_flow_handlers(deps: DownloadFlowDeps) -> None:
         try:
             index = int(value)
         except ValueError:
-            await cb.answer("❌ Неверный выбор версии.", show_alert=True)
+            await cb.answer(
+                _t_cb(
+                    cb,
+                    "download.flow.error.invalid_version",
+                    "❌ Неверный выбор версии.",
+                ),
+                show_alert=True,
+            )
             return
 
         data = await state.get_data()
         chosen_data = data.get("dl_chosen_base")
         if not chosen_data:
             await state.clear()
-            await message.edit_text("❌ Сессия истекла. Запустите /download заново.")
+            await message.edit_text(
+                _t_cb(
+                    cb,
+                    "download.flow.error.session_expired",
+                    "❌ Сессия истекла. Запустите /download заново.",
+                )
+            )
             await cb.answer()
             return
 
         result = deps.hydrate_result(chosen_data)
         if index < 0 or index >= len(result.available_versions):
-            await cb.answer("❌ Неверный выбор версии.", show_alert=True)
+            await cb.answer(
+                _t_cb(
+                    cb,
+                    "download.flow.error.invalid_version",
+                    "❌ Неверный выбор версии.",
+                ),
+                show_alert=True,
+            )
             return
 
         selected = result.available_versions[index]
@@ -616,7 +936,13 @@ def register_download_flow_handlers(deps: DownloadFlowDeps) -> None:
         if message is None:
             return
         decision = await _callback_value(
-            cb, prefix="dlconfirm", invalid_text="❌ Неверное действие."
+            cb,
+            prefix="dlconfirm",
+            invalid_text=_t_cb(
+                cb,
+                "download.flow.error.invalid_action",
+                "❌ Неверное действие.",
+            ),
         )
         if decision is None:
             return
@@ -624,7 +950,13 @@ def register_download_flow_handlers(deps: DownloadFlowDeps) -> None:
             shown = await _show_results_from_state(message, state)
             if not shown:
                 await state.clear()
-                await message.edit_text("❌ Сессия истекла. Запустите /download заново.")
+                await message.edit_text(
+                    _t_cb(
+                        cb,
+                        "download.flow.error.session_expired",
+                        "❌ Сессия истекла. Запустите /download заново.",
+                    )
+                )
                 await cb.answer()
                 return
             await cb.answer()
@@ -632,30 +964,56 @@ def register_download_flow_handlers(deps: DownloadFlowDeps) -> None:
 
         if decision == "no":
             await state.clear()
+            uid = deps.callback_user_id(cb)
+            telegram_locale = cb.from_user.language_code if cb.from_user else None
             await message.edit_text(
-                "❌ Скачивание отменено.",
-                reply_markup=_models_back_keyboard(),
+                _t(
+                    uid,
+                    "download.flow.cancelled",
+                    "❌ Скачивание отменено.",
+                    telegram_locale=telegram_locale,
+                ),
+                reply_markup=_models_back_keyboard(uid=uid, telegram_locale=telegram_locale),
             )
             await cb.answer()
             return
 
         if decision != "yes":
-            await cb.answer("❌ Неверное действие.", show_alert=True)
+            await cb.answer(
+                _t_cb(
+                    cb,
+                    "download.flow.error.invalid_action",
+                    "❌ Неверное действие.",
+                ),
+                show_alert=True,
+            )
             return
 
         data = await state.get_data()
         chosen_data = data.get("dl_chosen")
         if not chosen_data:
             await state.clear()
-            await message.edit_text("❌ Ошибка: выбранная модель не найдена.")
+            await message.edit_text(
+                _t_cb(
+                    cb,
+                    "download.flow.error.model_not_found",
+                    "❌ Ошибка: выбранная модель не найдена.",
+                )
+            )
             await cb.answer()
             return
 
         uid = deps.callback_user_id(cb)
+        telegram_locale = cb.from_user.language_code if cb.from_user else None
         existing = deps.runtime.active_downloads.get(uid)
         if existing and not existing.done():
             await cb.answer(
-                "⏳ Уже идёт скачивание. Дождитесь завершения.",
+                _t(
+                    uid,
+                    "download.flow.download.already_running",
+                    "⏳ Уже идёт скачивание. Дождитесь завершения.",
+                    telegram_locale=telegram_locale,
+                ),
                 show_alert=True,
             )
             return
@@ -665,14 +1023,25 @@ def register_download_flow_handlers(deps: DownloadFlowDeps) -> None:
             inline_keyboard=[
                 [
                     InlineKeyboardButton(
-                        text="❌ Отменить скачивание",
+                        text=_t(
+                            uid,
+                            "download.flow.download.cancel_button",
+                            "❌ Отменить скачивание",
+                            telegram_locale=telegram_locale,
+                        ),
                         callback_data="dldl:cancel",
                     )
                 ]
             ]
         )
         edited = await message.edit_text(
-            f"⬇️ <b>Скачивание:</b> {h(result.name)}…",
+            _t(
+                uid,
+                "download.flow.download.started",
+                "⬇️ <b>Скачивание:</b> {name}…",
+                telegram_locale=telegram_locale,
+                params={"name": h(result.name)},
+            ),
             reply_markup=download_cancel_kb,
         )
         status_msg: Message = edited if isinstance(edited, Message) else message
@@ -706,40 +1075,111 @@ def register_download_flow_handlers(deps: DownloadFlowDeps) -> None:
                 path = await deps.downloader.download_model(result, progress_cb=_progress)
 
                 details = [
-                    "✅ <b>Скачано!</b>",
+                    _t(
+                        uid,
+                        "download.flow.download.done_title",
+                        "✅ <b>Скачано!</b>",
+                        telegram_locale=telegram_locale,
+                    ),
                     "",
-                    f"<b>Файл:</b> <code>{h(result.filename)}</code>",
-                    f"<b>Путь:</b> <code>{h(path)}</code>",
+                    _t(
+                        uid,
+                        "download.flow.download.field.file",
+                        "<b>Файл:</b> <code>{value}</code>",
+                        telegram_locale=telegram_locale,
+                        params={"value": h(result.filename)},
+                    ),
+                    _t(
+                        uid,
+                        "download.flow.download.field.path",
+                        "<b>Путь:</b> <code>{value}</code>",
+                        telegram_locale=telegram_locale,
+                        params={"value": h(path)},
+                    ),
                 ]
                 if result.base_model:
-                    details.append(f"<b>Base:</b> {h(result.base_model)}")
+                    details.append(
+                        _t(
+                            uid,
+                            "download.flow.download.field.base",
+                            "<b>Base:</b> {value}",
+                            telegram_locale=telegram_locale,
+                            params={"value": h(result.base_model)},
+                        )
+                    )
                 if result.model_type == "lora" and result.trained_words:
                     details.append(
-                        f"<b>Триггер-слова:</b> <code>{h(', '.join(result.trained_words[:8]))}</code>"
+                        _t(
+                            uid,
+                            "download.flow.download.field.trigger_words",
+                            "<b>Триггер-слова:</b> <code>{value}</code>",
+                            telegram_locale=telegram_locale,
+                            params={"value": h(", ".join(result.trained_words[:8]))},
+                        )
                     )
                 details.append("")
-                details.append("⏳ Обновляю список моделей…")
+                details.append(
+                    _t(
+                        uid,
+                        "common.models.updating",
+                        "⏳ Обновляю список моделей…",
+                        telegram_locale=telegram_locale,
+                    )
+                )
                 try:
                     await deps.client.refresh_info()
-                    details.append("✅ Список моделей обновлён.")
+                    details.append(
+                        _t(
+                            uid,
+                            "download.flow.download.models_updated",
+                            "✅ Список моделей обновлён.",
+                            telegram_locale=telegram_locale,
+                        )
+                    )
                 except (aiohttp.ClientError, asyncio.TimeoutError, RuntimeError):
                     details.append(
-                        "⚠️ Модель скачана, но не удалось обновить список. Попробуйте /models."
+                        _t(
+                            uid,
+                            "download.flow.download.models_update_failed",
+                            "⚠️ Модель скачана, но не удалось обновить список. Попробуйте /models.",
+                            telegram_locale=telegram_locale,
+                        )
                     )
 
                 await status_msg.edit_text(
-                    "\n".join(details), reply_markup=_download_done_keyboard()
+                    "\n".join(details),
+                    reply_markup=_download_done_keyboard(
+                        uid=uid,
+                        telegram_locale=telegram_locale,
+                    ),
                 )
                 await state.set_state(DownloadStates.choosing_result)
             except asyncio.CancelledError:
                 await status_msg.edit_text(
-                    "❌ Скачивание отменено.",
-                    reply_markup=_models_back_keyboard(),
+                    _t(
+                        uid,
+                        "download.flow.cancelled",
+                        "❌ Скачивание отменено.",
+                        telegram_locale=telegram_locale,
+                    ),
+                    reply_markup=_models_back_keyboard(
+                        uid=uid,
+                        telegram_locale=telegram_locale,
+                    ),
                 )
             except FileExistsError:
                 await status_msg.edit_text(
-                    f"⚠️ Файл <code>{h(result.filename)}</code> уже существует.",
-                    reply_markup=_models_back_keyboard(),
+                    _t(
+                        uid,
+                        "download.flow.download.file_exists",
+                        "⚠️ Файл <code>{filename}</code> уже существует.",
+                        telegram_locale=telegram_locale,
+                        params={"filename": h(result.filename)},
+                    ),
+                    reply_markup=_models_back_keyboard(
+                        uid=uid,
+                        telegram_locale=telegram_locale,
+                    ),
                 )
             except (
                 aiohttp.ClientError,
@@ -749,8 +1189,17 @@ def register_download_flow_handlers(deps: DownloadFlowDeps) -> None:
                 ValueError,
             ) as exc:
                 await status_msg.edit_text(
-                    f"❌ <b>Ошибка скачивания:</b> <code>{h(exc)}</code>",
-                    reply_markup=_models_back_keyboard(),
+                    _t(
+                        uid,
+                        "download.flow.download.failed",
+                        "❌ <b>Ошибка скачивания:</b> <code>{error}</code>",
+                        telegram_locale=telegram_locale,
+                        params={"error": h(exc)},
+                    ),
+                    reply_markup=_models_back_keyboard(
+                        uid=uid,
+                        telegram_locale=telegram_locale,
+                    ),
                 )
             finally:
                 deps.runtime.active_downloads.pop(uid, None)
@@ -763,7 +1212,15 @@ def register_download_flow_handlers(deps: DownloadFlowDeps) -> None:
         message = await _callback_message(cb)
         if message is None:
             return
-        action = await _callback_value(cb, prefix="dldone", invalid_text="❌ Неизвестное действие.")
+        action = await _callback_value(
+            cb,
+            prefix="dldone",
+            invalid_text=_t_cb(
+                cb,
+                "download.flow.error.unknown_done_action",
+                "❌ Неизвестное действие.",
+            ),
+        )
         if action is None:
             return
 
@@ -777,20 +1234,48 @@ def register_download_flow_handlers(deps: DownloadFlowDeps) -> None:
             shown = await _show_results_from_state(message, state)
             if not shown:
                 await cb.answer(
-                    "История результатов недоступна. Начните новый поиск.", show_alert=True
+                    _t_cb(
+                        cb,
+                        "download.flow.done.results_unavailable",
+                        "История результатов недоступна. Начните новый поиск.",
+                    ),
+                    show_alert=True,
                 )
                 return
             await cb.answer()
             return
 
-        await cb.answer("❌ Неизвестное действие.", show_alert=True)
+        await cb.answer(
+            _t_cb(
+                cb,
+                "download.flow.error.unknown_done_action",
+                "❌ Неизвестное действие.",
+            ),
+            show_alert=True,
+        )
 
     @router.callback_query(F.data == "dldl:cancel")
     async def dl_cancel_running(cb: CallbackQuery):
         uid = deps.callback_user_id(cb)
         task = deps.runtime.active_downloads.get(uid)
+        telegram_locale = cb.from_user.language_code if cb.from_user else None
         if task and not task.done():
             task.cancel()
-            await cb.answer("❌ Отменяю скачивание…")
+            await cb.answer(
+                _t(
+                    uid,
+                    "download.flow.download.cancelling",
+                    "❌ Отменяю скачивание…",
+                    telegram_locale=telegram_locale,
+                )
+            )
             return
-        await cb.answer("Нечего отменять.", show_alert=True)
+        await cb.answer(
+            _t(
+                uid,
+                "download.flow.download.nothing_to_cancel",
+                "Нечего отменять.",
+                telegram_locale=telegram_locale,
+            ),
+            show_alert=True,
+        )

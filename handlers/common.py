@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from typing import Any
 
 from aiogram import Router
@@ -20,6 +21,7 @@ from core.telegram import callback_user_id, message_user_id
 from core.ui_copy import main_menu_keyboard
 from core.ui_kit import back_button, build_keyboard
 from core.ui_kit.buttons import button, cancel_button, noop_button
+from core.user_preferences import read_user_locale
 from domain.localization import LocalizationService
 from model_downloader import ModelDownloader
 
@@ -41,36 +43,126 @@ def _user_generations(runtime: RuntimeStore, uid: int):
     return items
 
 
-def _queue_prompt_state(queue: dict[str, Any], prompt_id: str) -> str:
+def _queue_prompt_state(
+    queue: dict[str, Any],
+    prompt_id: str,
+    *,
+    localization: LocalizationService | None = None,
+    locale: str | None = None,
+) -> str:
     if not prompt_id:
-        return "локальная задача"
+        return _tr(
+            localization,
+            locale,
+            "common.jobs.queue_state.local_task",
+            "локальная задача",
+        )
     running = queue.get("queue_running", [])
     pending = queue.get("queue_pending", [])
     if isinstance(running, list):
         for item in running:
             if queue_item_prompt_id(item) == prompt_id:
-                return "выполняется"
+                return _tr(
+                    localization,
+                    locale,
+                    "common.jobs.queue_state.running",
+                    "выполняется",
+                )
     if isinstance(pending, list):
         for index, item in enumerate(pending, start=1):
             if queue_item_prompt_id(item) == prompt_id:
-                return f"в очереди ({index})"
-    return "не найдена в очереди"
+                return _tr(
+                    localization,
+                    locale,
+                    "common.jobs.queue_state.pending_index",
+                    f"в очереди ({index})",
+                    params={"index": index},
+                )
+    return _tr(
+        localization,
+        locale,
+        "common.jobs.queue_state.not_found",
+        "не найдена в очереди",
+    )
 
 
-TRAINING_TEXT = (
-    "\U0001f393 <b>\u041e\u0431\u0443\u0447\u0435\u043d\u0438\u0435 ComfyBot (\u0434\u043b\u044f \u043d\u043e\u0432\u0438\u0447\u043a\u043e\u0432)</b>\n"
-    "\n"
-    "1) \u041d\u0430\u0436\u043c\u0438\u0442\u0435 \u00ab\U0001f4e6 \u041c\u043e\u0434\u0435\u043b\u0438\u00bb -> \u00ab\U0001f9ea \u041e\u0431\u043d\u043e\u0432\u0438\u0442\u044c \u0441\u043f\u0438\u0441\u043e\u043a\u00bb.\n"
-    "2) \u041d\u0430\u0436\u043c\u0438\u0442\u0435 \u00ab\U0001f3a8 \u0413\u0435\u043d\u0435\u0440\u0430\u0446\u0438\u044f\u00bb -> \u00ab\u2728 \u041d\u043e\u0432\u0430\u044f \u0433\u0435\u043d\u0435\u0440\u0430\u0446\u0438\u044f\u00bb.\n"
-    "3) \u0412\u044b\u0431\u0435\u0440\u0438\u0442\u0435 Checkpoint, \u0437\u0430\u0434\u0430\u0439\u0442\u0435 Positive/Negative.\n"
-    "4) \u041f\u0440\u0438 \u043d\u0435\u043e\u0431\u0445\u043e\u0434\u0438\u043c\u043e\u0441\u0442\u0438 \u043d\u0430\u0441\u0442\u0440\u043e\u0439\u0442\u0435 Steps, CFG, Seed, \u0440\u0430\u0437\u043c\u0435\u0440.\n"
-    "5) \u041d\u0430\u0436\u043c\u0438\u0442\u0435 \u00ab\u0413\u0435\u043d\u0435\u0440\u0438\u0440\u043e\u0432\u0430\u0442\u044c\u00bb.\n"
-    "\n"
-    "\u041f\u043e\u043b\u0435\u0437\u043d\u043e: \u00ab\U0001f501 \u041f\u043e\u0432\u0442\u043e\u0440\u00bb, \u00ab\U0001f4c2 \u041f\u0440\u0435\u0441\u0435\u0442\u044b\u00bb, \u00ab\u2b07\ufe0f \u0421\u043a\u0430\u0447\u0430\u0442\u044c \u043c\u043e\u0434\u0435\u043b\u044c\u00bb, \u00ab\U0001f6d1 \u041e\u0442\u043c\u0435\u043d\u0430\u00bb.\n"
-    "\u0415\u0449\u0451: \U0001f9e0 Smart (TIPO), \U0001f4ce LoRA, \U0001f5bc \u0440\u0435\u0444\u0435\u0440\u0435\u043d\u0441\u044b, \u2728 \u0443\u043b\u0443\u0447\u0448\u0435\u043d\u0438\u044f.\n"
-    "\n"
-    "\u041f\u043e\u043b\u043d\u044b\u0439 \u0433\u0430\u0439\u0434: <code>docs/COMMANDS.md</code>"
-)
+def build_training_text(
+    *,
+    localization: LocalizationService | None = None,
+    locale: str | None = None,
+) -> str:
+    title = _tr(
+        localization,
+        locale,
+        "common.training.legacy.title",
+        "🎓 <b>Обучение ComfyBot (для новичков)</b>",
+    )
+    step_1 = _tr(
+        localization,
+        locale,
+        "common.training.legacy.step_1",
+        "1) Нажмите «📦 Модели» -> «🧪 Обновить список».",
+    )
+    step_2 = _tr(
+        localization,
+        locale,
+        "common.training.legacy.step_2",
+        "2) Нажмите «🎨 Генерация» -> «✨ Новая генерация».",
+    )
+    step_3 = _tr(
+        localization,
+        locale,
+        "common.training.legacy.step_3",
+        "3) Выберите Checkpoint, задайте Positive/Negative.",
+    )
+    step_4 = _tr(
+        localization,
+        locale,
+        "common.training.legacy.step_4",
+        "4) При необходимости настройте Steps, CFG, Seed, размер.",
+    )
+    step_5 = _tr(
+        localization,
+        locale,
+        "common.training.legacy.step_5",
+        "5) Нажмите «Генерировать».",
+    )
+    useful = _tr(
+        localization,
+        locale,
+        "common.training.legacy.useful",
+        "Полезно: «🔁 Повтор», «📂 Пресеты», «⬇️ Скачать модель», «🛑 Отмена».",
+    )
+    extra = _tr(
+        localization,
+        locale,
+        "common.training.legacy.extra",
+        "Ещё: 🧠 Smart (TIPO), 📎 LoRA, 🖼 референсы, ✨ улучшения.",
+    )
+    full_guide = _tr(
+        localization,
+        locale,
+        "common.training.legacy.full_guide",
+        "Полный гайд: <code>docs/COMMANDS.md</code>",
+    )
+
+    return "\n".join(
+        [
+            title,
+            "",
+            step_1,
+            step_2,
+            step_3,
+            step_4,
+            step_5,
+            "",
+            useful,
+            extra,
+            "",
+            full_guide,
+        ]
+    )
+
 
 DELETE_MODEL_TYPES = {
     "checkpoint": "Checkpoint",
@@ -83,8 +175,20 @@ DELETE_MODEL_TYPES = {
 DELETE_PAGE_SIZE = 8
 
 
-def _tr(localization: LocalizationService, locale: str | None, key: str, default: str) -> str:
-    return localization.t(key, locale=locale, default=default)
+def _tr(
+    localization: LocalizationService | None,
+    locale: str | None,
+    key: str,
+    default: str,
+    *,
+    params: Mapping[str, object] | None = None,
+) -> str:
+    if localization is None:
+        return default
+    return localization.t(key, locale=locale, params=params, default=default)
+
+
+TRAINING_TEXT = build_training_text()
 
 
 def _generation_menu_keyboard(
@@ -92,26 +196,10 @@ def _generation_menu_keyboard(
     localization: LocalizationService | None = None,
     locale: str | None = None,
 ) -> InlineKeyboardMarkup:
-    new_label = (
-        _tr(localization, locale, "common.menu.generation.new", "✨ Новая генерация")
-        if localization is not None
-        else "✨ Новая генерация"
-    )
-    repeat_label = (
-        _tr(localization, locale, "common.menu.generation.repeat", "🔁 Повтор")
-        if localization is not None
-        else "🔁 Повтор"
-    )
-    presets_label = (
-        _tr(localization, locale, "common.menu.generation.presets", "📂 Пресеты")
-        if localization is not None
-        else "📂 Пресеты"
-    )
-    back_label = (
-        _tr(localization, locale, "common.menu.back_to_menu", "⬅️ В меню")
-        if localization is not None
-        else "⬅️ В меню"
-    )
+    new_label = _tr(localization, locale, "common.menu.generation.new", "✨ Новая генерация")
+    repeat_label = _tr(localization, locale, "common.menu.generation.repeat", "🔁 Повтор")
+    presets_label = _tr(localization, locale, "common.menu.generation.presets", "📂 Пресеты")
+    back_label = _tr(localization, locale, "common.menu.back_to_menu", "⬅️ В меню")
 
     return build_keyboard(
         [
@@ -128,26 +216,15 @@ def _models_menu_keyboard(
     localization: LocalizationService | None = None,
     locale: str | None = None,
 ) -> InlineKeyboardMarkup:
-    download_label = (
-        _tr(localization, locale, "common.menu.models.download", "⬇️ Скачать модель")
-        if localization is not None
-        else "⬇️ Скачать модель"
+    download_label = _tr(localization, locale, "common.menu.models.download", "⬇️ Скачать модель")
+    refresh_label = _tr(localization, locale, "common.menu.models.refresh", "🧪 Обновить список")
+    delete_label = _tr(
+        localization,
+        locale,
+        "common.menu.models.delete_local",
+        "🗑 Удалить локальную",
     )
-    refresh_label = (
-        _tr(localization, locale, "common.menu.models.refresh", "🧪 Обновить список")
-        if localization is not None
-        else "🧪 Обновить список"
-    )
-    delete_label = (
-        _tr(localization, locale, "common.menu.models.delete_local", "🗑 Удалить локальную")
-        if localization is not None
-        else "🗑 Удалить локальную"
-    )
-    back_label = (
-        _tr(localization, locale, "common.menu.back_to_menu", "⬅️ В меню")
-        if localization is not None
-        else "⬅️ В меню"
-    )
+    back_label = _tr(localization, locale, "common.menu.back_to_menu", "⬅️ В меню")
 
     return build_keyboard(
         [
@@ -164,31 +241,11 @@ def _service_menu_keyboard(
     localization: LocalizationService | None = None,
     locale: str | None = None,
 ) -> InlineKeyboardMarkup:
-    jobs_label = (
-        _tr(localization, locale, "common.menu.service.jobs", "🧵 Мои задачи")
-        if localization is not None
-        else "🧵 Мои задачи"
-    )
-    queue_label = (
-        _tr(localization, locale, "common.menu.service.queue", "📊 Очередь")
-        if localization is not None
-        else "📊 Очередь"
-    )
-    settings_label = (
-        _tr(localization, locale, "common.menu.service.settings", "⚙️ Настройки")
-        if localization is not None
-        else "⚙️ Настройки"
-    )
-    training_label = (
-        _tr(localization, locale, "common.menu.service.training", "🎓 Обучение")
-        if localization is not None
-        else "🎓 Обучение"
-    )
-    back_label = (
-        _tr(localization, locale, "common.menu.back_to_menu", "⬅️ В меню")
-        if localization is not None
-        else "⬅️ В меню"
-    )
+    jobs_label = _tr(localization, locale, "common.menu.service.jobs", "🧵 Мои задачи")
+    queue_label = _tr(localization, locale, "common.menu.service.queue", "📊 Очередь")
+    settings_label = _tr(localization, locale, "common.menu.service.settings", "⚙️ Настройки")
+    training_label = _tr(localization, locale, "common.menu.service.training", "🎓 Обучение")
+    back_label = _tr(localization, locale, "common.menu.back_to_menu", "⬅️ В меню")
 
     return build_keyboard(
         [
@@ -205,6 +262,8 @@ def _jobs_keyboard(
     *,
     page: int,
     page_size: int = 6,
+    localization: LocalizationService | None = None,
+    locale: str | None = None,
 ) -> InlineKeyboardMarkup:
     total_pages = max(1, (len(items) + page_size - 1) // page_size)
     page = max(0, min(page, total_pages - 1))
@@ -231,54 +290,101 @@ def _jobs_keyboard(
         nav.append(button("▶️", f"menu:jobs:page:{page + 1}"))
     rows.append(nav)
 
+    refresh_label = _tr(localization, locale, "common.jobs.keyboard.refresh", "🔄 Обновить")
+    cancel_all_label = _tr(
+        localization,
+        locale,
+        "common.jobs.keyboard.cancel_all",
+        "❌ Отменить все",
+    )
+    back_label = _tr(localization, locale, "common.menu.back_to_service", "⬅️ Сервис")
+
     rows.append(
         [
-            button("🔄 Обновить", f"menu:jobs:page:{page}"),
-            cancel_button("menu:jobs:cancel_all", text="❌ Отменить все"),
+            button(refresh_label, f"menu:jobs:page:{page}"),
+            cancel_button("menu:jobs:cancel_all", text=cancel_all_label),
         ]
     )
-    rows.append([back_button("menu:service", text="⬅️ Сервис")])
+    rows.append([back_button("menu:service", text=back_label)])
     return build_keyboard(rows)
 
 
-def _job_detail_keyboard(generation_id: str) -> InlineKeyboardMarkup:
+def _job_detail_keyboard(
+    generation_id: str,
+    *,
+    localization: LocalizationService | None = None,
+    locale: str | None = None,
+) -> InlineKeyboardMarkup:
+    refresh_label = _tr(localization, locale, "common.jobs.keyboard.refresh", "🔄 Обновить")
+    source_label = _tr(localization, locale, "common.jobs.keyboard.goto_source", "📌 К источнику")
+    cancel_label = _tr(
+        localization, locale, "common.jobs.keyboard.cancel_job", "🛑 Отменить задачу"
+    )
+    back_label = _tr(localization, locale, "common.menu.back_to_list", "⬅️ К списку")
+
     return build_keyboard(
         [
             [
-                button("🔄 Обновить", f"menu:jobs:open:{generation_id}"),
-                button("📌 К источнику", f"menu:jobs:goto:{generation_id}"),
+                button(refresh_label, f"menu:jobs:open:{generation_id}"),
+                button(source_label, f"menu:jobs:goto:{generation_id}"),
             ],
             [
-                button("🛑 Отменить задачу", f"menu:jobs:cancel:{generation_id}"),
-                back_button("menu:jobs", text="⬅️ К списку"),
+                button(cancel_label, f"menu:jobs:cancel:{generation_id}"),
+                back_button("menu:jobs", text=back_label),
             ],
         ]
     )
 
 
-def _models_section(title: str, emoji: str, items: list[str], limit: int = 15) -> str:
+def _models_section(
+    title: str,
+    emoji: str,
+    items: list[str],
+    limit: int = 15,
+    *,
+    localization: LocalizationService | None = None,
+    locale: str | None = None,
+) -> str:
     count = len(items)
     header = f"{emoji} <b>{title}</b> ({count})"
     if not items:
         return header
     shown = [f"  <code>{h(item)}</code>" for item in items[:limit]]
     if count > limit:
-        shown.append(f"  <i>…и ещё {count - limit}</i>")
+        more_label = _tr(
+            localization,
+            locale,
+            "common.models.section.more",
+            f"…и ещё {count - limit}",
+            params={"count": count - limit},
+        )
+        shown.append(f"  <i>{more_label}</i>")
     return header + "\n" + "\n".join(shown)
 
 
-def _delete_types_keyboard() -> InlineKeyboardMarkup:
+def _delete_types_keyboard(
+    *,
+    localization: LocalizationService | None = None,
+    locale: str | None = None,
+) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
     for model_type, label in DELETE_MODEL_TYPES.items():
+        localized_label = _tr(
+            localization,
+            locale,
+            f"common.delete.model_type.{model_type}",
+            label,
+        )
         rows.append(
             [
                 InlineKeyboardButton(
-                    text=label,
+                    text=localized_label,
                     callback_data=f"dmdl:type:{model_type}",
                 )
             ]
         )
-    rows.append([cancel_button("dmdl:cancel")])
+    cancel_label = _tr(localization, locale, "common.action.cancel", "❌ Отмена")
+    rows.append([cancel_button("dmdl:cancel", text=cancel_label)])
     return build_keyboard(rows)
 
 
@@ -287,6 +393,8 @@ def _delete_files_keyboard(
     model_type: str,
     files: list[str],
     page: int,
+    localization: LocalizationService | None = None,
+    locale: str | None = None,
 ) -> InlineKeyboardMarkup:
     total_pages = max(1, (len(files) + DELETE_PAGE_SIZE - 1) // DELETE_PAGE_SIZE)
     page = max(0, min(page, total_pages - 1))
@@ -313,20 +421,33 @@ def _delete_files_keyboard(
         nav.append(button("▶️", f"dmdl:page:{page + 1}"))
     rows.append(nav)
 
+    back_type_label = _tr(localization, locale, "common.menu.back_to_type", "⬅️ Тип")
+    cancel_label = _tr(localization, locale, "common.action.cancel", "❌ Отмена")
     rows.append(
         [
-            back_button("dmdl:back:type", text="⬅️ Тип"),
-            cancel_button("dmdl:cancel"),
+            back_button("dmdl:back:type", text=back_type_label),
+            cancel_button("dmdl:cancel", text=cancel_label),
         ]
     )
     return build_keyboard(rows)
 
 
-def _delete_confirm_keyboard() -> InlineKeyboardMarkup:
+def _delete_confirm_keyboard(
+    *,
+    localization: LocalizationService | None = None,
+    locale: str | None = None,
+) -> InlineKeyboardMarkup:
+    delete_label = _tr(localization, locale, "common.delete.action.delete", "🗑 Удалить")
+    back_label = _tr(localization, locale, "common.action.back", "⬅️ Назад")
+    cancel_label = _tr(localization, locale, "common.action.cancel", "❌ Отмена")
+
     return build_keyboard(
         [
-            [button("🗑 Удалить", "dmdl:confirm:yes"), back_button("dmdl:confirm:no")],
-            [cancel_button("dmdl:cancel")],
+            [
+                button(delete_label, "dmdl:confirm:yes"),
+                back_button("dmdl:confirm:no", text=back_label),
+            ],
+            [cancel_button("dmdl:cancel", text=cancel_label)],
         ]
     )
 
@@ -341,10 +462,28 @@ def register_common_handlers(
 ) -> None:
     locale_resolver = DefaultUserLocaleResolver(localization)
 
+    def _resolve_locale_for_user(user_id: int | None, telegram_locale: str | None) -> str:
+        if user_id is None or user_id <= 0:
+            return locale_resolver.resolve(
+                user_locale=None,
+                telegram_locale=telegram_locale,
+            )
+        prefs = runtime.user_preferences.get(user_id, {})
+        selected_locale = read_user_locale(
+            prefs,
+            default_locale=localization.default_locale(),
+        )
+        return locale_resolver.resolve(
+            user_locale=selected_locale,
+            telegram_locale=telegram_locale,
+        )
+
     register_access_middlewares(
         router,
         allowed_users=cfg.allowed_users,
         runtime_persist=runtime.persist,
+        localization=localization,
+        resolve_locale_for_user=_resolve_locale_for_user,
     )
 
     register_common_core_handlers(
@@ -368,7 +507,13 @@ def register_common_handlers(
             service_menu_keyboard=(
                 lambda locale: _service_menu_keyboard(localization=localization, locale=locale)
             ),
-            models_section=_models_section,
+            models_section=lambda title, emoji, items, limit=15: _models_section(
+                title,
+                emoji,
+                items,
+                limit,
+                localization=localization,
+            ),
             user_generations=_user_generations,
             truncate=truncate,
             h=h,
@@ -381,13 +526,29 @@ def register_common_handlers(
             runtime=runtime,
             client=client,
             downloader=downloader,
+            localization=localization,
+            resolve_user_locale=locale_resolver.resolve,
             callback_user_id=callback_user_id,
             message_user_id=message_user_id,
             render_user_panel=render_user_panel,
             delete_model_types=DELETE_MODEL_TYPES,
-            delete_types_keyboard=_delete_types_keyboard,
-            delete_files_keyboard=_delete_files_keyboard,
-            delete_confirm_keyboard=_delete_confirm_keyboard,
+            delete_types_keyboard=lambda locale: _delete_types_keyboard(
+                localization=localization,
+                locale=locale,
+            ),
+            delete_files_keyboard=(
+                lambda model_type, files, page, locale: _delete_files_keyboard(
+                    model_type=model_type,
+                    files=files,
+                    page=page,
+                    localization=localization,
+                    locale=locale,
+                )
+            ),
+            delete_confirm_keyboard=lambda locale: _delete_confirm_keyboard(
+                localization=localization,
+                locale=locale,
+            ),
             h=h,
         )
     )
@@ -397,13 +558,29 @@ def register_common_handlers(
             router=router,
             runtime=runtime,
             client=client,
+            localization=localization,
+            resolve_user_locale=locale_resolver.resolve,
             callback_user_id=callback_user_id,
             message_user_id=message_user_id,
             render_user_panel=render_user_panel,
             user_generations=_user_generations,
-            queue_prompt_state=_queue_prompt_state,
-            jobs_keyboard=_jobs_keyboard,
-            job_detail_keyboard=_job_detail_keyboard,
+            queue_prompt_state=lambda queue, prompt_id, locale: _queue_prompt_state(
+                queue,
+                prompt_id,
+                localization=localization,
+                locale=locale,
+            ),
+            jobs_keyboard=lambda items, page, locale: _jobs_keyboard(
+                items,
+                page=page,
+                localization=localization,
+                locale=locale,
+            ),
+            job_detail_keyboard=lambda generation_id, locale: _job_detail_keyboard(
+                generation_id,
+                localization=localization,
+                locale=locale,
+            ),
             truncate=truncate,
             h=h,
         )

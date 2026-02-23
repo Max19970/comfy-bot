@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
+from typing import Callable
+
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 
@@ -12,6 +15,8 @@ from core.states import PromptEditorStates
 from core.ui import loras_text
 from core.ui_kit import back_button, build_keyboard
 from core.ui_kit.buttons import button
+from core.user_preferences import read_user_locale
+from domain.localization import LocalizationService
 from domain.loras import EditorLoraSelection
 
 from .prompt_editor_session import show_prompt_panel
@@ -135,10 +140,42 @@ async def show_lora_menu(
     catalog: LoraCatalogService,
     edit: bool = True,
     notice: str = "",
+    localization: LocalizationService | None = None,
+    resolve_user_locale: Callable[..., str] | None = None,
+    telegram_locale: str | None = None,
 ) -> None:
+    def _t(
+        key: str,
+        default: str,
+        *,
+        params: Mapping[str, object] | None = None,
+    ) -> str:
+        if localization is None or resolve_user_locale is None:
+            if params:
+                try:
+                    return default.format(**params)
+                except (KeyError, ValueError):
+                    return default
+            return default
+        prefs = runtime.user_preferences.get(uid, {})
+        selected_locale = read_user_locale(
+            prefs,
+            default_locale=localization.default_locale(),
+        )
+        locale = resolve_user_locale(
+            user_locale=selected_locale,
+            telegram_locale=telegram_locale,
+        )
+        return localization.t(key, locale=locale, params=params, default=default)
+
     req = runtime.active_prompt_requests.get(uid)
     if not req:
-        await message.answer("Активный запрос не найден. Используйте /generate.")
+        await message.answer(
+            _t(
+                "prompt_editor.lora.error.active_request_not_found",
+                "Active request not found. Use /generate.",
+            )
+        )
         return
 
     lines: list[str] = []
@@ -146,26 +183,57 @@ async def show_lora_menu(
         lines.append(f"💬 <i>{h(notice)}</i>")
         lines.append("")
 
-    lines.append("🧲 <b>LoRA chain</b>")
-    lines.append(f"Текущая цепочка: {loras_text(lora_chain_pairs(req))}")
+    lines.append(_t("prompt_editor.lora.menu.title", "🧲 <b>LoRA chain</b>"))
+    lines.append(
+        _t(
+            "prompt_editor.lora.menu.current_chain",
+            "Current chain: {chain}",
+            params={"chain": loras_text(lora_chain_pairs(req))},
+        )
+    )
 
     ckpt_base = checkpoint_base_model(req.params.checkpoint, catalog)
     if ckpt_base:
-        lines.append(f"Checkpoint base: <code>{h(ckpt_base)}</code>")
+        lines.append(
+            _t(
+                "prompt_editor.lora.menu.checkpoint_base",
+                "Checkpoint base: <code>{base}</code>",
+                params={"base": h(ckpt_base)},
+            )
+        )
 
     bad = incompatible_loras(req.params, catalog)
     if bad:
         bad_names = ", ".join(name for name, _, _ in bad[:3])
-        suffix = "" if len(bad) <= 3 else f" и ещё {len(bad) - 3}"
-        lines.append(f"⚠️ Возможна несовместимость LoRA: {h(bad_names)}{h(suffix)}")
+        suffix = (
+            ""
+            if len(bad) <= 3
+            else _t(
+                "prompt_editor.lora.menu.more_suffix",
+                " and {count} more",
+                params={"count": len(bad) - 3},
+            )
+        )
+        lines.append(
+            _t(
+                "prompt_editor.lora.menu.incompatibility",
+                "⚠️ Potential LoRA incompatibility: {names}{suffix}",
+                params={"names": h(bad_names), "suffix": h(suffix)},
+            )
+        )
 
     text = "\n".join(lines)
     kb = build_keyboard(
         [
-            [button("➕ Добавить", "pe:lora:add")],
-            [button("➖ Удалить последнюю", "pe:lora:remove_last")],
-            [button("🗑 Очистить все", "pe:lora:clear")],
-            [back_button("pe:back")],
+            [button(_t("prompt_editor.lora.button.add", "➕ Add"), "pe:lora:add")],
+            [
+                button(
+                    _t("prompt_editor.lora.button.remove_last", "➖ Remove last"),
+                    "pe:lora:remove_last",
+                )
+            ],
+            [button(_t("prompt_editor.lora.button.clear", "🗑 Clear all"), "pe:lora:clear")],
+            [back_button("pe:back", text=_t("common.action.back", "⬅️ Back"))],
         ]
     )
     await show_prompt_panel(runtime, message, req, text, kb, prefer_edit=edit)

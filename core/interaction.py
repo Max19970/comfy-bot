@@ -1,9 +1,21 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import cast
 
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
+
+TranslateText = Callable[[str, str | None, str], str]
+
+CALLBACK_MESSAGE_UNAVAILABLE_TEXT = "⚠️ Сообщение недоступно."
+CALLBACK_MESSAGE_UNAVAILABLE_KEY = "core.interaction.callback_message_unavailable"
+
+
+def _tx(translate: TranslateText | None, key: str, locale: str | None, default: str) -> str:
+    if translate is None:
+        return default
+    return translate(key, locale, default)
 
 
 def callback_message(cb: CallbackQuery) -> Message | None:
@@ -16,11 +28,23 @@ def callback_message(cb: CallbackQuery) -> Message | None:
 async def require_callback_message(
     cb: CallbackQuery,
     *,
-    alert_text: str = "⚠️ Сообщение недоступно.",
+    alert_text: str | None = None,
+    translate: TranslateText | None = None,
+    locale: str | None = None,
 ) -> Message | None:
     message = callback_message(cb)
     if message is None:
-        await cb.answer(alert_text, show_alert=True)
+        resolved_alert_text = (
+            alert_text
+            if alert_text is not None
+            else _tx(
+                translate,
+                CALLBACK_MESSAGE_UNAVAILABLE_KEY,
+                locale,
+                CALLBACK_MESSAGE_UNAVAILABLE_TEXT,
+            )
+        )
+        await cb.answer(resolved_alert_text, show_alert=True)
         return None
     return message
 

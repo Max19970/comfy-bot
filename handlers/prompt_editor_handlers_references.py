@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 
 from aiogram import F, Router
@@ -18,6 +18,8 @@ from core.runtime import PromptRequest, RuntimeStore
 from core.states import PromptEditorStates
 from core.ui_kit import build_keyboard
 from core.ui_kit.buttons import button
+from core.user_preferences import read_user_locale
+from domain.localization import LocalizationService
 
 from .prompt_editor_handler_guards import require_message_and_request
 from .prompt_editor_selection_utils import parse_value_selection
@@ -37,12 +39,47 @@ class PromptEditorReferenceHandlersDeps:
     show_reference_menu: Callable[..., Awaitable[None]]
     make_reference_image: Callable[[str], dict[str, str]]
     cleanup_user_message: Callable[[Message], Awaitable[None]]
+    localization: LocalizationService
+    resolve_user_locale: Callable[..., str]
 
 
 def register_prompt_editor_reference_handlers(
     router: Router,
     deps: PromptEditorReferenceHandlersDeps,
 ) -> None:
+    def _resolved_locale(uid: int, *, telegram_locale: str | None) -> str:
+        prefs = deps.runtime.user_preferences.get(uid, {})
+        selected_locale = read_user_locale(
+            prefs,
+            default_locale=deps.localization.default_locale(),
+        )
+        return deps.resolve_user_locale(
+            user_locale=selected_locale,
+            telegram_locale=telegram_locale,
+        )
+
+    def _t(
+        uid: int,
+        key: str,
+        default: str,
+        *,
+        telegram_locale: str | None,
+        params: Mapping[str, object] | None = None,
+    ) -> str:
+        locale = _resolved_locale(uid, telegram_locale=telegram_locale)
+        return deps.localization.t(key, locale=locale, params=params, default=default)
+
+    def _t_cb(
+        cb: CallbackQuery,
+        key: str,
+        default: str,
+        *,
+        params: Mapping[str, object] | None = None,
+    ) -> str:
+        uid = cb.from_user.id if cb.from_user else 0
+        telegram_locale = cb.from_user.language_code if cb.from_user else None
+        return _t(uid, key, default, telegram_locale=telegram_locale, params=params)
+
     @router.callback_query(F.data == "pe:edit:refs")
     async def pe_edit_refs(cb: CallbackQuery, state: FSMContext):
         message = await require_callback_message(cb)
@@ -59,10 +96,16 @@ def register_prompt_editor_reference_handlers(
             return
 
         uid, req = payload
+        telegram_locale = msg.from_user.language_code if msg.from_user else None
         if len(req.params.reference_images) >= deps.max_reference_images:
             await msg.answer(
-                f"Достигнут лимит: {deps.max_reference_images} картинок. "
-                'Удалите лишние в меню "Картинки".'
+                _t(
+                    uid,
+                    "prompt_editor.references.limit_reached",
+                    'Достигнут лимит: {max_count} картинок. Удалите лишние в меню "Картинки".',
+                    telegram_locale=telegram_locale,
+                    params={"max_count": deps.max_reference_images},
+                )
             )
             return
 
@@ -76,9 +119,15 @@ def register_prompt_editor_reference_handlers(
             state,
             uid,
             edit=False,
-            notice=(
-                f"Картинка добавлена. Теперь: "
-                f"{len(req.params.reference_images)}/{deps.max_reference_images}."
+            notice=_t(
+                uid,
+                "prompt_editor.references.notice.added_photo",
+                "Картинка добавлена. Теперь: {count}/{max_count}.",
+                telegram_locale=telegram_locale,
+                params={
+                    "count": len(req.params.reference_images),
+                    "max_count": deps.max_reference_images,
+                },
             ),
         )
 
@@ -96,10 +145,16 @@ def register_prompt_editor_reference_handlers(
             return
 
         uid, req = payload
+        telegram_locale = msg.from_user.language_code if msg.from_user else None
         if len(req.params.reference_images) >= deps.max_reference_images:
             await msg.answer(
-                f"Достигнут лимит: {deps.max_reference_images} картинок. "
-                'Удалите лишние в меню "Картинки".'
+                _t(
+                    uid,
+                    "prompt_editor.references.limit_reached",
+                    'Достигнут лимит: {max_count} картинок. Удалите лишние в меню "Картинки".',
+                    telegram_locale=telegram_locale,
+                    params={"max_count": deps.max_reference_images},
+                )
             )
             return
 
@@ -110,9 +165,15 @@ def register_prompt_editor_reference_handlers(
             state,
             uid,
             edit=False,
-            notice=(
-                f"Картинка добавлена как файл. Теперь: "
-                f"{len(req.params.reference_images)}/{deps.max_reference_images}."
+            notice=_t(
+                uid,
+                "prompt_editor.references.notice.added_file",
+                "Картинка добавлена как файл. Теперь: {count}/{max_count}.",
+                telegram_locale=telegram_locale,
+                params={
+                    "count": len(req.params.reference_images),
+                    "max_count": deps.max_reference_images,
+                },
             ),
         )
 
@@ -128,12 +189,23 @@ def register_prompt_editor_reference_handlers(
         message, _, req = context
         refs = req.params.reference_images
         if not refs:
-            await cb.answer("Список картинок пуст.", show_alert=True)
+            await cb.answer(
+                _t_cb(
+                    cb,
+                    "prompt_editor.references.alert.empty_list",
+                    "Список картинок пуст.",
+                ),
+                show_alert=True,
+            )
             return
 
         await cb.answer()
         await message.answer(
-            "👁 <b>Превью референсов</b>\nНажмите кнопку под картинкой для удаления."
+            _t_cb(
+                cb,
+                "prompt_editor.references.preview.title",
+                "👁 <b>Превью референсов</b>\nНажмите кнопку под картинкой для удаления.",
+            )
         )
 
         for index, ref in enumerate(refs, start=1):
@@ -155,13 +227,23 @@ def register_prompt_editor_reference_handlers(
             try:
                 await message.answer_photo(
                     photo=file_id,
-                    caption=f"Референс #{index}",
+                    caption=_t_cb(
+                        cb,
+                        "prompt_editor.references.preview.item_caption",
+                        "Референс #{index}",
+                        params={"index": index},
+                    ),
                     reply_markup=kb,
                 )
             except TelegramBadRequest:
                 await message.answer_document(
                     document=file_id,
-                    caption=f"Референс #{index}",
+                    caption=_t_cb(
+                        cb,
+                        "prompt_editor.references.preview.item_caption",
+                        "Референс #{index}",
+                        params={"index": index},
+                    ),
                     reply_markup=kb,
                 )
 
@@ -175,10 +257,14 @@ def register_prompt_editor_reference_handlers(
             return
 
         message, uid, req = context
-        notice = "Список уже пуст."
+        notice = _t_cb(cb, "prompt_editor.references.notice.already_empty", "Список уже пуст.")
         if req.params.reference_images:
             req.params.reference_images.pop()
-            notice = "Последняя картинка удалена."
+            notice = _t_cb(
+                cb,
+                "prompt_editor.references.notice.last_removed",
+                "Последняя картинка удалена.",
+            )
 
         await deps.show_reference_menu(message, state, uid, edit=True, notice=notice)
         await cb.answer()
@@ -200,16 +286,40 @@ def register_prompt_editor_reference_handlers(
                 state,
                 uid,
                 edit=True,
-                notice="ℹ️ Список картинок уже пуст.",
+                notice=_t_cb(
+                    cb,
+                    "prompt_editor.references.notice.already_empty_verbose",
+                    "ℹ️ Список картинок уже пуст.",
+                ),
             )
             await cb.answer()
             return
 
         kb = build_keyboard(
-            [[button("✅ Удалить", "pe:refs:clear:yes"), button("❌ Отмена", "pe:refs:clear:no")]]
+            [
+                [
+                    button(
+                        _t_cb(
+                            cb,
+                            "prompt_editor.references.button.clear_confirm",
+                            "✅ Удалить",
+                        ),
+                        "pe:refs:clear:yes",
+                    ),
+                    button(
+                        _t_cb(cb, "common.action.cancel", "❌ Отмена"),
+                        "pe:refs:clear:no",
+                    ),
+                ]
+            ]
         )
         await message.edit_text(
-            f"⚠️ Удалить все {count} референсов?",
+            _t_cb(
+                cb,
+                "prompt_editor.references.confirm.clear_all",
+                "⚠️ Удалить все {count} референсов?",
+                params={"count": count},
+            ),
             reply_markup=kb,
         )
         await cb.answer()
@@ -230,7 +340,11 @@ def register_prompt_editor_reference_handlers(
             state,
             uid,
             edit=True,
-            notice="🗑 Список картинок очищен.",
+            notice=_t_cb(
+                cb,
+                "prompt_editor.references.notice.cleared",
+                "🗑 Список картинок очищен.",
+            ),
         )
         await cb.answer()
 
@@ -249,7 +363,11 @@ def register_prompt_editor_reference_handlers(
             state,
             uid,
             edit=True,
-            notice="↩️ Очистка референсов отменена.",
+            notice=_t_cb(
+                cb,
+                "prompt_editor.references.notice.clear_cancelled",
+                "↩️ Очистка референсов отменена.",
+            ),
         )
         await cb.answer()
 
@@ -266,12 +384,23 @@ def register_prompt_editor_reference_handlers(
         ref_id = await parse_value_selection(
             cb,
             prefix="pe:refs:del",
-            invalid_text="Некорректный идентификатор референса.",
+            invalid_text=_t_cb(
+                cb,
+                "prompt_editor.references.error.invalid_reference_id",
+                "Некорректный идентификатор референса.",
+            ),
         )
         if ref_id is None:
             return
         if not ref_id:
-            await cb.answer("Некорректный идентификатор референса.", show_alert=True)
+            await cb.answer(
+                _t_cb(
+                    cb,
+                    "prompt_editor.references.error.invalid_reference_id",
+                    "Некорректный идентификатор референса.",
+                ),
+                show_alert=True,
+            )
             return
 
         before = len(req.params.reference_images)
@@ -281,7 +410,14 @@ def register_prompt_editor_reference_handlers(
         after = len(req.params.reference_images)
 
         if after == before:
-            await cb.answer("Картинка уже удалена.", show_alert=True)
+            await cb.answer(
+                _t_cb(
+                    cb,
+                    "prompt_editor.references.alert.already_removed",
+                    "Картинка уже удалена.",
+                ),
+                show_alert=True,
+            )
             return
 
         try:
@@ -292,4 +428,11 @@ def register_prompt_editor_reference_handlers(
             except TelegramBadRequest:
                 pass
 
-        await cb.answer(f"Удалено. Осталось: {after}")
+        await cb.answer(
+            _t_cb(
+                cb,
+                "prompt_editor.references.alert.removed_left",
+                "Удалено. Осталось: {count}",
+                params={"count": after},
+            )
+        )

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, cast
 
@@ -23,6 +23,8 @@ from core.prompt_enhancements import (
 )
 from core.runtime import PromptRequest, RuntimeStore
 from core.states import PromptEditorStates
+from core.user_preferences import read_user_locale
+from domain.localization import LocalizationService
 
 from .prompt_editor_enhancements import enhancements_menu_label
 from .prompt_editor_handler_guards import require_message_and_request
@@ -47,6 +49,8 @@ class PromptEditorThematicHandlersDeps:
     show_prompt_editor: Callable[..., Awaitable[None]]
     back_keyboard: Callable[..., InlineKeyboardMarkup]
     cleanup_user_message: Callable[[Message], Awaitable[None]]
+    localization: LocalizationService | None = None
+    resolve_user_locale: Callable[..., str] | None = None
 
 
 @dataclass
@@ -71,6 +75,52 @@ def register_prompt_editor_thematic_handlers(
     router: Router,
     deps: PromptEditorThematicHandlersDeps,
 ) -> None:
+    def _resolved_locale(uid: int, *, telegram_locale: str | None) -> str | None:
+        if deps.localization is None:
+            return None
+        prefs = deps.runtime.user_preferences.get(uid, {})
+        selected_locale = read_user_locale(
+            prefs,
+            default_locale=deps.localization.default_locale(),
+        )
+        if deps.resolve_user_locale is None:
+            return selected_locale
+        return deps.resolve_user_locale(
+            user_locale=selected_locale,
+            telegram_locale=telegram_locale,
+        )
+
+    def _t(
+        uid: int,
+        key: str,
+        default: str,
+        *,
+        telegram_locale: str | None,
+        params: Mapping[str, object] | None = None,
+    ) -> str:
+        if deps.localization is None:
+            text = default
+        else:
+            locale = _resolved_locale(uid, telegram_locale=telegram_locale)
+            text = deps.localization.t(key, locale=locale, params=params, default=default)
+        if params:
+            try:
+                return text.format(**params)
+            except Exception:
+                return text
+        return text
+
+    def _t_cb(
+        cb: CallbackQuery,
+        key: str,
+        default: str,
+        *,
+        params: Mapping[str, object] | None = None,
+    ) -> str:
+        uid = cb.from_user.id if cb.from_user else 0
+        telegram_locale = cb.from_user.language_code if cb.from_user else None
+        return _t(uid, key, default, telegram_locale=telegram_locale, params=params)
+
     async def _callback_context(
         cb: CallbackQuery,
     ) -> tuple[Message, int, PromptRequest] | None:
@@ -143,7 +193,14 @@ def register_prompt_editor_thematic_handlers(
                 if parsed is None:
                     raise ValueError
             except ValueError:
-                await cb.answer("❌ Некорректное значение.", show_alert=True)
+                await cb.answer(
+                    _t_cb(
+                        cb,
+                        "prompt_editor.thematic.error.invalid_value",
+                        "❌ Некорректное значение.",
+                    ),
+                    show_alert=True,
+                )
                 return
 
             config.set_value(req.params, parsed)
@@ -193,13 +250,21 @@ def register_prompt_editor_thematic_handlers(
             inline_keyboard=[
                 [
                     InlineKeyboardButton(
-                        text="\U0001f4d0 \u0421\u044d\u043c\u043f\u043b\u0438\u043d\u0433",
+                        text=_t_cb(
+                            cb,
+                            "prompt_editor.thematic.more.button.sampling",
+                            "📐 Сэмплинг",
+                        ),
                         callback_data="pe:sub:sampling",
                     ),
                 ],
                 [
                     InlineKeyboardButton(
-                        text="\U0001f5bc \u0418\u0437\u043e\u0431\u0440\u0430\u0436\u0435\u043d\u0438\u0435",
+                        text=_t_cb(
+                            cb,
+                            "prompt_editor.thematic.more.button.image",
+                            "🖼 Изображение",
+                        ),
                         callback_data="pe:sub:image",
                     ),
                 ],
@@ -211,37 +276,52 @@ def register_prompt_editor_thematic_handlers(
                 ],
                 [
                     InlineKeyboardButton(
-                        text="\U0001f4be \u0421\u043e\u0445\u0440\u0430\u043d\u0438\u0442\u044c",
+                        text=_t_cb(
+                            cb,
+                            "prompt_editor.thematic.more.button.save",
+                            "💾 Сохранить",
+                        ),
                         callback_data="pe:save",
                     ),
                     InlineKeyboardButton(
-                        text="\U0001f4da \u041f\u0440\u0435\u0441\u0435\u0442\u044b",
+                        text=_t_cb(
+                            cb,
+                            "prompt_editor.thematic.more.button.presets",
+                            "📚 Пресеты",
+                        ),
                         callback_data="pe:presets",
                     ),
                 ],
                 [
                     InlineKeyboardButton(
-                        text="📋 Копировать/вставить",
+                        text=_t_cb(
+                            cb,
+                            "prompt_editor.thematic.more.button.exchange",
+                            "📋 Копировать/вставить",
+                        ),
                         callback_data="pe:exchange",
                     )
                 ],
                 [
                     InlineKeyboardButton(
-                        text="\u2b05\ufe0f \u041d\u0430\u0437\u0430\u0434",
+                        text=_t_cb(cb, "common.action.back", "⬅️ Назад"),
                         callback_data="pe:back",
                     )
                 ],
             ]
         )
         await message.edit_text(
-            "\u2699\ufe0f <b>\u0414\u043e\u043f\u043e\u043b\u043d\u0438\u0442\u0435\u043b\u044c\u043d\u044b\u0435 \u043d\u0430\u0441\u0442\u0440\u043e\u0439\u043a\u0438</b>\n"
-            "\n"
-            "\u0417\u0434\u0435\u0441\u044c \u0441\u043e\u0431\u0440\u0430\u043d\u044b \u0432\u0441\u0435 \u043f\u0430\u0440\u0430\u043c\u0435\u0442\u0440\u044b \u0433\u0435\u043d\u0435\u0440\u0430\u0446\u0438\u0438, "
-            "\u0440\u0430\u0437\u0431\u0438\u0442\u044b\u0435 \u043f\u043e \u043a\u0430\u0442\u0435\u0433\u043e\u0440\u0438\u044f\u043c.\n"
-            "\n"
-            "\U0001f4d0 <b>\u0421\u044d\u043c\u043f\u043b\u0438\u043d\u0433</b> \u2014 \u0448\u0430\u0433\u0438, CFG, \u0430\u043b\u0433\u043e\u0440\u0438\u0442\u043c \u0433\u0435\u043d\u0435\u0440\u0430\u0446\u0438\u0438\n"
-            "\U0001f5bc <b>\u0418\u0437\u043e\u0431\u0440\u0430\u0436\u0435\u043d\u0438\u0435</b> \u2014 \u0440\u0430\u0437\u043c\u0435\u0440, \u0431\u0430\u0442\u0447, \u0440\u0435\u0444\u0435\u0440\u0435\u043d\u0441\u044b\n"
-            "\u2728 <b>\u0423\u043b\u0443\u0447\u0448\u0435\u043d\u0438\u044f</b> \u2014 Hi-res, FreeU, PAG, \u0430\u043f\u0441\u043a\u0435\u0439\u043b",
+            _t_cb(
+                cb,
+                "prompt_editor.thematic.more.text",
+                "⚙️ <b>Дополнительные настройки</b>\n"
+                "\n"
+                "Здесь собраны все параметры генерации, разбитые по категориям.\n"
+                "\n"
+                "📐 <b>Сэмплинг</b> — шаги, CFG, алгоритм генерации\n"
+                "🖼 <b>Изображение</b> — размер, батч, референсы\n"
+                "✨ <b>Улучшения</b> — Hi-res, FreeU, PAG, апскейл",
+            ),
             reply_markup=kb,
         )
         await cb.answer()
@@ -260,11 +340,21 @@ def register_prompt_editor_thematic_handlers(
             inline_keyboard=[
                 [
                     InlineKeyboardButton(
-                        text=f"\U0001f522 Steps {params.steps}",
+                        text=_t_cb(
+                            cb,
+                            "prompt_editor.thematic.sampling.button.steps",
+                            "🔢 Steps {value}",
+                            params={"value": params.steps},
+                        ),
                         callback_data="pe:edit:steps",
                     ),
                     InlineKeyboardButton(
-                        text=f"CFG {params.cfg}",
+                        text=_t_cb(
+                            cb,
+                            "prompt_editor.thematic.sampling.button.cfg",
+                            "CFG {value}",
+                            params={"value": params.cfg},
+                        ),
                         callback_data="pe:edit:cfg",
                     ),
                 ],
@@ -280,41 +370,62 @@ def register_prompt_editor_thematic_handlers(
                 ],
                 [
                     InlineKeyboardButton(
-                        text=f"Denoise {params.denoise}",
+                        text=_t_cb(
+                            cb,
+                            "prompt_editor.thematic.sampling.button.denoise",
+                            "Denoise {value}",
+                            params={"value": params.denoise},
+                        ),
                         callback_data="pe:edit:denoise",
                     ),
                     InlineKeyboardButton(
-                        text=f"Seed {seed_text}",
+                        text=_t_cb(
+                            cb,
+                            "prompt_editor.thematic.sampling.button.seed",
+                            "Seed {value}",
+                            params={"value": seed_text},
+                        ),
                         callback_data="pe:edit:seed",
                     ),
                 ],
                 [
                     InlineKeyboardButton(
-                        text="\u2b05\ufe0f \u041d\u0430\u0437\u0430\u0434",
+                        text=_t_cb(cb, "common.action.back", "⬅️ Назад"),
                         callback_data="pe:back",
                     )
                 ],
             ]
         )
         await message.edit_text(
-            "\U0001f4d0 <b>\u0421\u044d\u043c\u043f\u043b\u0438\u043d\u0433</b>\n"
-            "\n"
-            "\u041d\u0430\u0441\u0442\u0440\u043e\u0439\u043a\u0438 \u043f\u0440\u043e\u0446\u0435\u0441\u0441\u0430 \u0433\u0435\u043d\u0435\u0440\u0430\u0446\u0438\u0438 \u0438\u0437\u043e\u0431\u0440\u0430\u0436\u0435\u043d\u0438\u044f.\n"
-            "\n"
-            "\u2022 <b>Steps</b> \u2014 \u043a\u043e\u043b-\u0432\u043e \u0448\u0430\u0433\u043e\u0432 \u0434\u0438\u0444\u0444\u0443\u0437\u0438\u0438. "
-            "\u0411\u043e\u043b\u044c\u0448\u0435 = \u043a\u0430\u0447\u0435\u0441\u0442\u0432\u0435\u043d\u043d\u0435\u0435, \u043d\u043e \u043c\u0435\u0434\u043b\u0435\u043d\u043d\u0435\u0435 (20\u201335 \u043e\u043f\u0442\u0438\u043c\u0430\u043b\u044c\u043d\u043e)\n"
-            "\u2022 <b>CFG</b> \u2014 \u043d\u0430\u0441\u043a\u043e\u043b\u044c\u043a\u043e \u0441\u0442\u0440\u043e\u0433\u043e \u043c\u043e\u0434\u0435\u043b\u044c \u0441\u043b\u0435\u0434\u0443\u0435\u0442 \u043f\u0440\u043e\u043c\u043f\u0442\u0443. "
-            "\u041d\u0438\u0436\u0435 = \u0441\u0432\u043e\u0431\u043e\u0434\u043d\u0435\u0435, \u0432\u044b\u0448\u0435 = \u0442\u043e\u0447\u043d\u0435\u0435 (5\u20138 \u043e\u0431\u044b\u0447\u043d\u043e)\n"
-            "\u2022 <b>Denoise</b> \u2014 \u0441\u0438\u043b\u0430 \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u0439 (1.0 = \u043f\u043e\u043b\u043d\u0430\u044f \u0433\u0435\u043d\u0435\u0440\u0430\u0446\u0438\u044f)\n"
-            "\u2022 <b>Sampler/Scheduler</b> \u2014 \u0430\u043b\u0433\u043e\u0440\u0438\u0442\u043c \u0438 \u0440\u0430\u0441\u043f\u0438\u0441\u0430\u043d\u0438\u0435 \u0448\u0443\u043c\u043e\u0434\u0430\u0432\u0430\n"
-            "\u2022 <b>Seed</b> \u2014 \u0437\u0435\u0440\u043d\u043e \u0441\u043b\u0443\u0447\u0430\u0439\u043d\u043e\u0441\u0442\u0438 (\u0444\u0438\u043a\u0441. \u0437\u043d\u0430\u0447\u0435\u043d\u0438\u0435 = \u043f\u043e\u0432\u0442\u043e\u0440\u044f\u0435\u043c\u044b\u0439 \u0440\u0435\u0437\u0443\u043b\u044c\u0442\u0430\u0442)\n"
-            "\n"
-            f"<b>Steps:</b> <code>{params.steps}</code>  "
-            f"<b>CFG:</b> <code>{params.cfg}</code>  "
-            f"<b>Denoise:</b> <code>{params.denoise}</code>\n"
-            f"<b>Sampler:</b> <code>{h(params.sampler)}</code>  "
-            f"<b>Sched:</b> <code>{h(params.scheduler)}</code>\n"
-            f"<b>Seed:</b> {seed_text}",
+            _t_cb(
+                cb,
+                "prompt_editor.thematic.sampling.text",
+                "📐 <b>Сэмплинг</b>\n"
+                "\n"
+                "Настройки процесса генерации изображения.\n"
+                "\n"
+                "• <b>Steps</b> — кол-во шагов диффузии. Больше = качественнее, но медленнее (20–35 оптимально)\n"
+                "• <b>CFG</b> — насколько строго модель следует промпту. Ниже = свободнее, выше = точнее (5–8 обычно)\n"
+                "• <b>Denoise</b> — сила изменений (1.0 = полная генерация)\n"
+                "• <b>Sampler/Scheduler</b> — алгоритм и расписание шумодава\n"
+                "• <b>Seed</b> — зерно случайности (фикс. значение = повторяемый результат)\n"
+                "\n",
+            )
+            + _t_cb(
+                cb,
+                "prompt_editor.thematic.sampling.summary",
+                "<b>Steps:</b> <code>{steps}</code>  <b>CFG:</b> <code>{cfg}</code>  <b>Denoise:</b> <code>{denoise}</code>\n"
+                "<b>Sampler:</b> <code>{sampler}</code>  <b>Sched:</b> <code>{scheduler}</code>\n"
+                "<b>Seed:</b> {seed}",
+                params={
+                    "steps": params.steps,
+                    "cfg": params.cfg,
+                    "denoise": params.denoise,
+                    "sampler": h(params.sampler),
+                    "scheduler": h(params.scheduler),
+                    "seed": seed_text,
+                },
+            ),
             reply_markup=kb,
         )
         await cb.answer()
@@ -337,26 +448,46 @@ def register_prompt_editor_thematic_handlers(
                         callback_data="pe:edit:size",
                     ),
                     InlineKeyboardButton(
-                        text=f"\U0001f4e6 Batch {params.batch_size}",
+                        text=_t_cb(
+                            cb,
+                            "prompt_editor.thematic.image.button.batch",
+                            "📦 Batch {value}",
+                            params={"value": params.batch_size},
+                        ),
                         callback_data="pe:edit:batch",
                     ),
                 ],
                 [
                     InlineKeyboardButton(
-                        text=f"\U0001f5bc Ref ({ref_count})",
+                        text=_t_cb(
+                            cb,
+                            "prompt_editor.thematic.image.button.references",
+                            "🖼 Ref ({count})",
+                            params={"count": ref_count},
+                        ),
                         callback_data="pe:edit:refs",
                     ),
                     InlineKeyboardButton(
-                        text=f"Ref Str {params.reference_strength}",
+                        text=_t_cb(
+                            cb,
+                            "prompt_editor.thematic.image.button.reference_strength",
+                            "Ref Str {value}",
+                            params={"value": params.reference_strength},
+                        ),
                         callback_data="pe:edit:ref_strength",
                     ),
                 ],
                 [
                     InlineKeyboardButton(
                         text=(
-                            "🧬 VAE: auto"
+                            _t_cb(cb, "prompt_editor.thematic.image.value.vae_auto", "🧬 VAE: auto")
                             if not params.vae_name
-                            else f"🧬 VAE: {truncate(params.vae_name, 14)}"
+                            else _t_cb(
+                                cb,
+                                "prompt_editor.thematic.image.value.vae_name",
+                                "🧬 VAE: {name}",
+                                params={"name": truncate(params.vae_name, 14)},
+                            )
                         ),
                         callback_data="pe:edit:vae",
                     ),
@@ -364,59 +495,95 @@ def register_prompt_editor_thematic_handlers(
                 [
                     InlineKeyboardButton(
                         text=(
-                            "🧷 ControlNet: off"
+                            _t_cb(
+                                cb,
+                                "prompt_editor.thematic.image.value.controlnet_off",
+                                "🧷 ControlNet: off",
+                            )
                             if not params.controlnet_name
-                            else f"🧷 {truncate(params.controlnet_name, 14)}"
+                            else _t_cb(
+                                cb,
+                                "prompt_editor.thematic.image.value.controlnet_name",
+                                "🧷 {name}",
+                                params={"name": truncate(params.controlnet_name, 14)},
+                            )
                         ),
                         callback_data="pe:edit:controlnet",
                     ),
                     InlineKeyboardButton(
-                        text=f"Str {params.controlnet_strength}",
+                        text=_t_cb(
+                            cb,
+                            "prompt_editor.thematic.image.button.controlnet_strength",
+                            "Str {value}",
+                            params={"value": params.controlnet_strength},
+                        ),
                         callback_data="pe:edit:controlnet_strength",
                     ),
                 ],
                 [
                     InlineKeyboardButton(
                         text=(
-                            "🔤 Embedding: off"
+                            _t_cb(
+                                cb,
+                                "prompt_editor.thematic.image.value.embedding_off",
+                                "🔤 Embedding: off",
+                            )
                             if not params.embedding_name
-                            else f"🔤 {truncate(params.embedding_name, 20)}"
+                            else _t_cb(
+                                cb,
+                                "prompt_editor.thematic.image.value.embedding_name",
+                                "🔤 {name}",
+                                params={"name": truncate(params.embedding_name, 20)},
+                            )
                         ),
                         callback_data="pe:edit:embedding",
                     ),
                 ],
                 [
                     InlineKeyboardButton(
-                        text="\u2b05\ufe0f \u041d\u0430\u0437\u0430\u0434",
+                        text=_t_cb(cb, "common.action.back", "⬅️ Назад"),
                         callback_data="pe:back",
                     )
                 ],
             ]
         )
         await message.edit_text(
-            "\U0001f5bc <b>\u0418\u0437\u043e\u0431\u0440\u0430\u0436\u0435\u043d\u0438\u0435</b>\n"
-            "\n"
-            "\u041f\u0430\u0440\u0430\u043c\u0435\u0442\u0440\u044b \u0432\u044b\u0445\u043e\u0434\u043d\u043e\u0433\u043e \u0438\u0437\u043e\u0431\u0440\u0430\u0436\u0435\u043d\u0438\u044f.\n"
-            "\n"
-            "\u2022 <b>\u0420\u0430\u0437\u043c\u0435\u0440</b> \u2014 \u0448\u0438\u0440\u0438\u043d\u0430\u00d7\u0432\u044b\u0441\u043e\u0442\u0430 \u0432 \u043f\u0438\u043a\u0441\u0435\u043b\u044f\u0445. "
-            "\u0411\u043e\u043b\u044c\u0448\u0438\u0439 \u0440\u0430\u0437\u043c\u0435\u0440 \u0442\u0440\u0435\u0431\u0443\u0435\u0442 \u0431\u043e\u043b\u044c\u0448\u0435 VRAM\n"
-            "\u2022 <b>Batch</b> \u2014 \u043a\u043e\u043b-\u0432\u043e \u0438\u0437\u043e\u0431\u0440\u0430\u0436\u0435\u043d\u0438\u0439 \u0437\u0430 \u0440\u0430\u0437. "
-            "\u0411\u043e\u043b\u044c\u0448\u0435 = \u0434\u043e\u043b\u044c\u0448\u0435, \u043d\u043e \u0431\u043e\u043b\u044c\u0448\u0435 \u0432\u0430\u0440\u0438\u0430\u043d\u0442\u043e\u0432\n"
-            "\u2022 <b>Ref</b> \u2014 \u0440\u0435\u0444\u0435\u0440\u0435\u043d\u0441\u043d\u044b\u0435 \u0438\u0437\u043e\u0431\u0440\u0430\u0436\u0435\u043d\u0438\u044f (IP-Adapter). "
-            "\u041c\u043e\u0434\u0435\u043b\u044c \u043f\u0435\u0440\u0435\u043d\u0438\u043c\u0430\u0435\u0442 \u0441\u0442\u0438\u043b\u044c/\u043a\u043e\u043c\u043f\u043e\u0437\u0438\u0446\u0438\u044e\n"
-            "\u2022 <b>Ref Strength</b> \u2014 \u0441\u0438\u043b\u0430 \u0432\u043b\u0438\u044f\u043d\u0438\u044f \u0440\u0435\u0444\u0435\u0440\u0435\u043d\u0441\u0430 (0.0\u20141.0)\n"
-            "\u2022 <b>VAE</b> \u2014 переопределение VAE декодера\n"
-            "\u2022 <b>ControlNet</b> \u2014 структурный контроль по референсу\n"
-            "\u2022 <b>Embedding</b> \u2014 quick negative token (embedding:name)\n"
-            "\n"
-            f"<b>\u0420\u0430\u0437\u043c\u0435\u0440:</b> <code>{params.width}\u00d7{params.height}</code>  "
-            f"<b>Batch:</b> <code>{params.batch_size}</code>\n"
-            f"<b>Ref:</b> {ref_count}/{deps.max_reference_images}  "
-            f"<b>Ref str:</b> <code>{params.reference_strength}</code>\n"
-            f"<b>VAE:</b> <code>{h(params.vae_name) if params.vae_name else 'auto'}</code>  "
-            f"<b>ControlNet:</b> <code>{h(params.controlnet_name) if params.controlnet_name else 'off'}</code>\n"
-            f"<b>CN str:</b> <code>{params.controlnet_strength}</code>  "
-            f"<b>Embedding:</b> <code>{h(params.embedding_name) if params.embedding_name else 'off'}</code>",
+            _t_cb(
+                cb,
+                "prompt_editor.thematic.image.text",
+                "🖼 <b>Изображение</b>\n"
+                "\n"
+                "Параметры выходного изображения.\n"
+                "\n"
+                "• <b>Размер</b> — ширина×высота в пикселях. Больший размер требует больше VRAM\n"
+                "• <b>Batch</b> — кол-во изображений за раз. Больше = дольше, но больше вариантов\n"
+                "• <b>Ref</b> — референсные изображения (IP-Adapter). Модель перенимает стиль/композицию\n"
+                "• <b>Ref Strength</b> — сила влияния референса (0.0–1.0)\n"
+                "• <b>VAE</b> — переопределение VAE декодера\n"
+                "• <b>ControlNet</b> — структурный контроль по референсу\n"
+                "• <b>Embedding</b> — quick negative token (embedding:name)\n"
+                "\n",
+            )
+            + _t_cb(
+                cb,
+                "prompt_editor.thematic.image.summary",
+                "<b>Размер:</b> <code>{width}×{height}</code>  <b>Batch:</b> <code>{batch}</code>\n"
+                "<b>Ref:</b> {ref_count}/{ref_limit}  <b>Ref str:</b> <code>{ref_strength}</code>\n"
+                "<b>VAE:</b> <code>{vae}</code>  <b>ControlNet:</b> <code>{controlnet}</code>\n"
+                "<b>CN str:</b> <code>{controlnet_strength}</code>  <b>Embedding:</b> <code>{embedding}</code>",
+                params={
+                    "width": params.width,
+                    "height": params.height,
+                    "batch": params.batch_size,
+                    "ref_count": ref_count,
+                    "ref_limit": deps.max_reference_images,
+                    "ref_strength": params.reference_strength,
+                    "vae": h(params.vae_name) if params.vae_name else "auto",
+                    "controlnet": h(params.controlnet_name) if params.controlnet_name else "off",
+                    "controlnet_strength": params.controlnet_strength,
+                    "embedding": h(params.embedding_name) if params.embedding_name else "off",
+                },
+            ),
             reply_markup=kb,
         )
         await cb.answer()
@@ -444,37 +611,62 @@ def register_prompt_editor_thematic_handlers(
             inline_keyboard=[
                 [
                     InlineKeyboardButton(
-                        text=f"\U0001f527 Hi-res Fix {hires_status}",
+                        text=_t_cb(
+                            cb,
+                            "prompt_editor.thematic.enhancements.button.hires",
+                            "🔧 Hi-res Fix {status}",
+                            params={"status": hires_status},
+                        ),
                         callback_data="pe:enh:hires",
                     ),
                 ],
                 [
                     InlineKeyboardButton(
-                        text=f"\u26a1 FreeU {freeu_status}",
+                        text=_t_cb(
+                            cb,
+                            "prompt_editor.thematic.enhancements.button.freeu",
+                            "⚡ FreeU {status}",
+                            params={"status": freeu_status},
+                        ),
                         callback_data="pe:enh:freeu",
                     ),
                 ],
                 [
                     InlineKeyboardButton(
-                        text=f"\U0001f3af PAG {pag_status}",
+                        text=_t_cb(
+                            cb,
+                            "prompt_editor.thematic.enhancements.button.pag",
+                            "🎯 PAG {status}",
+                            params={"status": pag_status},
+                        ),
                         callback_data="pe:enh:pag",
                     ),
                 ],
                 [
                     InlineKeyboardButton(
-                        text=f"\U0001f50d Upscaler {upsc_status}",
+                        text=_t_cb(
+                            cb,
+                            "prompt_editor.thematic.enhancements.button.upscaler",
+                            "🔍 Upscaler {status}",
+                            params={"status": upsc_status},
+                        ),
                         callback_data="pe:enh:upscaler",
                     ),
                 ],
                 [
                     InlineKeyboardButton(
-                        text=f"\U0001f9e9 Tiled Diffusion {tiled_status}",
+                        text=_t_cb(
+                            cb,
+                            "prompt_editor.thematic.enhancements.button.tiled",
+                            "🧩 Tiled Diffusion {status}",
+                            params={"status": tiled_status},
+                        ),
                         callback_data="pe:enh:tiled",
                     ),
                 ],
                 [
                     InlineKeyboardButton(
-                        text="\u2b05\ufe0f \u041d\u0430\u0437\u0430\u0434",
+                        text=_t_cb(cb, "common.action.back", "⬅️ Назад"),
                         callback_data="pe:back",
                     )
                 ],
@@ -485,34 +677,74 @@ def register_prompt_editor_thematic_handlers(
         enh_lines: list[str] = []
         if params.enable_hires_fix:
             enh_lines.append(
-                f"\U0001f527 Hi-res Fix — \u00d7{params.hires_scale}, denoise {params.hires_denoise}"
+                _t_cb(
+                    cb,
+                    "prompt_editor.thematic.enhancements.status.hires",
+                    "🔧 Hi-res Fix — ×{scale}, denoise {denoise}",
+                    params={"scale": params.hires_scale, "denoise": params.hires_denoise},
+                )
             )
         if params.enable_freeu:
-            enh_lines.append("\u26a1 FreeU V2 — \u0432\u043a\u043b")
+            enh_lines.append(
+                _t_cb(
+                    cb,
+                    "prompt_editor.thematic.enhancements.status.freeu",
+                    "⚡ FreeU V2 — вкл",
+                )
+            )
         if params.enable_pag:
-            enh_lines.append(f"\U0001f3af PAG — scale {params.pag_scale}")
+            enh_lines.append(
+                _t_cb(
+                    cb,
+                    "prompt_editor.thematic.enhancements.status.pag",
+                    "🎯 PAG — scale {scale}",
+                    params={"scale": params.pag_scale},
+                )
+            )
         if params.upscale_model:
-            enh_lines.append(f"\U0001f50d Upscaler \u2014 {h(truncate(params.upscale_model, 30))}")
+            enh_lines.append(
+                _t_cb(
+                    cb,
+                    "prompt_editor.thematic.enhancements.status.upscaler",
+                    "🔍 Upscaler — {model}",
+                    params={"model": h(truncate(params.upscale_model, 30))},
+                )
+            )
         if params.enable_tiled_diffusion:
             enh_lines.append(
-                f"\U0001f9e9 HyperTile \u2014 tile {params.tile_size}, "
-                f"VAE {params.vae_tile_size}, overlap {params.tile_overlap}"
+                _t_cb(
+                    cb,
+                    "prompt_editor.thematic.enhancements.status.tiled",
+                    "🧩 HyperTile — tile {tile_size}, VAE {vae_tile}, overlap {overlap}",
+                    params={
+                        "tile_size": params.tile_size,
+                        "vae_tile": params.vae_tile_size,
+                        "overlap": params.tile_overlap,
+                    },
+                )
             )
 
         enh_text = (
             "\n".join(enh_lines)
             if enh_lines
-            else "<i>\u041d\u0435\u0442 \u0430\u043a\u0442\u0438\u0432\u043d\u044b\u0445 \u0443\u043b\u0443\u0447\u0448\u0435\u043d\u0438\u0439</i>"
+            else _t_cb(
+                cb,
+                "prompt_editor.thematic.enhancements.empty",
+                "<i>Нет активных улучшений</i>",
+            )
         )
 
         await message.edit_text(
-            "\u2728 <b>\u0423\u043b\u0443\u0447\u0448\u0435\u043d\u0438\u044f</b>\n"
-            "\n"
-            "\u0414\u043e\u043f\u043e\u043b\u043d\u0438\u0442\u0435\u043b\u044c\u043d\u044b\u0435 \u043c\u043e\u0434\u0443\u043b\u0438, \u043a\u043e\u0442\u043e\u0440\u044b\u0435 \u0443\u043b\u0443\u0447\u0448\u0430\u044e\u0442 \u043a\u0430\u0447\u0435\u0441\u0442\u0432\u043e "
-            "\u0433\u0435\u043d\u0435\u0440\u0430\u0446\u0438\u0438, \u043d\u043e \u043c\u043e\u0433\u0443\u0442 \u0443\u0432\u0435\u043b\u0438\u0447\u0438\u0432\u0430\u0442\u044c \u0432\u0440\u0435\u043c\u044f. "
-            "\u0412\u044b\u0431\u0435\u0440\u0438\u0442\u0435 \u043c\u043e\u0434\u0443\u043b\u044c \u0434\u043b\u044f \u043d\u0430\u0441\u0442\u0440\u043e\u0439\u043a\u0438.\n"
-            "\n"
-            f"{enh_text}",
+            _t_cb(
+                cb,
+                "prompt_editor.thematic.enhancements.text",
+                "✨ <b>Улучшения</b>\n"
+                "\n"
+                "Дополнительные модули, которые улучшают качество генерации, но могут увеличивать время. Выберите модуль для настройки.\n"
+                "\n"
+                "{details}",
+                params={"details": enh_text},
+            ),
             reply_markup=kb,
         )
         await cb.answer()
@@ -521,9 +753,9 @@ def register_prompt_editor_thematic_handlers(
 
     def _hires_submenu_kb(params: GenerationParams) -> InlineKeyboardMarkup:
         toggle_text = (
-            "\u274c \u0412\u044b\u043a\u043b\u044e\u0447\u0438\u0442\u044c"
+            _t(0, "common.action.disable", "❌ Выключить", telegram_locale=None)
             if params.enable_hires_fix
-            else "\u2705 \u0412\u043a\u043b\u044e\u0447\u0438\u0442\u044c"
+            else _t(0, "common.action.enable", "✅ Включить", telegram_locale=None)
         )
         rows = [
             [
@@ -537,11 +769,23 @@ def register_prompt_editor_thematic_handlers(
             rows.append(
                 [
                     InlineKeyboardButton(
-                        text=f"Scale: \u00d7{params.hires_scale}",
+                        text=_t(
+                            0,
+                            "prompt_editor.thematic.hires.button.scale",
+                            "Scale: ×{value}",
+                            telegram_locale=None,
+                            params={"value": params.hires_scale},
+                        ),
                         callback_data="pe:hires:scale",
                     ),
                     InlineKeyboardButton(
-                        text=f"Denoise: {params.hires_denoise}",
+                        text=_t(
+                            0,
+                            "prompt_editor.thematic.hires.button.denoise",
+                            "Denoise: {value}",
+                            telegram_locale=None,
+                            params={"value": params.hires_denoise},
+                        ),
                         callback_data="pe:hires:denoise",
                     ),
                 ]
@@ -549,7 +793,7 @@ def register_prompt_editor_thematic_handlers(
         rows.append(
             [
                 InlineKeyboardButton(
-                    text="\u2b05\ufe0f \u041d\u0430\u0437\u0430\u0434",
+                    text=_t(0, "common.action.back", "⬅️ Назад", telegram_locale=None),
                     callback_data="pe:sub:enhancements",
                 )
             ]
@@ -558,25 +802,29 @@ def register_prompt_editor_thematic_handlers(
 
     def _hires_submenu_text(params: GenerationParams) -> str:
         status = (
-            "\u2705 \u0412\u041a\u041b"
+            _t(0, "common.status.enabled_short", "✅ ВКЛ", telegram_locale=None)
             if params.enable_hires_fix
-            else "\u274c \u0412\u042b\u041a\u041b"
+            else _t(0, "common.status.disabled_short", "❌ ВЫКЛ", telegram_locale=None)
         )
-        return (
-            f"\U0001f527 <b>Hi-res Fix</b>\n"
+        return _t(
+            0,
+            "prompt_editor.thematic.hires.text",
+            "🔧 <b>Hi-res Fix</b>\n"
             "\n"
-            "\u0413\u0435\u043d\u0435\u0440\u0438\u0440\u0443\u0435\u0442 \u043a\u0430\u0440\u0442\u0438\u043d\u043a\u0443 \u0432 \u043c\u0430\u043b\u043e\u043c \u0440\u0430\u0437\u0440\u0435\u0448\u0435\u043d\u0438\u0438, "
-            "\u0437\u0430\u0442\u0435\u043c \u0443\u0432\u0435\u043b\u0438\u0447\u0438\u0432\u0430\u0435\u0442 \u0438 \u0434\u043e\u0440\u0438\u0441\u043e\u0432\u044b\u0432\u0430\u0435\u0442 \u0434\u0435\u0442\u0430\u043b\u0438 "
-            "\u0432\u0442\u043e\u0440\u044b\u043c \u043f\u0440\u043e\u0445\u043e\u0434\u043e\u043c. \u042d\u0442\u043e \u043f\u043e\u0437\u0432\u043e\u043b\u044f\u0435\u0442 \u043f\u043e\u043b\u0443\u0447\u0438\u0442\u044c "
-            "\u0431\u043e\u043b\u044c\u0448\u0438\u0435 \u0438\u0437\u043e\u0431\u0440\u0430\u0436\u0435\u043d\u0438\u044f \u0431\u0435\u0437 \u0445\u0430\u0440\u0430\u043a\u0442\u0435\u0440\u043d\u044b\u0445 \u0430\u0440\u0442\u0435\u0444\u0430\u043a\u0442\u043e\u0432.\n"
+            "Генерирует картинку в малом разрешении, затем увеличивает и дорисовывает детали вторым проходом. Это позволяет получить большие изображения без характерных артефактов.\n"
             "\n"
-            "\u2022 <b>Scale</b> \u2014 \u043c\u043d\u043e\u0436\u0438\u0442\u0435\u043b\u044c \u0443\u0432\u0435\u043b\u0438\u0447\u0435\u043d\u0438\u044f (\u00d71.5 \u0434\u043b\u044f \u0431\u0430\u043b\u0430\u043d\u0441\u0430, \u00d72.0 \u0434\u043b\u044f \u043c\u0430\u043a\u0441\u0438\u043c\u0443\u043c\u0430)\n"
-            "\u2022 <b>Denoise</b> \u2014 \u0441\u0442\u0435\u043f\u0435\u043d\u044c \u043f\u0435\u0440\u0435\u0440\u0438\u0441\u043e\u0432\u043a\u0438 (0.3\u20140.5 \u2014 \u0441\u043e\u0445\u0440\u0430\u043d\u044f\u0435\u0442 \u043a\u043e\u043c\u043f\u043e\u0437\u0438\u0446\u0438\u044e, "
-            "0.6\u20140.7 \u2014 \u0431\u043e\u043b\u044c\u0448\u0435 \u043d\u043e\u0432\u044b\u0445 \u0434\u0435\u0442\u0430\u043b\u0435\u0439)\n"
-            "\u26a0\ufe0f \u0423\u0432\u0435\u043b\u0438\u0447\u0438\u0432\u0430\u0435\u0442 \u0432\u0440\u0435\u043c\u044f \u0433\u0435\u043d\u0435\u0440\u0430\u0446\u0438\u0438 \u043f\u0440\u0438\u043c\u0435\u0440\u043d\u043e \u0432\u0434\u0432\u043e\u0435.\n"
+            "• <b>Scale</b> — множитель увеличения (×1.5 для баланса, ×2.0 для максимума)\n"
+            "• <b>Denoise</b> — степень перерисовки (0.3–0.5 — сохраняет композицию, 0.6–0.7 — больше новых деталей)\n"
+            "⚠️ Увеличивает время генерации примерно вдвое.\n"
             "\n"
-            f"<b>\u0421\u0442\u0430\u0442\u0443\u0441:</b> {status}\n"
-            f"<b>Scale:</b> \u00d7{params.hires_scale}  <b>Denoise:</b> {params.hires_denoise}"
+            "<b>Статус:</b> {status}\n"
+            "<b>Scale:</b> ×{scale}  <b>Denoise:</b> {denoise}",
+            telegram_locale=None,
+            params={
+                "status": status,
+                "scale": params.hires_scale,
+                "denoise": params.hires_denoise,
+            },
         )
 
     @router.callback_query(F.data == "pe:enh:hires")
@@ -603,11 +851,18 @@ def register_prompt_editor_thematic_handlers(
             reply_markup=_hires_submenu_kb(req.params),
         )
         status = (
-            "\u0432\u043a\u043b\u044e\u0447\u0435\u043d"
+            _t_cb(cb, "common.value.enabled", "включен")
             if req.params.enable_hires_fix
-            else "\u0432\u044b\u043a\u043b\u044e\u0447\u0435\u043d"
+            else _t_cb(cb, "common.value.disabled", "выключен")
         )
-        await cb.answer(f"\U0001f527 Hi-res Fix {status}")
+        await cb.answer(
+            _t_cb(
+                cb,
+                "prompt_editor.thematic.hires.toggled",
+                "🔧 Hi-res Fix {status}",
+                params={"status": status},
+            )
+        )
 
     _register_scalar_param(
         ThematicScalarConfig(
@@ -615,10 +870,29 @@ def register_prompt_editor_thematic_handlers(
             prefix="pe_hrs",
             custom_state=PromptEditorStates.entering_custom_hires_scale,
             menu_text=(
-                f"Hi-res Fix scale (множитель, " f"{numeric_control_range_text('hires_scale')}):"
+                _t(
+                    0,
+                    "prompt_editor.thematic.hires.scale.menu",
+                    f"Hi-res Fix scale (множитель, {numeric_control_range_text('hires_scale')}):",
+                    telegram_locale=None,
+                )
             ),
-            custom_prompt=(f"Hi-res scale ({numeric_control_range_text('hires_scale')}):"),
-            invalid_input_text=(f"Число {numeric_control_range_text('hires_scale')}:"),
+            custom_prompt=(
+                _t(
+                    0,
+                    "prompt_editor.thematic.hires.scale.custom_prompt",
+                    f"Hi-res scale ({numeric_control_range_text('hires_scale')}):",
+                    telegram_locale=None,
+                )
+            ),
+            invalid_input_text=(
+                _t(
+                    0,
+                    "prompt_editor.thematic.hires.scale.invalid",
+                    f"Число {numeric_control_range_text('hires_scale')}:",
+                    telegram_locale=None,
+                )
+            ),
             values_rows=numeric_control_rows("hires_scale"),
             back_callback="pe:enh:hires",
             set_value=lambda params, value: setattr(params, "hires_scale", float(value)),
@@ -628,7 +902,13 @@ def register_prompt_editor_thematic_handlers(
             <= _control_bounds("hires_scale")[1],
             render_text=_hires_submenu_text,
             render_keyboard=_hires_submenu_kb,
-            ack_text=lambda params: f"✅ Scale: x{params.hires_scale}",
+            ack_text=lambda params: _t(
+                0,
+                "prompt_editor.thematic.hires.scale.ack",
+                "✅ Scale: x{value}",
+                telegram_locale=None,
+                params={"value": params.hires_scale},
+            ),
         )
     )
 
@@ -638,12 +918,32 @@ def register_prompt_editor_thematic_handlers(
             prefix="pe_hrd",
             custom_state=PromptEditorStates.entering_custom_hires_denoise,
             menu_text=(
-                "Hi-res Fix denoise "
-                f"({numeric_control_range_text('hires_denoise')}, "
-                "меньше = ближе к оригиналу):"
+                _t(
+                    0,
+                    "prompt_editor.thematic.hires.denoise.menu",
+                    "Hi-res Fix denoise ({range_text}, меньше = ближе к оригиналу):",
+                    telegram_locale=None,
+                    params={"range_text": numeric_control_range_text("hires_denoise")},
+                )
             ),
-            custom_prompt=(f"Hi-res denoise ({numeric_control_range_text('hires_denoise')}):"),
-            invalid_input_text=(f"Число {numeric_control_range_text('hires_denoise')}:"),
+            custom_prompt=(
+                _t(
+                    0,
+                    "prompt_editor.thematic.hires.denoise.custom_prompt",
+                    "Hi-res denoise ({range_text}):",
+                    telegram_locale=None,
+                    params={"range_text": numeric_control_range_text("hires_denoise")},
+                )
+            ),
+            invalid_input_text=(
+                _t(
+                    0,
+                    "prompt_editor.thematic.hires.denoise.invalid",
+                    "Число {range_text}:",
+                    telegram_locale=None,
+                    params={"range_text": numeric_control_range_text("hires_denoise")},
+                )
+            ),
             values_rows=numeric_control_rows("hires_denoise"),
             back_callback="pe:enh:hires",
             set_value=lambda params, value: setattr(params, "hires_denoise", float(value)),
@@ -653,7 +953,13 @@ def register_prompt_editor_thematic_handlers(
             <= _control_bounds("hires_denoise")[1],
             render_text=_hires_submenu_text,
             render_keyboard=_hires_submenu_kb,
-            ack_text=lambda params: f"✅ Hi-res denoise: {params.hires_denoise}",
+            ack_text=lambda params: _t(
+                0,
+                "prompt_editor.thematic.hires.denoise.ack",
+                "✅ Hi-res denoise: {value}",
+                telegram_locale=None,
+                params={"value": params.hires_denoise},
+            ),
         )
     )
 
@@ -666,20 +972,18 @@ def register_prompt_editor_thematic_handlers(
             return
         message, _, req = context
         status = (
-            "\u2705 \u0412\u041a\u041b"
+            _t_cb(cb, "common.status.enabled_short", "✅ ВКЛ")
             if req.params.enable_freeu
-            else "\u274c \u0412\u042b\u041a\u041b"
+            else _t_cb(cb, "common.status.disabled_short", "❌ ВЫКЛ")
         )
         toggle_text = (
-            "\u274c \u0412\u044b\u043a\u043b\u044e\u0447\u0438\u0442\u044c"
+            _t_cb(cb, "common.action.disable", "❌ Выключить")
             if req.params.enable_freeu
-            else "\u2705 \u0412\u043a\u043b\u044e\u0447\u0438\u0442\u044c"
+            else _t_cb(cb, "common.action.enable", "✅ Включить")
         )
 
         if not deps.is_freeu_supported():
-            toggle_text = (
-                "\u26a0\ufe0f \u041d\u0435\u0434\u043e\u0441\u0442\u0443\u043f\u043d\u043e"
-            )
+            toggle_text = _t_cb(cb, "common.status.unavailable", "⚠️ Недоступно")
 
         kb = InlineKeyboardMarkup(
             inline_keyboard=[
@@ -691,25 +995,25 @@ def register_prompt_editor_thematic_handlers(
                 ],
                 [
                     InlineKeyboardButton(
-                        text="\u2b05\ufe0f \u041d\u0430\u0437\u0430\u0434",
+                        text=_t_cb(cb, "common.action.back", "⬅️ Назад"),
                         callback_data="pe:sub:enhancements",
                     )
                 ],
             ]
         )
         await message.edit_text(
-            "\u26a1 <b>FreeU V2</b>\n"
-            "\n"
-            "\u0411\u0435\u0441\u043f\u043b\u0430\u0442\u043d\u043e\u0435 \u0443\u043b\u0443\u0447\u0448\u0435\u043d\u0438\u0435 \u043a\u0430\u0447\u0435\u0441\u0442\u0432\u0430 \u0431\u0435\u0437 \u0434\u043e\u043f\u043e\u043b\u043d\u0438\u0442\u0435\u043b\u044c\u043d\u043e\u0439 "
-            "\u043d\u0430\u0433\u0440\u0443\u0437\u043a\u0438. FreeU \u043f\u0430\u0442\u0447\u0438\u0442 U-Net \u043c\u043e\u0434\u0435\u043b\u044c, "
-            "\u0443\u0441\u0438\u043b\u0438\u0432\u0430\u044f \u043d\u0438\u0437\u043a\u043e\u0447\u0430\u0441\u0442\u043e\u0442\u043d\u044b\u0435 \u0434\u0435\u0442\u0430\u043b\u0438 "
-            "\u0438 \u043f\u043e\u0434\u0430\u0432\u043b\u044f\u044f \u0432\u044b\u0441\u043e\u043a\u043e\u0447\u0430\u0441\u0442\u043e\u0442\u043d\u044b\u0439 \u0448\u0443\u043c. "
-            "\u0418\u0437\u043e\u0431\u0440\u0430\u0436\u0435\u043d\u0438\u044f \u0441\u0442\u0430\u043d\u043e\u0432\u044f\u0442\u0441\u044f \u0447\u0451\u0442\u0447\u0435 \u0438 \u0434\u0435\u0442\u0430\u043b\u0438\u0437\u0438\u0440\u043e\u0432\u0430\u043d\u043d\u0435\u0435.\n"
-            "\n"
-            "\U0001f4a1 \u041d\u0435 \u0442\u0440\u0435\u0431\u0443\u0435\u0442 \u0434\u043e\u043f\u043e\u043b\u043d\u0438\u0442\u0435\u043b\u044c\u043d\u043e\u0433\u043e \u0432\u0440\u0435\u043c\u0435\u043d\u0438 "
-            "\u0438 \u043d\u0435 \u0438\u043c\u0435\u0435\u0442 \u043d\u0430\u0441\u0442\u0440\u043e\u0435\u043a \u2014 \u043f\u0440\u043e\u0441\u0442\u043e \u0432\u043a\u043b/\u0432\u044b\u043a\u043b.\n"
-            "\n"
-            f"<b>\u0421\u0442\u0430\u0442\u0443\u0441:</b> {status}",
+            _t_cb(
+                cb,
+                "prompt_editor.thematic.freeu.text",
+                "⚡ <b>FreeU V2</b>\n"
+                "\n"
+                "Бесплатное улучшение качества без дополнительной нагрузки. FreeU патчит U-Net модель, усиливая низкочастотные детали и подавляя высокочастотный шум. Изображения становятся чётче и детализированнее.\n"
+                "\n"
+                "💡 Не требует дополнительного времени и не имеет настроек — просто вкл/выкл.\n"
+                "\n"
+                "<b>Статус:</b> {status}",
+                params={"status": status},
+            ),
             reply_markup=kb,
         )
         await cb.answer()
@@ -718,7 +1022,11 @@ def register_prompt_editor_thematic_handlers(
     async def pe_toggle_freeu(cb: CallbackQuery, state: FSMContext):
         if not deps.is_freeu_supported():
             await cb.answer(
-                "\u26a0\ufe0f FreeU_V2 \u043d\u043e\u0434\u0430 \u043d\u0435 \u043d\u0430\u0439\u0434\u0435\u043d\u0430 \u043d\u0430 \u0441\u0435\u0440\u0432\u0435\u0440\u0435 ComfyUI.",
+                _t_cb(
+                    cb,
+                    "prompt_editor.thematic.freeu.error.not_supported",
+                    "⚠️ FreeU_V2 нода не найдена на сервере ComfyUI.",
+                ),
                 show_alert=True,
             )
             return
@@ -728,20 +1036,20 @@ def register_prompt_editor_thematic_handlers(
         message, uid, req = context
         req.params.enable_freeu = not req.params.enable_freeu
         status_word = (
-            "\u0432\u043a\u043b\u044e\u0447\u0435\u043d"
+            _t_cb(cb, "common.value.enabled", "включен")
             if req.params.enable_freeu
-            else "\u0432\u044b\u043a\u043b\u044e\u0447\u0435\u043d"
+            else _t_cb(cb, "common.value.disabled", "выключен")
         )
         # Re-render FreeU submenu
         status = (
-            "\u2705 \u0412\u041a\u041b"
+            _t_cb(cb, "common.status.enabled_short", "✅ ВКЛ")
             if req.params.enable_freeu
-            else "\u274c \u0412\u042b\u041a\u041b"
+            else _t_cb(cb, "common.status.disabled_short", "❌ ВЫКЛ")
         )
         toggle_text = (
-            "\u274c \u0412\u044b\u043a\u043b\u044e\u0447\u0438\u0442\u044c"
+            _t_cb(cb, "common.action.disable", "❌ Выключить")
             if req.params.enable_freeu
-            else "\u2705 \u0412\u043a\u043b\u044e\u0447\u0438\u0442\u044c"
+            else _t_cb(cb, "common.action.enable", "✅ Включить")
         )
         kb = InlineKeyboardMarkup(
             inline_keyboard=[
@@ -753,29 +1061,37 @@ def register_prompt_editor_thematic_handlers(
                 ],
                 [
                     InlineKeyboardButton(
-                        text="\u2b05\ufe0f \u041d\u0430\u0437\u0430\u0434",
+                        text=_t_cb(cb, "common.action.back", "⬅️ Назад"),
                         callback_data="pe:sub:enhancements",
                     )
                 ],
             ]
         )
         await message.edit_text(
-            "\u26a1 <b>FreeU V2</b>\n"
-            "\n"
-            "\u041f\u0430\u0442\u0447\u0438\u0442 \u043c\u043e\u0434\u0435\u043b\u044c \u0434\u043b\u044f \u0443\u043b\u0443\u0447\u0448\u0435\u043d\u0438\u044f \u0434\u0435\u0442\u0430\u043b\u0435\u0439.\n"
-            "\n"
-            f"<b>\u0421\u0442\u0430\u0442\u0443\u0441:</b> {status}",
+            _t_cb(
+                cb,
+                "prompt_editor.thematic.freeu.short_text",
+                "⚡ <b>FreeU V2</b>\n\nПатчит модель для улучшения деталей.\n\n<b>Статус:</b> {status}",
+                params={"status": status},
+            ),
             reply_markup=kb,
         )
-        await cb.answer(f"\u26a1 FreeU {status_word}")
+        await cb.answer(
+            _t_cb(
+                cb,
+                "prompt_editor.thematic.freeu.toggled",
+                "⚡ FreeU {status}",
+                params={"status": status_word},
+            )
+        )
 
     # --- PAG submenu ---
 
     def _pag_submenu_kb(params: GenerationParams) -> InlineKeyboardMarkup:
         toggle_text = (
-            "\u274c \u0412\u044b\u043a\u043b\u044e\u0447\u0438\u0442\u044c"
+            _t(0, "common.action.disable", "❌ Выключить", telegram_locale=None)
             if params.enable_pag
-            else "\u2705 \u0412\u043a\u043b\u044e\u0447\u0438\u0442\u044c"
+            else _t(0, "common.action.enable", "✅ Включить", telegram_locale=None)
         )
         rows = [
             [
@@ -789,7 +1105,13 @@ def register_prompt_editor_thematic_handlers(
             rows.append(
                 [
                     InlineKeyboardButton(
-                        text=f"Scale: {params.pag_scale}",
+                        text=_t(
+                            0,
+                            "prompt_editor.thematic.pag.button.scale",
+                            "Scale: {value}",
+                            telegram_locale=None,
+                            params={"value": params.pag_scale},
+                        ),
                         callback_data="pe:pag:scale",
                     ),
                 ]
@@ -797,7 +1119,7 @@ def register_prompt_editor_thematic_handlers(
         rows.append(
             [
                 InlineKeyboardButton(
-                    text="\u2b05\ufe0f \u041d\u0430\u0437\u0430\u0434",
+                    text=_t(0, "common.action.back", "⬅️ Назад", telegram_locale=None),
                     callback_data="pe:sub:enhancements",
                 )
             ]
@@ -806,22 +1128,24 @@ def register_prompt_editor_thematic_handlers(
 
     def _pag_submenu_text(params: GenerationParams) -> str:
         status = (
-            "\u2705 \u0412\u041a\u041b" if params.enable_pag else "\u274c \u0412\u042b\u041a\u041b"
+            _t(0, "common.status.enabled_short", "✅ ВКЛ", telegram_locale=None)
+            if params.enable_pag
+            else _t(0, "common.status.disabled_short", "❌ ВЫКЛ", telegram_locale=None)
         )
-        return (
-            "\U0001f3af <b>PAG (Perturbed-Attention Guidance)</b>\n"
+        return _t(
+            0,
+            "prompt_editor.thematic.pag.text",
+            "🎯 <b>PAG (Perturbed-Attention Guidance)</b>\n"
             "\n"
-            "\u0423\u043b\u0443\u0447\u0448\u0430\u0435\u0442 \u0441\u043b\u0435\u0434\u043e\u0432\u0430\u043d\u0438\u0435 \u043f\u0440\u043e\u043c\u043f\u0442\u0443 "
-            "\u0431\u0435\u0437 \u043f\u043e\u0432\u044b\u0448\u0435\u043d\u0438\u044f CFG, \u0437\u0430 \u0441\u0447\u0451\u0442 \u043f\u0435\u0440\u0442\u0443\u0440\u0431\u0430\u0446\u0438\u0438 "
-            "\u043a\u0430\u0440\u0442 \u0432\u043d\u0438\u043c\u0430\u043d\u0438\u044f (self-attention). \u041f\u043e\u043c\u043e\u0433\u0430\u0435\u0442 \u043f\u043e\u043b\u0443\u0447\u0438\u0442\u044c "
-            "\u0431\u043e\u043b\u0435\u0435 \u0442\u043e\u0447\u043d\u0443\u044e \u043a\u043e\u043c\u043f\u043e\u0437\u0438\u0446\u0438\u044e \u0438 \u0434\u0435\u0442\u0430\u043b\u0438.\n"
+            "Улучшает следование промпту без повышения CFG, за счёт пертурбации карт внимания (self-attention). Помогает получить более точную композицию и детали.\n"
             "\n"
-            "\u2022 <b>Scale</b> \u2014 \u0441\u0438\u043b\u0430 \u044d\u0444\u0444\u0435\u043a\u0442\u0430 (1\u20143 \u043c\u044f\u0433\u043a\u043e, "
-            "3\u20145 \u0443\u043c\u0435\u0440\u0435\u043d\u043d\u043e, 5+ \u0430\u0433\u0440\u0435\u0441\u0441\u0438\u0432\u043d\u043e)\n"
-            "\u26a0\ufe0f \u041d\u0435\u0437\u043d\u0430\u0447\u0438\u0442\u0435\u043b\u044c\u043d\u043e \u0443\u0432\u0435\u043b\u0438\u0447\u0438\u0432\u0430\u0435\u0442 \u0432\u0440\u0435\u043c\u044f \u0433\u0435\u043d\u0435\u0440\u0430\u0446\u0438\u0438.\n"
+            "• <b>Scale</b> — сила эффекта (1–3 мягко, 3–5 умеренно, 5+ агрессивно)\n"
+            "⚠️ Незначительно увеличивает время генерации.\n"
             "\n"
-            f"<b>\u0421\u0442\u0430\u0442\u0443\u0441:</b> {status}\n"
-            f"<b>Scale:</b> {params.pag_scale}"
+            "<b>Статус:</b> {status}\n"
+            "<b>Scale:</b> {scale}",
+            telegram_locale=None,
+            params={"status": status, "scale": params.pag_scale},
         )
 
     @router.callback_query(F.data == "pe:enh:pag")
@@ -836,15 +1160,18 @@ def register_prompt_editor_thematic_handlers(
                 inline_keyboard=[
                     [
                         InlineKeyboardButton(
-                            text="\u2b05\ufe0f \u041d\u0430\u0437\u0430\u0434",
+                            text=_t_cb(cb, "common.action.back", "⬅️ Назад"),
                             callback_data="pe:sub:enhancements",
                         )
                     ]
                 ]
             )
             await message.edit_text(
-                "\U0001f3af <b>PAG</b>\n\n"
-                "\u26a0\ufe0f PerturbedAttentionGuidance \u043d\u043e\u0434\u0430 \u043d\u0435 \u043d\u0430\u0439\u0434\u0435\u043d\u0430 \u043d\u0430 \u0441\u0435\u0440\u0432\u0435\u0440\u0435.",
+                _t_cb(
+                    cb,
+                    "prompt_editor.thematic.pag.not_supported.text",
+                    "🎯 <b>PAG</b>\n\n⚠️ PerturbedAttentionGuidance нода не найдена на сервере.",
+                ),
                 reply_markup=kb,
             )
             await cb.answer()
@@ -860,7 +1187,11 @@ def register_prompt_editor_thematic_handlers(
     async def pe_toggle_pag(cb: CallbackQuery, state: FSMContext):
         if not deps.is_pag_supported():
             await cb.answer(
-                "\u26a0\ufe0f PerturbedAttentionGuidance \u043d\u043e\u0434\u0430 \u043d\u0435 \u043d\u0430\u0439\u0434\u0435\u043d\u0430 \u043d\u0430 \u0441\u0435\u0440\u0432\u0435\u0440\u0435.",
+                _t_cb(
+                    cb,
+                    "prompt_editor.thematic.pag.error.not_supported",
+                    "⚠️ PerturbedAttentionGuidance нода не найдена на сервере.",
+                ),
                 show_alert=True,
             )
             return
@@ -870,24 +1201,55 @@ def register_prompt_editor_thematic_handlers(
         message, _, req = context
         req.params.enable_pag = not req.params.enable_pag
         status_word = (
-            "\u0432\u043a\u043b\u044e\u0447\u0435\u043d"
+            _t_cb(cb, "common.value.enabled", "включен")
             if req.params.enable_pag
-            else "\u0432\u044b\u043a\u043b\u044e\u0447\u0435\u043d"
+            else _t_cb(cb, "common.value.disabled", "выключен")
         )
         await message.edit_text(
             _pag_submenu_text(req.params),
             reply_markup=_pag_submenu_kb(req.params),
         )
-        await cb.answer(f"\U0001f3af PAG {status_word}")
+        await cb.answer(
+            _t_cb(
+                cb,
+                "prompt_editor.thematic.pag.toggled",
+                "🎯 PAG {status}",
+                params={"status": status_word},
+            )
+        )
 
     _register_scalar_param(
         ThematicScalarConfig(
             open_callback="pe:pag:scale",
             prefix="pe_pag",
             custom_state=PromptEditorStates.entering_custom_pag_scale,
-            menu_text=(f"PAG Scale ({numeric_control_range_text('pag_scale')}):"),
-            custom_prompt=(f"PAG Scale ({numeric_control_range_text('pag_scale')}):"),
-            invalid_input_text=(f"Число {numeric_control_range_text('pag_scale')}:"),
+            menu_text=(
+                _t(
+                    0,
+                    "prompt_editor.thematic.pag.scale.menu",
+                    "PAG Scale ({range_text}):",
+                    telegram_locale=None,
+                    params={"range_text": numeric_control_range_text("pag_scale")},
+                )
+            ),
+            custom_prompt=(
+                _t(
+                    0,
+                    "prompt_editor.thematic.pag.scale.custom_prompt",
+                    "PAG Scale ({range_text}):",
+                    telegram_locale=None,
+                    params={"range_text": numeric_control_range_text("pag_scale")},
+                )
+            ),
+            invalid_input_text=(
+                _t(
+                    0,
+                    "prompt_editor.thematic.pag.scale.invalid",
+                    "Число {range_text}:",
+                    telegram_locale=None,
+                    params={"range_text": numeric_control_range_text("pag_scale")},
+                )
+            ),
             values_rows=numeric_control_rows("pag_scale"),
             back_callback="pe:enh:pag",
             set_value=lambda params, value: setattr(params, "pag_scale", float(value)),
@@ -897,7 +1259,13 @@ def register_prompt_editor_thematic_handlers(
             <= _control_bounds("pag_scale")[1],
             render_text=_pag_submenu_text,
             render_keyboard=_pag_submenu_kb,
-            ack_text=lambda params: f"✅ PAG scale: {params.pag_scale}",
+            ack_text=lambda params: _t(
+                0,
+                "prompt_editor.thematic.pag.scale.ack",
+                "✅ PAG scale: {value}",
+                telegram_locale=None,
+                params={"value": params.pag_scale},
+            ),
         )
     )
 
@@ -910,12 +1278,20 @@ def register_prompt_editor_thematic_handlers(
             return
         message, _, req = context
         model = req.params.upscale_model
-        status = f"\u2705 {h(truncate(model, 30))}" if model else "\u274c \u0412\u042b\u041a\u041b"
+        status = (
+            f"✅ {h(truncate(model, 30))}"
+            if model
+            else _t_cb(cb, "common.status.disabled_short", "❌ ВЫКЛ")
+        )
 
         rows = [
             [
                 InlineKeyboardButton(
-                    text="\U0001f50d \u0412\u044b\u0431\u0440\u0430\u0442\u044c \u043c\u043e\u0434\u0435\u043b\u044c",
+                    text=_t_cb(
+                        cb,
+                        "prompt_editor.thematic.upscaler.button.select",
+                        "🔍 Выбрать модель",
+                    ),
                     callback_data="pe:edit:upscaler",
                 ),
             ],
@@ -924,7 +1300,7 @@ def register_prompt_editor_thematic_handlers(
             rows.append(
                 [
                     InlineKeyboardButton(
-                        text="\u274c \u041e\u0442\u043a\u043b\u044e\u0447\u0438\u0442\u044c",
+                        text=_t_cb(cb, "common.action.disable", "❌ Отключить"),
                         callback_data="pe:upsc:off",
                     ),
                 ]
@@ -932,7 +1308,7 @@ def register_prompt_editor_thematic_handlers(
         rows.append(
             [
                 InlineKeyboardButton(
-                    text="\u2b05\ufe0f \u041d\u0430\u0437\u0430\u0434",
+                    text=_t_cb(cb, "common.action.back", "⬅️ Назад"),
                     callback_data="pe:sub:enhancements",
                 )
             ]
@@ -940,18 +1316,19 @@ def register_prompt_editor_thematic_handlers(
 
         kb = InlineKeyboardMarkup(inline_keyboard=rows)
         await message.edit_text(
-            "\U0001f50d <b>Upscaler</b>\n"
-            "\n"
-            "\u0423\u0432\u0435\u043b\u0438\u0447\u0438\u0432\u0430\u0435\u0442 \u0440\u0430\u0437\u0440\u0435\u0448\u0435\u043d\u0438\u0435 \u0433\u043e\u0442\u043e\u0432\u043e\u0439 \u043a\u0430\u0440\u0442\u0438\u043d\u043a\u0438 "
-            "\u0441 \u043f\u043e\u043c\u043e\u0449\u044c\u044e \u043d\u0435\u0439\u0440\u043e\u0441\u0435\u0442\u0438. \u0412 \u043e\u0442\u043b\u0438\u0447\u0438\u0435 \u043e\u0442 Hi-res Fix, "
-            "\u043d\u0435 \u0434\u043e\u0431\u0430\u0432\u043b\u044f\u0435\u0442 \u043d\u043e\u0432\u044b\u0445 \u0434\u0435\u0442\u0430\u043b\u0435\u0439, \u0430 \u0438\u043d\u0442\u0435\u043b\u043b\u0435\u043a\u0442\u0443\u0430\u043b\u044c\u043d\u043e "
-            "\u043c\u0430\u0441\u0448\u0442\u0430\u0431\u0438\u0440\u0443\u0435\u0442 \u0441\u0443\u0449\u0435\u0441\u0442\u0432\u0443\u044e\u0449\u0438\u0435.\n"
-            "\n"
-            "\U0001f4a1 \u041f\u043e\u0434\u0445\u043e\u0434\u0438\u0442 \u0434\u043b\u044f \u0431\u044b\u0441\u0442\u0440\u043e\u0433\u043e \u0443\u0432\u0435\u043b\u0438\u0447\u0435\u043d\u0438\u044f \u0440\u0430\u0437\u0440\u0435\u0448\u0435\u043d\u0438\u044f, "
-            "\u043a\u043e\u0433\u0434\u0430 \u043d\u0435 \u043d\u0443\u0436\u043d\u0430 \u0434\u043e\u0440\u0438\u0441\u043e\u0432\u043a\u0430.\n"
-            "\u26a0\ufe0f \u0423\u0432\u0435\u043b\u0438\u0447\u0438\u0432\u0430\u0435\u0442 \u0432\u0440\u0435\u043c\u044f \u0433\u0435\u043d\u0435\u0440\u0430\u0446\u0438\u0438.\n"
-            "\n"
-            f"<b>\u041c\u043e\u0434\u0435\u043b\u044c:</b> {status}",
+            _t_cb(
+                cb,
+                "prompt_editor.thematic.upscaler.text",
+                "🔍 <b>Upscaler</b>\n"
+                "\n"
+                "Увеличивает разрешение готовой картинки с помощью нейросети. В отличие от Hi-res Fix, не добавляет новых деталей, а интеллектуально масштабирует существующие.\n"
+                "\n"
+                "💡 Подходит для быстрого увеличения разрешения, когда не нужна дорисовка.\n"
+                "⚠️ Увеличивает время генерации.\n"
+                "\n"
+                "<b>Модель:</b> {status}",
+                params={"status": status},
+            ),
             reply_markup=kb,
         )
         await cb.answer()
@@ -968,7 +1345,11 @@ def register_prompt_editor_thematic_handlers(
             state,
             uid,
             edit=True,
-            notice="\u2705 Upscaler \u043e\u0442\u043a\u043b\u044e\u0447\u0435\u043d.",
+            notice=_t_cb(
+                cb,
+                "prompt_editor.thematic.upscaler.notice.disabled",
+                "✅ Upscaler отключен.",
+            ),
         )
         await cb.answer()
 
@@ -976,9 +1357,9 @@ def register_prompt_editor_thematic_handlers(
 
     def _tiled_submenu_kb(params: GenerationParams) -> InlineKeyboardMarkup:
         toggle_text = (
-            "\u274c \u0412\u044b\u043a\u043b\u044e\u0447\u0438\u0442\u044c"
+            _t(0, "common.action.disable", "❌ Выключить", telegram_locale=None)
             if params.enable_tiled_diffusion
-            else "\u2705 \u0412\u043a\u043b\u044e\u0447\u0438\u0442\u044c"
+            else _t(0, "common.action.enable", "✅ Включить", telegram_locale=None)
         )
 
         rows = [
@@ -994,17 +1375,35 @@ def register_prompt_editor_thematic_handlers(
                 [
                     [
                         InlineKeyboardButton(
-                            text=f"\U0001f9e9 Tile Size: {params.tile_size}",
+                            text=_t(
+                                0,
+                                "prompt_editor.thematic.tiled.button.tile_size",
+                                "🧩 Tile Size: {value}",
+                                telegram_locale=None,
+                                params={"value": params.tile_size},
+                            ),
                             callback_data="pe:tiled:tile_size",
                         ),
                     ],
                     [
                         InlineKeyboardButton(
-                            text=f"\U0001f5bc VAE Tile: {params.vae_tile_size}",
+                            text=_t(
+                                0,
+                                "prompt_editor.thematic.tiled.button.vae_tile",
+                                "🖼 VAE Tile: {value}",
+                                telegram_locale=None,
+                                params={"value": params.vae_tile_size},
+                            ),
                             callback_data="pe:tiled:vae_tile",
                         ),
                         InlineKeyboardButton(
-                            text=f"\U0001f300 Overlap: {params.tile_overlap}",
+                            text=_t(
+                                0,
+                                "prompt_editor.thematic.tiled.button.overlap",
+                                "🌀 Overlap: {value}",
+                                telegram_locale=None,
+                                params={"value": params.tile_overlap},
+                            ),
                             callback_data="pe:tiled:overlap",
                         ),
                     ],
@@ -1013,7 +1412,7 @@ def register_prompt_editor_thematic_handlers(
         rows.append(
             [
                 InlineKeyboardButton(
-                    text="\u2b05\ufe0f \u041d\u0430\u0437\u0430\u0434",
+                    text=_t(0, "common.action.back", "⬅️ Назад", telegram_locale=None),
                     callback_data="pe:sub:enhancements",
                 )
             ]
@@ -1022,33 +1421,37 @@ def register_prompt_editor_thematic_handlers(
 
     def _tiled_submenu_text(params: GenerationParams) -> str:
         status = (
-            "\u2705 \u0412\u041a\u041b"
+            _t(0, "common.status.enabled_short", "✅ ВКЛ", telegram_locale=None)
             if params.enable_tiled_diffusion
-            else "\u274c \u0412\u042b\u041a\u041b"
+            else _t(0, "common.status.disabled_short", "❌ ВЫКЛ", telegram_locale=None)
         )
-        lines = [
-            "\U0001f9e9 <b>HyperTile + Tiled VAE</b>\n",
-            "\u0420\u0430\u0437\u0431\u0438\u0432\u0430\u0435\u0442 \u0433\u0435\u043d\u0435\u0440\u0430\u0446\u0438\u044e \u043d\u0430 \u0442\u0430\u0439\u043b\u044b, "
-            "\u043f\u043e\u0437\u0432\u043e\u043b\u044f\u044f \u044d\u0444\u0444\u0435\u043a\u0442\u0438\u0432\u043d\u043e \u0433\u0435\u043d\u0435\u0440\u0438\u0440\u043e\u0432\u0430\u0442\u044c "
-            "\u0438\u0437\u043e\u0431\u0440\u0430\u0436\u0435\u043d\u0438\u044f \u0431\u043e\u043b\u044c\u0448\u043e\u0433\u043e \u0440\u0430\u0437\u043c\u0435\u0440\u0430 "
-            "\u0441 \u043c\u0435\u043d\u044c\u0448\u0438\u043c \u0440\u0430\u0441\u0445\u043e\u0434\u043e\u043c VRAM.\n",
-            "\n",
-        ]
+        details = ""
         if params.enable_tiled_diffusion:
-            lines.append(
-                f"<b>Tile Size:</b> <code>{params.tile_size}</code>  "
-                f"<b>VAE Tile:</b> <code>{params.vae_tile_size}</code>  "
-                f"<b>Overlap:</b> <code>{params.tile_overlap}</code>\n"
+            details = _t(
+                0,
+                "prompt_editor.thematic.tiled.details",
+                "<b>Tile Size:</b> <code>{tile_size}</code>  <b>VAE Tile:</b> <code>{vae_tile}</code>  <b>Overlap:</b> <code>{overlap}</code>\n",
+                telegram_locale=None,
+                params={
+                    "tile_size": params.tile_size,
+                    "vae_tile": params.vae_tile_size,
+                    "overlap": params.tile_overlap,
+                },
             )
-        lines.append(
+        return _t(
+            0,
+            "prompt_editor.thematic.tiled.text",
+            "🧩 <b>HyperTile + Tiled VAE</b>\n"
+            "Разбивает генерацию на тайлы, позволяя эффективно генерировать изображения большого размера с меньшим расходом VRAM.\n"
             "\n"
-            "\U0001f4a1 \u0418\u0441\u043f\u043e\u043b\u044c\u0437\u0443\u0435\u0442 \u0432\u0441\u0442\u0440\u043e\u0435\u043d\u043d\u044b\u0435 \u043d\u043e\u0434\u044b "
-            "HyperTile + VAE Tiled \u2014 \u043d\u0438\u043a\u0430\u043a\u0438\u0445 "
-            "\u0440\u0430\u0441\u0448\u0438\u0440\u0435\u043d\u0438\u0439 \u043d\u0435 \u0442\u0440\u0435\u0431\u0443\u0435\u0442\u0441\u044f.\n"
+            "{details}"
             "\n"
-            f"<b>\u0421\u0442\u0430\u0442\u0443\u0441:</b> {status}"
+            "💡 Использует встроенные ноды HyperTile + VAE Tiled — никаких расширений не требуется.\n"
+            "\n"
+            "<b>Статус:</b> {status}",
+            telegram_locale=None,
+            params={"details": details, "status": status},
         )
-        return "".join(lines)
 
     @router.callback_query(F.data == "pe:enh:tiled")
     async def pe_enh_tiled(cb: CallbackQuery):
@@ -1066,7 +1469,11 @@ def register_prompt_editor_thematic_handlers(
     async def pe_toggle_tiled(cb: CallbackQuery, state: FSMContext):
         if not deps.is_tiled_diffusion_supported():
             await cb.answer(
-                "\u26a0\ufe0f HyperTile \u043d\u043e\u0434\u0430 \u043d\u0435 \u043d\u0430\u0439\u0434\u0435\u043d\u0430 \u043d\u0430 \u0441\u0435\u0440\u0432\u0435\u0440\u0435 ComfyUI.",
+                _t_cb(
+                    cb,
+                    "prompt_editor.thematic.tiled.error.not_supported",
+                    "⚠️ HyperTile нода не найдена на сервере ComfyUI.",
+                ),
                 show_alert=True,
             )
             return
@@ -1076,15 +1483,22 @@ def register_prompt_editor_thematic_handlers(
         message, _, req = context
         req.params.enable_tiled_diffusion = not req.params.enable_tiled_diffusion
         status_word = (
-            "\u0432\u043a\u043b\u044e\u0447\u0435\u043d"
+            _t_cb(cb, "common.value.enabled", "включен")
             if req.params.enable_tiled_diffusion
-            else "\u0432\u044b\u043a\u043b\u044e\u0447\u0435\u043d"
+            else _t_cb(cb, "common.value.disabled", "выключен")
         )
         await message.edit_text(
             _tiled_submenu_text(req.params),
             reply_markup=_tiled_submenu_kb(req.params),
         )
-        await cb.answer(f"\U0001f9e9 HyperTile {status_word}")
+        await cb.answer(
+            _t_cb(
+                cb,
+                "prompt_editor.thematic.tiled.toggled",
+                "🧩 HyperTile {status}",
+                params={"status": status_word},
+            )
+        )
 
     _register_scalar_param(
         ThematicScalarConfig(
@@ -1092,12 +1506,25 @@ def register_prompt_editor_thematic_handlers(
             prefix="pe_ts",
             custom_state=PromptEditorStates.entering_custom_tile_size,
             menu_text=(
-                "🧩 <b>Tile Size</b>\n\n"
-                "Размер тайла для HyperTile. Меньше = быстрее, больше = качественнее.\n\n"
-                "💡 Рекомендуется: 256."
+                _t(
+                    0,
+                    "prompt_editor.thematic.tiled.tile_size.menu",
+                    "🧩 <b>Tile Size</b>\n\nРазмер тайла для HyperTile. Меньше = быстрее, больше = качественнее.\n\n💡 Рекомендуется: 256.",
+                    telegram_locale=None,
+                )
             ),
-            custom_prompt="Tile Size (64-1024):",
-            invalid_input_text="Целое число 64-1024:",
+            custom_prompt=_t(
+                0,
+                "prompt_editor.thematic.tiled.tile_size.custom_prompt",
+                "Tile Size (64-1024):",
+                telegram_locale=None,
+            ),
+            invalid_input_text=_t(
+                0,
+                "prompt_editor.thematic.tiled.tile_size.invalid",
+                "Целое число 64-1024:",
+                telegram_locale=None,
+            ),
             values_rows=[["128", "192", "256"], ["384", "512", "768"]],
             back_callback="pe:enh:tiled",
             set_value=lambda params, value: setattr(params, "tile_size", int(value)),
@@ -1105,7 +1532,13 @@ def register_prompt_editor_thematic_handlers(
             validate_value=lambda value: 64 <= int(value) <= 1024,
             render_text=_tiled_submenu_text,
             render_keyboard=_tiled_submenu_kb,
-            ack_text=lambda params: f"Tile Size: {params.tile_size}",
+            ack_text=lambda params: _t(
+                0,
+                "prompt_editor.thematic.tiled.tile_size.ack",
+                "Tile Size: {value}",
+                telegram_locale=None,
+                params={"value": params.tile_size},
+            ),
         )
     )
 
@@ -1115,12 +1548,25 @@ def register_prompt_editor_thematic_handlers(
             prefix="pe_vt",
             custom_state=PromptEditorStates.entering_custom_vae_tile_size,
             menu_text=(
-                "🖼 <b>VAE Tile Size</b>\n\n"
-                "Размер тайла для VAE encode/decode.\n\n"
-                "💡 Рекомендуется: 512."
+                _t(
+                    0,
+                    "prompt_editor.thematic.tiled.vae_tile.menu",
+                    "🖼 <b>VAE Tile Size</b>\n\nРазмер тайла для VAE encode/decode.\n\n💡 Рекомендуется: 512.",
+                    telegram_locale=None,
+                )
             ),
-            custom_prompt="VAE Tile Size (128-4096):",
-            invalid_input_text="Целое число 128-4096:",
+            custom_prompt=_t(
+                0,
+                "prompt_editor.thematic.tiled.vae_tile.custom_prompt",
+                "VAE Tile Size (128-4096):",
+                telegram_locale=None,
+            ),
+            invalid_input_text=_t(
+                0,
+                "prompt_editor.thematic.tiled.vae_tile.invalid",
+                "Целое число 128-4096:",
+                telegram_locale=None,
+            ),
             values_rows=[["256", "384", "512"], ["768", "1024", "2048"]],
             back_callback="pe:enh:tiled",
             set_value=lambda params, value: setattr(params, "vae_tile_size", int(value)),
@@ -1128,7 +1574,13 @@ def register_prompt_editor_thematic_handlers(
             validate_value=lambda value: 128 <= int(value) <= 4096,
             render_text=_tiled_submenu_text,
             render_keyboard=_tiled_submenu_kb,
-            ack_text=lambda params: f"VAE Tile: {params.vae_tile_size}",
+            ack_text=lambda params: _t(
+                0,
+                "prompt_editor.thematic.tiled.vae_tile.ack",
+                "VAE Tile: {value}",
+                telegram_locale=None,
+                params={"value": params.vae_tile_size},
+            ),
         )
     )
 
@@ -1138,12 +1590,25 @@ def register_prompt_editor_thematic_handlers(
             prefix="pe_tovlp",
             custom_state=PromptEditorStates.entering_custom_tile_overlap,
             menu_text=(
-                "🌀 <b>Overlap</b>\n\n"
-                "Перекрытие между тайлами VAE. Больше = меньше швов, но медленнее.\n\n"
-                "💡 Рекомендуется: 64."
+                _t(
+                    0,
+                    "prompt_editor.thematic.tiled.overlap.menu",
+                    "🌀 <b>Overlap</b>\n\nПерекрытие между тайлами VAE. Больше = меньше швов, но медленнее.\n\n💡 Рекомендуется: 64.",
+                    telegram_locale=None,
+                )
             ),
-            custom_prompt="Tile Overlap (0-2048):",
-            invalid_input_text="Целое число 0-2048:",
+            custom_prompt=_t(
+                0,
+                "prompt_editor.thematic.tiled.overlap.custom_prompt",
+                "Tile Overlap (0-2048):",
+                telegram_locale=None,
+            ),
+            invalid_input_text=_t(
+                0,
+                "prompt_editor.thematic.tiled.overlap.invalid",
+                "Целое число 0-2048:",
+                telegram_locale=None,
+            ),
             values_rows=[["32", "48", "64"], ["96", "128", "256"]],
             back_callback="pe:enh:tiled",
             set_value=lambda params, value: setattr(params, "tile_overlap", int(value)),
@@ -1151,6 +1616,12 @@ def register_prompt_editor_thematic_handlers(
             validate_value=lambda value: 0 <= int(value) <= 2048,
             render_text=_tiled_submenu_text,
             render_keyboard=_tiled_submenu_kb,
-            ack_text=lambda params: f"Overlap: {params.tile_overlap}",
+            ack_text=lambda params: _t(
+                0,
+                "prompt_editor.thematic.tiled.overlap.ack",
+                "Overlap: {value}",
+                telegram_locale=None,
+                params={"value": params.tile_overlap},
+            ),
         )
     )

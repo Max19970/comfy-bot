@@ -7,7 +7,7 @@ from handlers.prompt_editor_enhancements import enhancements_count, enhancements
 def test_enhancements_count_and_label_zero() -> None:
     params = GenerationParams()
     assert enhancements_count(params) == 0
-    assert enhancements_menu_label(params) == "✨ Улучшения"
+    assert enhancements_menu_label(params) == "✨ Enhancements"
 
 
 def test_enhancements_count_and_label_non_zero() -> None:
@@ -19,4 +19,4 @@ def test_enhancements_count_and_label_non_zero() -> None:
         enable_tiled_diffusion=True,
     )
     assert enhancements_count(params) == 5
-    assert enhancements_menu_label(params) == "✨ Улучшения (5)"
+    assert enhancements_menu_label(params) == "✨ Enhancements (5)"

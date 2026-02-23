@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import re
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -70,23 +70,49 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
     async def _callback_message(cb: CallbackQuery) -> Message | None:
         return await require_callback_message(cb)
 
-    def _service_back_keyboard() -> InlineKeyboardMarkup:
+    def _service_back_keyboard(*, locale: str | None) -> InlineKeyboardMarkup:
+        back_label = deps.localization.t(
+            "common.menu.back_to_service",
+            locale=locale,
+            default="⬅️ Сервис",
+        )
+        root_label = deps.localization.t(
+            "common.menu.root",
+            locale=locale,
+            default="🏠 В меню",
+        )
         return build_keyboard(
             [
-                [back_button("menu:service", text="⬅️ Сервис")],
-                [menu_root_button()],
+                [back_button("menu:service", text=back_label)],
+                [menu_root_button(text=root_label)],
             ]
         )
 
-    def _models_back_keyboard() -> InlineKeyboardMarkup:
+    def _models_back_keyboard(*, locale: str | None) -> InlineKeyboardMarkup:
+        back_label = deps.localization.t(
+            "common.menu.back_to_models",
+            locale=locale,
+            default="⬅️ Модели",
+        )
+        root_label = deps.localization.t(
+            "common.menu.root",
+            locale=locale,
+            default="🏠 В меню",
+        )
         return build_keyboard(
             [
-                [back_button("menu:models", text="⬅️ Модели")],
-                [menu_root_button()],
+                [back_button("menu:models", text=back_label)],
+                [menu_root_button(text=root_label)],
             ]
         )
 
-    def _training_keyboard(*, page: int, total: int, mode: str) -> InlineKeyboardMarkup:
+    def _training_keyboard(
+        *,
+        page: int,
+        total: int,
+        mode: str,
+        locale: str,
+    ) -> InlineKeyboardMarkup:
         rows: list[list[InlineKeyboardButton]] = []
         nav: list[InlineKeyboardButton] = []
         if page > 0:
@@ -98,43 +124,127 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
         rows.append(
             [
                 button(
-                    ("✅ Простой" if mode == "simple" else "Простой"),
+                    deps.localization.t(
+                        "common.training.mode.simple_selected"
+                        if mode == "simple"
+                        else "common.training.mode.simple",
+                        locale=locale,
+                        default=("✅ Простой" if mode == "simple" else "Простой"),
+                    ),
                     "menu:training:mode:simple",
                 ),
                 button(
-                    ("✅ Расширенный" if mode == "advanced" else "Расширенный"),
+                    deps.localization.t(
+                        "common.training.mode.advanced_selected"
+                        if mode == "advanced"
+                        else "common.training.mode.advanced",
+                        locale=locale,
+                        default=("✅ Расширенный" if mode == "advanced" else "Расширенный"),
+                    ),
                     "menu:training:mode:advanced",
                 ),
             ]
         )
-        rows.append([back_button("menu:service", text="⬅️ Сервис")])
-        rows.append([menu_root_button()])
+        rows.append(
+            [
+                back_button(
+                    "menu:service",
+                    text=deps.localization.t(
+                        "common.menu.back_to_service",
+                        locale=locale,
+                        default="⬅️ Сервис",
+                    ),
+                )
+            ]
+        )
+        rows.append(
+            [
+                menu_root_button(
+                    text=deps.localization.t(
+                        "common.menu.root",
+                        locale=locale,
+                        default="🏠 В меню",
+                    )
+                )
+            ]
+        )
         return build_keyboard(rows)
 
-    async def _show_training(message: Message, uid: int, *, page: int | None = None) -> None:
+    async def _show_training(
+        message: Message,
+        uid: int,
+        *,
+        page: int | None = None,
+        telegram_locale: str | None,
+    ) -> None:
         pages = training_pages()
+        advanced_pages = training_advanced()
         mode = get_training_mode(deps.runtime, uid)
+        locale = _resolved_locale(uid, telegram_locale=telegram_locale)
         total = len(pages)
         current_page = get_training_page(deps.runtime, uid) if page is None else page
         current_page = max(0, min(current_page, total - 1))
         set_training_page(deps.runtime, uid, current_page)
 
-        title, simple_text = pages[current_page]
+        default_title, default_simple_text = pages[current_page]
+        default_advanced_text = (
+            advanced_pages[current_page] if current_page < len(advanced_pages) else ""
+        )
+        page_key = f"common.training.page.{current_page + 1}"
+        title = deps.localization.t(
+            f"{page_key}.title",
+            locale=locale,
+            default=default_title,
+        )
+        simple_text = deps.localization.t(
+            f"{page_key}.simple",
+            locale=locale,
+            default=default_simple_text,
+        )
+        advanced_text = deps.localization.t(
+            f"{page_key}.advanced",
+            locale=locale,
+            default=default_advanced_text,
+        )
         lines = [
-            "🎓 <b>Обучение ComfyBot</b>",
-            f"<b>Тема:</b> {deps.h(title)}",
+            deps.localization.t(
+                "common.training.title",
+                locale=locale,
+                default="🎓 <b>Обучение ComfyBot</b>",
+            ),
+            deps.localization.t(
+                "common.training.topic_label",
+                locale=locale,
+                default="<b>Тема:</b>",
+            )
+            + f" {deps.h(title)}",
             "",
             simple_text,
         ]
         if mode == "advanced":
-            lines.extend(["", "<b>Подробно:</b>", training_advanced()[current_page]])
+            lines.extend(
+                [
+                    "",
+                    deps.localization.t(
+                        "common.training.details_label",
+                        locale=locale,
+                        default="<b>Подробно:</b>",
+                    ),
+                    advanced_text,
+                ]
+            )
 
         await deps.render_user_panel(
             message,
             deps.runtime,
             uid,
             "\n".join(lines),
-            reply_markup=_training_keyboard(page=current_page, total=total, mode=mode),
+            reply_markup=_training_keyboard(
+                page=current_page,
+                total=total,
+                mode=mode,
+                locale=locale,
+            ),
         )
 
     def _gen_defaults(uid: int) -> dict[str, Any]:
@@ -179,10 +289,54 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
             telegram_locale=telegram_locale,
         )
 
+    def _t(
+        uid: int,
+        key: str,
+        default: str,
+        *,
+        telegram_locale: str | None,
+        params: Mapping[str, object] | None = None,
+    ) -> str:
+        locale = _resolved_locale(uid, telegram_locale=telegram_locale)
+        return deps.localization.t(
+            key,
+            locale=locale,
+            params=params,
+            default=default,
+        )
+
+    def _alert_from_parse_error(
+        uid: int,
+        error: SettingsParseError,
+        *,
+        telegram_locale: str | None,
+        fallback: str = "⚠️ Некорректный параметр.",
+    ) -> str:
+        raw = str(error or "").strip()
+        if "." in raw:
+            return _t(
+                uid,
+                raw,
+                fallback,
+                telegram_locale=telegram_locale,
+            )
+        if raw:
+            return raw
+        return _t(
+            uid,
+            "common.alert.invalid_param",
+            fallback,
+            telegram_locale=telegram_locale,
+        )
+
     def _locale_label(locale: str) -> str:
         locale_code = normalize_locale_code(locale, default="")
         if not locale_code:
-            return "Unknown"
+            return deps.localization.t(
+                "common.locale.unknown",
+                locale=deps.localization.default_locale(),
+                default="Unknown",
+            )
         localized_name = deps.localization.t(
             "system.language_name",
             locale=locale_code,
@@ -204,6 +358,7 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
         *,
         telegram_locale: str | None,
     ) -> None:
+        locale = _resolved_locale(uid, telegram_locale=telegram_locale)
         current_locale = _resolved_locale(uid, telegram_locale=telegram_locale)
         selected_locale = read_user_locale(
             deps.runtime.user_preferences.get(uid, {}),
@@ -223,23 +378,64 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
             ]
             for locale_code in deps.localization.available_locales()
         ]
-        rows.append([InlineKeyboardButton(text="⬅️ К настройкам", callback_data="menu:settings")])
-        rows.append([InlineKeyboardButton(text="🏠 В меню", callback_data="menu:root")])
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=deps.localization.t(
+                        "common.menu.back_to_settings",
+                        locale=locale,
+                        default="⬅️ К настройкам",
+                    ),
+                    callback_data="menu:settings",
+                )
+            ]
+        )
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=deps.localization.t(
+                        "common.menu.root",
+                        locale=locale,
+                        default="🏠 В меню",
+                    ),
+                    callback_data="menu:root",
+                )
+            ]
+        )
 
         explicit_line = (
-            f"<b>Явный выбор пользователя:</b> <code>{deps.h(_locale_label(selected_locale))}</code>"
+            f"{deps.localization.t('common.settings.locale.explicit_choice_label', locale=locale, default='<b>Явный выбор пользователя:</b>')} <code>{deps.h(_locale_label(selected_locale))}</code>"
             if selected_locale
-            else "<b>Явный выбор пользователя:</b> <code>не задан</code>"
+            else deps.localization.t(
+                "common.settings.locale.explicit_choice_none",
+                locale=locale,
+                default="<b>Явный выбор пользователя:</b> <code>не задан</code>",
+            )
         )
 
         await deps.render_user_panel(
             message,
             deps.runtime,
             uid,
-            "🌐 <b>Язык интерфейса</b>\n\n"
-            f"<b>Текущий язык:</b> <code>{deps.h(_locale_label(current_locale))}</code>\n"
+            deps.localization.t(
+                "common.settings.locale.title",
+                locale=locale,
+                default="🌐 <b>Язык интерфейса</b>",
+            )
+            + "\n\n"
+            + deps.localization.t(
+                "common.settings.locale.current_label",
+                locale=locale,
+                default="<b>Текущий язык:</b>",
+            )
+            + f" <code>{deps.h(_locale_label(current_locale))}</code>\n"
             f"{explicit_line}\n"
-            "\nВыберите язык для сохранения в персональных настройках.",
+            + "\n"
+            + deps.localization.t(
+                "common.settings.locale.choose_prompt",
+                locale=locale,
+                default="Выберите язык для сохранения в персональных настройках.",
+            ),
             reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
         )
 
@@ -249,12 +445,28 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
         *,
         telegram_locale: str | None,
     ) -> None:
+        locale = _resolved_locale(uid, telegram_locale=telegram_locale)
         pro_mode = deps.runtime.user_preferences.get(uid, {}).get("pro_mode", False)
-        mode_label = "🔧 Про" if pro_mode else "🟢 Простой"
-        locale_label = _locale_label(_resolved_locale(uid, telegram_locale=telegram_locale))
-        smart_prompt_status = "❌ выключен"
+        mode_label = _t(
+            uid,
+            "common.settings.mode.pro" if pro_mode else "common.settings.mode.simple",
+            "🔧 Про" if pro_mode else "🟢 Простой",
+            telegram_locale=telegram_locale,
+        )
+        locale_label = _locale_label(locale)
+        smart_prompt_status = _t(
+            uid,
+            "common.settings.smart_prompt.off",
+            "❌ выключен",
+            telegram_locale=telegram_locale,
+        )
         if deps.cfg.smart_prompt_enabled:
-            model = deps.cfg.smart_prompt_model or "(модель не задана)"
+            model = deps.cfg.smart_prompt_model or _t(
+                uid,
+                "common.settings.smart_prompt.model_not_set",
+                "(модель не задана)",
+                telegram_locale=telegram_locale,
+            )
             smart_prompt_status = f"✅ TIPO | <code>{deps.h(model)}</code>"
 
         gen = _gen_defaults(uid)
@@ -262,19 +474,78 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
         kb = InlineKeyboardMarkup(
             inline_keyboard=[
                 [
-                    InlineKeyboardButton(text="🎨 Генерация", callback_data="menu:settings:gen"),
-                    InlineKeyboardButton(text="📦 Поиск моделей", callback_data="menu:settings:dl"),
+                    InlineKeyboardButton(
+                        text=_t(
+                            uid,
+                            "common.settings.button.generation",
+                            "🎨 Генерация",
+                            telegram_locale=telegram_locale,
+                        ),
+                        callback_data="menu:settings:gen",
+                    ),
+                    InlineKeyboardButton(
+                        text=_t(
+                            uid,
+                            "common.settings.button.models_search",
+                            "📦 Поиск моделей",
+                            telegram_locale=telegram_locale,
+                        ),
+                        callback_data="menu:settings:dl",
+                    ),
                 ],
                 [
                     InlineKeyboardButton(
-                        text=("🟢 Простой" if pro_mode else "🔧 Про"),
+                        text=_t(
+                            uid,
+                            "common.settings.mode.simple"
+                            if pro_mode
+                            else "common.settings.mode.pro",
+                            "🟢 Простой" if pro_mode else "🔧 Про",
+                            telegram_locale=telegram_locale,
+                        ),
                         callback_data="menu:settings:toggle_mode",
                     ),
-                    InlineKeyboardButton(text="🌐 Язык", callback_data="menu:settings:locale"),
+                    InlineKeyboardButton(
+                        text=_t(
+                            uid,
+                            "common.settings.button.language",
+                            "🌐 Язык",
+                            telegram_locale=telegram_locale,
+                        ),
+                        callback_data="menu:settings:locale",
+                    ),
                 ],
-                [InlineKeyboardButton(text="🔄 Обновить", callback_data="menu:settings")],
-                [InlineKeyboardButton(text="⬅️ Сервис", callback_data="menu:service")],
-                [InlineKeyboardButton(text="🏠 В меню", callback_data="menu:root")],
+                [
+                    InlineKeyboardButton(
+                        text=_t(
+                            uid,
+                            "common.action.refresh",
+                            "🔄 Обновить",
+                            telegram_locale=telegram_locale,
+                        ),
+                        callback_data="menu:settings",
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text=deps.localization.t(
+                            "common.menu.back_to_service",
+                            locale=locale,
+                            default="⬅️ Сервис",
+                        ),
+                        callback_data="menu:service",
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text=deps.localization.t(
+                            "common.menu.root",
+                            locale=locale,
+                            default="🏠 В меню",
+                        ),
+                        callback_data="menu:root",
+                    )
+                ],
             ]
         )
 
@@ -282,78 +553,188 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
             message,
             deps.runtime,
             uid,
-            "⚙️ <b>Настройки</b>\n\n"
-            f"<b>Режим интерфейса:</b> {mode_label}\n"
-            f"<b>Язык интерфейса:</b> <code>{deps.h(locale_label)}</code>\n"
-            f"<b>Генерация по умолчанию:</b> <code>{gen['width']}×{gen['height']}</code> | "
+            _t(
+                uid,
+                "common.settings.title",
+                "⚙️ <b>Настройки</b>",
+                telegram_locale=telegram_locale,
+            )
+            + "\n\n"
+            + _t(
+                uid,
+                "common.settings.mode_label",
+                "<b>Режим интерфейса:</b>",
+                telegram_locale=telegram_locale,
+            )
+            + f" {mode_label}\n"
+            + _t(
+                uid,
+                "common.settings.language_label",
+                "<b>Язык интерфейса:</b>",
+                telegram_locale=telegram_locale,
+            )
+            + f" <code>{deps.h(locale_label)}</code>\n"
+            + _t(
+                uid,
+                "common.settings.generation_defaults_label",
+                "<b>Генерация по умолчанию:</b>",
+                telegram_locale=telegram_locale,
+            )
+            + f" <code>{gen['width']}×{gen['height']}</code> | "
             f"Steps <code>{gen['steps']}</code> | CFG <code>{gen['cfg']}</code> | "
             f"Denoise <code>{gen['denoise']}</code>\n"
-            f"<b>Seed/Batch:</b> <code>{gen['seed']}</code> / <code>{gen['batch']}</code>\n"
-            f"<b>Sampler/Scheduler:</b> <code>{deps.h(gen['sampler'])}</code> / "
+            + _t(
+                uid,
+                "common.settings.seed_batch_label",
+                "<b>Seed/Batch:</b>",
+                telegram_locale=telegram_locale,
+            )
+            + f" <code>{gen['seed']}</code> / <code>{gen['batch']}</code>\n"
+            + _t(
+                uid,
+                "common.settings.sampler_scheduler_label",
+                "<b>Sampler/Scheduler:</b>",
+                telegram_locale=telegram_locale,
+            )
+            + f" <code>{deps.h(gen['sampler'])}</code> / "
             f"<code>{deps.h(gen['scheduler'])}</code>\n"
-            f"<b>Поиск моделей по умолчанию:</b> {deps.h(dl['source'])}, {deps.h(dl['sort'])}, "
+            + _t(
+                uid,
+                "common.settings.search_defaults_label",
+                "<b>Поиск моделей по умолчанию:</b>",
+                telegram_locale=telegram_locale,
+            )
+            + f" {deps.h(dl['source'])}, {deps.h(dl['sort'])}, "
             f"{deps.h(dl['period'])}, base={deps.h(_base_label(dl['base']))}, nsfw={'on' if dl['nsfw'] else 'off'}\n"
-            f"<b>Автор(ы) CivitAI:</b> <code>{deps.h(dl['author'] or 'любой')}</code>\n"
-            f"<b>Smart Prompt:</b> {smart_prompt_status}\n"
-            f"<b>Папка моделей:</b> <code>{deps.h(deps.cfg.comfyui_models_path)}</code>",
+            + _t(
+                uid,
+                "common.settings.authors_label",
+                "<b>Автор(ы) CivitAI:</b>",
+                telegram_locale=telegram_locale,
+            )
+            + f" <code>{deps.h(dl['author'] or _t(uid, 'common.value.any', 'любой', telegram_locale=telegram_locale))}</code>\n"
+            + _t(
+                uid,
+                "common.settings.smart_prompt_label",
+                "<b>Smart Prompt:</b>",
+                telegram_locale=telegram_locale,
+            )
+            + f" {smart_prompt_status}\n"
+            + _t(
+                uid,
+                "common.settings.models_path_label",
+                "<b>Папка моделей:</b>",
+                telegram_locale=telegram_locale,
+            )
+            + f" <code>{deps.h(deps.cfg.comfyui_models_path)}</code>",
             reply_markup=kb,
         )
 
-    async def _show_generation_settings(message: Message, uid: int) -> None:
+    async def _show_generation_settings(
+        message: Message,
+        uid: int,
+        *,
+        telegram_locale: str | None,
+    ) -> None:
+        locale = _resolved_locale(uid, telegram_locale=telegram_locale)
         gen = _gen_defaults(uid)
         kb = InlineKeyboardMarkup(
             inline_keyboard=[
                 [
                     InlineKeyboardButton(
-                        text=f"🖼 Размер: {gen['width']}×{gen['height']}",
+                        text=f"{_t(uid, 'common.settings.generation.field.size', '🖼 Размер:', telegram_locale=telegram_locale)} {gen['width']}×{gen['height']}",
                         callback_data="menu:settings:gen:menu:size",
                     ),
                     InlineKeyboardButton(
-                        text=f"🔢 Steps: {gen['steps']}",
+                        text=f"{_t(uid, 'common.settings.generation.field.steps', '🔢 Steps:', telegram_locale=telegram_locale)} {gen['steps']}",
                         callback_data="menu:settings:gen:menu:steps",
                     ),
                 ],
                 [
                     InlineKeyboardButton(
-                        text=f"🎚 CFG: {gen['cfg']}",
+                        text=f"{_t(uid, 'common.settings.generation.field.cfg', '🎚 CFG:', telegram_locale=telegram_locale)} {gen['cfg']}",
                         callback_data="menu:settings:gen:menu:cfg",
                     ),
                     InlineKeyboardButton(
-                        text=f"🌫 Denoise: {gen['denoise']}",
+                        text=f"{_t(uid, 'common.settings.generation.field.denoise', '🌫 Denoise:', telegram_locale=telegram_locale)} {gen['denoise']}",
                         callback_data="menu:settings:gen:menu:denoise",
                     ),
                 ],
                 [
                     InlineKeyboardButton(
-                        text=("🎲 Seed: random" if gen["seed"] < 0 else f"🎲 Seed: {gen['seed']}"),
+                        text=(
+                            f"{_t(uid, 'common.settings.generation.field.seed_random', '🎲 Seed: random', telegram_locale=telegram_locale)}"
+                            if gen["seed"] < 0
+                            else f"{_t(uid, 'common.settings.generation.field.seed', '🎲 Seed:', telegram_locale=telegram_locale)} {gen['seed']}"
+                        ),
                         callback_data="menu:settings:gen:menu:seed",
                     ),
                     InlineKeyboardButton(
-                        text=f"🗂 Batch: {gen['batch']}",
+                        text=f"{_t(uid, 'common.settings.generation.field.batch', '🗂 Batch:', telegram_locale=telegram_locale)} {gen['batch']}",
                         callback_data="menu:settings:gen:menu:batch",
                     ),
                 ],
                 [
                     InlineKeyboardButton(
-                        text=f"⚙️ Sampler: {gen['sampler']}",
+                        text=f"{_t(uid, 'common.settings.generation.field.sampler', '⚙️ Sampler:', telegram_locale=telegram_locale)} {gen['sampler']}",
                         callback_data="menu:settings:gen:menu:sampler:0",
                     ),
                     InlineKeyboardButton(
-                        text=f"📈 Scheduler: {gen['scheduler']}",
+                        text=f"{_t(uid, 'common.settings.generation.field.scheduler', '📈 Scheduler:', telegram_locale=telegram_locale)} {gen['scheduler']}",
                         callback_data="menu:settings:gen:menu:scheduler:0",
                     ),
                 ],
-                [InlineKeyboardButton(text="↺ Сбросить", callback_data="menu:settings:reset:gen")],
-                [InlineKeyboardButton(text="⬅️ К настройкам", callback_data="menu:settings")],
-                [InlineKeyboardButton(text="🏠 В меню", callback_data="menu:root")],
+                [
+                    InlineKeyboardButton(
+                        text=_t(
+                            uid,
+                            "common.action.reset",
+                            "↺ Сбросить",
+                            telegram_locale=telegram_locale,
+                        ),
+                        callback_data="menu:settings:reset:gen",
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text=deps.localization.t(
+                            "common.menu.back_to_settings",
+                            locale=locale,
+                            default="⬅️ К настройкам",
+                        ),
+                        callback_data="menu:settings",
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text=deps.localization.t(
+                            "common.menu.root",
+                            locale=locale,
+                            default="🏠 В меню",
+                        ),
+                        callback_data="menu:root",
+                    )
+                ],
             ]
         )
         await deps.render_user_panel(
             message,
             deps.runtime,
             uid,
-            "🎨 <b>Настройки генерации по умолчанию</b>\n\n"
-            f"<b>Размер:</b> <code>{gen['width']}×{gen['height']}</code>\n"
+            _t(
+                uid,
+                "common.settings.generation.title",
+                "🎨 <b>Настройки генерации по умолчанию</b>",
+                telegram_locale=telegram_locale,
+            )
+            + "\n\n"
+            + _t(
+                uid,
+                "common.settings.generation.label.size",
+                "<b>Размер:</b>",
+                telegram_locale=telegram_locale,
+            )
+            + f" <code>{gen['width']}×{gen['height']}</code>\n"
             f"<b>Steps:</b> <code>{gen['steps']}</code>\n"
             f"<b>CFG:</b> <code>{gen['cfg']}</code>\n"
             f"<b>Denoise:</b> <code>{gen['denoise']}</code>\n"
@@ -370,17 +751,56 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
         *,
         field: str,
         page: int = 0,
+        telegram_locale: str | None,
     ) -> None:
         label_map = {
-            "size": "Размер",
-            "steps": "Steps",
-            "cfg": "CFG",
-            "denoise": "Denoise",
-            "seed": "Seed",
-            "batch": "Batch",
-            "sampler": "Sampler",
-            "scheduler": "Scheduler",
+            "size": _t(
+                uid,
+                "common.settings.generation.value.size",
+                "Размер",
+                telegram_locale=telegram_locale,
+            ),
+            "steps": _t(
+                uid,
+                "common.settings.generation.value.steps",
+                "Steps",
+                telegram_locale=telegram_locale,
+            ),
+            "cfg": _t(
+                uid, "common.settings.generation.value.cfg", "CFG", telegram_locale=telegram_locale
+            ),
+            "denoise": _t(
+                uid,
+                "common.settings.generation.value.denoise",
+                "Denoise",
+                telegram_locale=telegram_locale,
+            ),
+            "seed": _t(
+                uid,
+                "common.settings.generation.value.seed",
+                "Seed",
+                telegram_locale=telegram_locale,
+            ),
+            "batch": _t(
+                uid,
+                "common.settings.generation.value.batch",
+                "Batch",
+                telegram_locale=telegram_locale,
+            ),
+            "sampler": _t(
+                uid,
+                "common.settings.generation.value.sampler",
+                "Sampler",
+                telegram_locale=telegram_locale,
+            ),
+            "scheduler": _t(
+                uid,
+                "common.settings.generation.value.scheduler",
+                "Scheduler",
+                telegram_locale=telegram_locale,
+            ),
         }
+        locale = _resolved_locale(uid, telegram_locale=telegram_locale)
         current = _gen_defaults(uid)
 
         if field == "size":
@@ -441,7 +861,16 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
             rows = [
                 [
                     InlineKeyboardButton(
-                        text=("random" if value == "-1" else value),
+                        text=(
+                            _t(
+                                uid,
+                                "common.value.random",
+                                "random",
+                                telegram_locale=telegram_locale,
+                            )
+                            if value == "-1"
+                            else value
+                        ),
                         callback_data=f"menu:settings:set:gen:seed:{value}",
                     )
                     for value in values[i : i + 3]
@@ -504,16 +933,32 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
         rows.append(
             [
                 InlineKeyboardButton(
-                    text="✏️ Ввести вручную",
+                    text=_t(
+                        uid,
+                        "common.action.enter_manual",
+                        "✏️ Ввести вручную",
+                        telegram_locale=telegram_locale,
+                    ),
                     callback_data=f"menu:settings:input:{field}",
                 )
             ]
         )
-        rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="menu:settings:gen")])
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=deps.localization.t(
+                        "common.action.back",
+                        locale=locale,
+                        default="⬅️ Назад",
+                    ),
+                    callback_data="menu:settings:gen",
+                )
+            ]
+        )
 
         current_value = current.get(field)
         current_text = (
-            "random"
+            _t(uid, "common.value.random", "random", telegram_locale=telegram_locale)
             if field == "seed" and isinstance(current_value, int) and current_value < 0
             else str(current_value)
         )
@@ -521,108 +966,311 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
             message,
             deps.runtime,
             uid,
-            f"🎛 <b>Настройка: {label_map.get(field, field)}</b>\n"
-            f"<b>Текущее значение:</b> <code>{deps.h(current_text)}</code>",
+            _t(
+                uid,
+                "common.settings.generation.picker.title",
+                "🎛 <b>Настройка: {label}</b>",
+                telegram_locale=telegram_locale,
+                params={"label": label_map.get(field, field)},
+            )
+            + "\n"
+            + _t(
+                uid,
+                "common.settings.generation.picker.current_value",
+                "<b>Текущее значение:</b> <code>{value}</code>",
+                telegram_locale=telegram_locale,
+                params={"value": deps.h(current_text)},
+            ),
             reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
         )
 
-    async def _show_download_settings(message: Message, uid: int) -> None:
+    async def _show_download_settings(
+        message: Message,
+        uid: int,
+        *,
+        telegram_locale: str | None,
+    ) -> None:
+        locale = _resolved_locale(uid, telegram_locale=telegram_locale)
         dl = _download_defaults(uid)
         kb = InlineKeyboardMarkup(
             inline_keyboard=[
                 [
                     InlineKeyboardButton(
-                        text="Source: All", callback_data="menu:settings:set:dl:source:all"
+                        text=_t(
+                            uid,
+                            "common.settings.download.source_all",
+                            "Source: All",
+                            telegram_locale=telegram_locale,
+                        ),
+                        callback_data="menu:settings:set:dl:source:all",
                     ),
                     InlineKeyboardButton(
-                        text="CivitAI", callback_data="menu:settings:set:dl:source:civitai"
+                        text=_t(
+                            uid,
+                            "common.settings.download.source_civitai",
+                            "CivitAI",
+                            telegram_locale=telegram_locale,
+                        ),
+                        callback_data="menu:settings:set:dl:source:civitai",
                     ),
                     InlineKeyboardButton(
-                        text="HF", callback_data="menu:settings:set:dl:source:huggingface"
-                    ),
-                ],
-                [
-                    InlineKeyboardButton(
-                        text="Sort: Downloads", callback_data="menu:settings:set:dl:sort:downloads"
-                    ),
-                    InlineKeyboardButton(
-                        text="Rating", callback_data="menu:settings:set:dl:sort:rating"
-                    ),
-                    InlineKeyboardButton(
-                        text="Newest", callback_data="menu:settings:set:dl:sort:newest"
-                    ),
-                ],
-                [
-                    InlineKeyboardButton(
-                        text="Period: All", callback_data="menu:settings:set:dl:period:all"
-                    ),
-                    InlineKeyboardButton(
-                        text="Month", callback_data="menu:settings:set:dl:period:month"
-                    ),
-                    InlineKeyboardButton(
-                        text="Week", callback_data="menu:settings:set:dl:period:week"
+                        text=_t(
+                            uid,
+                            "common.settings.download.source_hf",
+                            "HF",
+                            telegram_locale=telegram_locale,
+                        ),
+                        callback_data="menu:settings:set:dl:source:huggingface",
                     ),
                 ],
                 [
                     InlineKeyboardButton(
-                        text=f"🧬 Базовые модели: {_base_label(dl['base'])}",
+                        text=_t(
+                            uid,
+                            "common.settings.download.sort_downloads",
+                            "Sort: Downloads",
+                            telegram_locale=telegram_locale,
+                        ),
+                        callback_data="menu:settings:set:dl:sort:downloads",
+                    ),
+                    InlineKeyboardButton(
+                        text=_t(
+                            uid,
+                            "common.settings.download.sort_rating",
+                            "Rating",
+                            telegram_locale=telegram_locale,
+                        ),
+                        callback_data="menu:settings:set:dl:sort:rating",
+                    ),
+                    InlineKeyboardButton(
+                        text=_t(
+                            uid,
+                            "common.settings.download.sort_newest",
+                            "Newest",
+                            telegram_locale=telegram_locale,
+                        ),
+                        callback_data="menu:settings:set:dl:sort:newest",
+                    ),
+                ],
+                [
+                    InlineKeyboardButton(
+                        text=_t(
+                            uid,
+                            "common.settings.download.period_all",
+                            "Period: All",
+                            telegram_locale=telegram_locale,
+                        ),
+                        callback_data="menu:settings:set:dl:period:all",
+                    ),
+                    InlineKeyboardButton(
+                        text=_t(
+                            uid,
+                            "common.settings.download.period_month",
+                            "Month",
+                            telegram_locale=telegram_locale,
+                        ),
+                        callback_data="menu:settings:set:dl:period:month",
+                    ),
+                    InlineKeyboardButton(
+                        text=_t(
+                            uid,
+                            "common.settings.download.period_week",
+                            "Week",
+                            telegram_locale=telegram_locale,
+                        ),
+                        callback_data="menu:settings:set:dl:period:week",
+                    ),
+                ],
+                [
+                    InlineKeyboardButton(
+                        text=_t(
+                            uid,
+                            "common.settings.download.base_models_button",
+                            "🧬 Базовые модели: {base}",
+                            telegram_locale=telegram_locale,
+                            params={"base": _base_label(dl["base"])},
+                        ),
                         callback_data="menu:settings:dl:base",
                     ),
                 ],
                 [
                     InlineKeyboardButton(
-                        text=("🔞 NSFW: ON" if dl["nsfw"] else "🛡 NSFW: OFF"),
+                        text=(
+                            _t(
+                                uid,
+                                "common.settings.download.nsfw_on",
+                                "🔞 NSFW: ON",
+                                telegram_locale=telegram_locale,
+                            )
+                            if dl["nsfw"]
+                            else _t(
+                                uid,
+                                "common.settings.download.nsfw_off",
+                                "🛡 NSFW: OFF",
+                                telegram_locale=telegram_locale,
+                            )
+                        ),
                         callback_data="menu:settings:set:dl:nsfw:toggle",
                     )
                 ],
                 [
                     InlineKeyboardButton(
-                        text="🔥 Популярные",
+                        text=_t(
+                            uid,
+                            "common.settings.download.profile_popular",
+                            "🔥 Популярные",
+                            telegram_locale=telegram_locale,
+                        ),
                         callback_data="menu:settings:set:dl:profile:popular",
                     ),
                     InlineKeyboardButton(
-                        text="🆕 Новые",
+                        text=_t(
+                            uid,
+                            "common.settings.download.profile_fresh",
+                            "🆕 Новые",
+                            telegram_locale=telegram_locale,
+                        ),
                         callback_data="menu:settings:set:dl:profile:fresh",
                     ),
                     InlineKeyboardButton(
-                        text="⭐ Рейтинг",
+                        text=_t(
+                            uid,
+                            "common.settings.download.profile_quality",
+                            "⭐ Рейтинг",
+                            telegram_locale=telegram_locale,
+                        ),
                         callback_data="menu:settings:set:dl:profile:quality",
                     ),
                 ],
                 [
                     InlineKeyboardButton(
-                        text="🎎 Anime",
+                        text=_t(
+                            uid,
+                            "common.settings.download.profile_anime",
+                            "🎎 Anime",
+                            telegram_locale=telegram_locale,
+                        ),
                         callback_data="menu:settings:set:dl:profile:anime",
                     )
                 ],
                 [
                     InlineKeyboardButton(
-                        text=f"👤 Автор: {dl['author'] or 'любой'}",
+                        text=_t(
+                            uid,
+                            "common.settings.download.author_button",
+                            "👤 Автор: {author}",
+                            telegram_locale=telegram_locale,
+                            params={
+                                "author": dl["author"]
+                                or _t(
+                                    uid,
+                                    "common.value.any",
+                                    "любой",
+                                    telegram_locale=telegram_locale,
+                                )
+                            },
+                        ),
                         callback_data="menu:settings:input:dl_author",
                     )
                 ],
-                [InlineKeyboardButton(text="↺ Сбросить", callback_data="menu:settings:reset:dl")],
-                [InlineKeyboardButton(text="⬅️ К настройкам", callback_data="menu:settings")],
-                [InlineKeyboardButton(text="🏠 В меню", callback_data="menu:root")],
+                [
+                    InlineKeyboardButton(
+                        text=_t(
+                            uid,
+                            "common.action.reset",
+                            "↺ Сбросить",
+                            telegram_locale=telegram_locale,
+                        ),
+                        callback_data="menu:settings:reset:dl",
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text=deps.localization.t(
+                            "common.menu.back_to_settings",
+                            locale=locale,
+                            default="⬅️ К настройкам",
+                        ),
+                        callback_data="menu:settings",
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text=deps.localization.t(
+                            "common.menu.root",
+                            locale=locale,
+                            default="🏠 В меню",
+                        ),
+                        callback_data="menu:root",
+                    )
+                ],
             ]
         )
         await deps.render_user_panel(
             message,
             deps.runtime,
             uid,
-            "📦 <b>Настройки поиска моделей по умолчанию</b>\n\n"
-            f"<b>Source:</b> <code>{deps.h(dl['source'])}</code>\n"
-            f"<b>Sort:</b> <code>{deps.h(dl['sort'])}</code>\n"
-            f"<b>Period:</b> <code>{deps.h(dl['period'])}</code>\n"
-            f"<b>Base:</b> <code>{deps.h(_base_label(dl['base']))}</code>\n"
-            f"<b>NSFW:</b> <code>{'on' if dl['nsfw'] else 'off'}</code>\n"
-            f"<b>Автор(ы) CivitAI:</b> <code>{deps.h(dl['author'] or 'любой')}</code>",
+            _t(
+                uid,
+                "common.settings.download.title",
+                "📦 <b>Настройки поиска моделей по умолчанию</b>",
+                telegram_locale=telegram_locale,
+            )
+            + "\n\n"
+            + _t(
+                uid,
+                "common.settings.download.label.source",
+                "<b>Source:</b>",
+                telegram_locale=telegram_locale,
+            )
+            + f" <code>{deps.h(dl['source'])}</code>\n"
+            + _t(
+                uid,
+                "common.settings.download.label.sort",
+                "<b>Sort:</b>",
+                telegram_locale=telegram_locale,
+            )
+            + f" <code>{deps.h(dl['sort'])}</code>\n"
+            + _t(
+                uid,
+                "common.settings.download.label.period",
+                "<b>Period:</b>",
+                telegram_locale=telegram_locale,
+            )
+            + f" <code>{deps.h(dl['period'])}</code>\n"
+            + _t(
+                uid,
+                "common.settings.download.label.base",
+                "<b>Base:</b>",
+                telegram_locale=telegram_locale,
+            )
+            + f" <code>{deps.h(_base_label(dl['base']))}</code>\n"
+            + _t(
+                uid,
+                "common.settings.download.label.nsfw",
+                "<b>NSFW:</b>",
+                telegram_locale=telegram_locale,
+            )
+            + f" <code>{_t(uid, 'common.value.on', 'on', telegram_locale=telegram_locale) if dl['nsfw'] else _t(uid, 'common.value.off', 'off', telegram_locale=telegram_locale)}</code>\n"
+            + _t(
+                uid,
+                "common.settings.authors_label",
+                "<b>Автор(ы) CivitAI:</b>",
+                telegram_locale=telegram_locale,
+            )
+            + f" <code>{deps.h(dl['author'] or _t(uid, 'common.value.any', 'любой', telegram_locale=telegram_locale))}</code>",
             reply_markup=kb,
         )
 
-    async def _show_download_base_settings(message: Message, uid: int) -> None:
+    async def _show_download_base_settings(
+        message: Message,
+        uid: int,
+        *,
+        telegram_locale: str | None,
+    ) -> None:
         dl = _download_defaults(uid)
         current = dl["base"]
+        locale = _resolved_locale(uid, telegram_locale=telegram_locale)
 
         def _mk(code: str, label: str) -> InlineKeyboardButton:
             prefix = "✅ " if current == code else ""
@@ -633,7 +1281,12 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
 
         kb = InlineKeyboardMarkup(
             inline_keyboard=[
-                [_mk("all", "Все")],
+                [
+                    _mk(
+                        "all",
+                        _t(uid, "common.value.all", "Все", telegram_locale=telegram_locale),
+                    )
+                ],
                 [_mk("sd15", "SD 1.5"), _mk("sd2", "SD 2.x")],
                 [_mk("sdxl09", "SDXL 0.9"), _mk("sdxl", "SDXL 1.0")],
                 [_mk("sd3", "SD 3"), _mk("sd35", "SD 3.5")],
@@ -641,37 +1294,110 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
                 [_mk("illustrious", "Illustrious"), _mk("noobai", "NoobAI")],
                 [
                     InlineKeyboardButton(
-                        text="⬅️ К настройкам поиска", callback_data="menu:settings:dl"
+                        text=deps.localization.t(
+                            "common.menu.back_to_download_settings",
+                            locale=locale,
+                            default="⬅️ К настройкам поиска",
+                        ),
+                        callback_data="menu:settings:dl",
                     )
                 ],
-                [InlineKeyboardButton(text="🏠 В меню", callback_data="menu:root")],
+                [
+                    InlineKeyboardButton(
+                        text=deps.localization.t(
+                            "common.menu.root",
+                            locale=locale,
+                            default="🏠 В меню",
+                        ),
+                        callback_data="menu:root",
+                    )
+                ],
             ]
         )
         await deps.render_user_panel(
             message,
             deps.runtime,
             uid,
-            "🧬 <b>Базовые модели по умолчанию</b>\n\n"
-            "Выберите семейство, которое будет применяться в фильтрах скачивания.\n"
-            f"<b>Текущий выбор:</b> <code>{deps.h(_base_label(current))}</code>",
+            _t(
+                uid,
+                "common.settings.download_base.title",
+                "🧬 <b>Базовые модели по умолчанию</b>",
+                telegram_locale=telegram_locale,
+            )
+            + "\n\n"
+            + _t(
+                uid,
+                "common.settings.download_base.description",
+                "Выберите семейство, которое будет применяться в фильтрах скачивания.",
+                telegram_locale=telegram_locale,
+            )
+            + "\n"
+            + _t(
+                uid,
+                "common.settings.download_base.current_choice_label",
+                "<b>Текущий выбор:</b>",
+                telegram_locale=telegram_locale,
+            )
+            + f" <code>{deps.h(_base_label(current))}</code>",
             reply_markup=kb,
         )
 
-    async def _show_models_report(message: Message, uid: int) -> None:
+    async def _show_models_report(
+        message: Message,
+        uid: int,
+        *,
+        telegram_locale: str | None,
+    ) -> None:
+        locale = _resolved_locale(uid, telegram_locale=telegram_locale)
         status_msg = await deps.render_user_panel(
             message,
             deps.runtime,
             uid,
-            "⏳ Обновляю список моделей…",
-            reply_markup=_models_back_keyboard(),
+            _t(
+                uid,
+                "common.models.updating",
+                "⏳ Обновляю список моделей…",
+                telegram_locale=telegram_locale,
+            ),
+            reply_markup=_models_back_keyboard(locale=locale),
         )
         try:
             info = await deps.client.refresh_info()
             parts = [
-                deps.models_section("Checkpoints", "🧪", info.checkpoints, 10),
+                deps.models_section(
+                    _t(
+                        uid,
+                        "common.models.section.checkpoints",
+                        "Checkpoints",
+                        telegram_locale=telegram_locale,
+                    ),
+                    "🧪",
+                    info.checkpoints,
+                    10,
+                ),
                 deps.models_section("LoRA", "🧲", info.loras, 10),
-                deps.models_section("Embeddings", "🔤", info.embeddings, 10),
-                deps.models_section("Upscale", "🔍", info.upscale_models, 10),
+                deps.models_section(
+                    _t(
+                        uid,
+                        "common.models.section.embeddings",
+                        "Embeddings",
+                        telegram_locale=telegram_locale,
+                    ),
+                    "🔤",
+                    info.embeddings,
+                    10,
+                ),
+                deps.models_section(
+                    _t(
+                        uid,
+                        "common.models.section.upscale",
+                        "Upscale",
+                        telegram_locale=telegram_locale,
+                    ),
+                    "🔍",
+                    info.upscale_models,
+                    10,
+                ),
                 deps.models_section("VAE", "🧬", info.vaes, 10),
                 deps.models_section("ControlNet", "🧷", info.controlnets, 10),
                 deps.models_section("CLIP Vision", "👁", info.clip_vision_models, 5),
@@ -679,42 +1405,107 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
             ]
             ipa_icon = "✅" if info.ipadapter_supported else "❌"
             parts.append(
-                f"\nIP-Adapter: {ipa_icon} {'доступен' if info.ipadapter_supported else 'недоступен'}"
+                _t(
+                    uid,
+                    "common.models.ip_adapter_status",
+                    "\nIP-Adapter: {icon} {status}",
+                    telegram_locale=telegram_locale,
+                    params={
+                        "icon": ipa_icon,
+                        "status": _t(
+                            uid,
+                            "common.value.available"
+                            if info.ipadapter_supported
+                            else "common.value.unavailable",
+                            "доступен" if info.ipadapter_supported else "недоступен",
+                            telegram_locale=telegram_locale,
+                        ),
+                    },
+                )
             )
             await status_msg.edit_text(
-                "✅ <b>Список моделей обновлён</b>\n\n📦 <b>Модели ComfyUI</b>\n\n"
+                _t(
+                    uid,
+                    "common.models.updated_title",
+                    "✅ <b>Список моделей обновлён</b>",
+                    telegram_locale=telegram_locale,
+                )
+                + "\n\n"
+                + _t(
+                    uid,
+                    "common.models.list_title",
+                    "📦 <b>Модели ComfyUI</b>",
+                    telegram_locale=telegram_locale,
+                )
+                + "\n\n"
                 + "\n\n".join(parts),
-                reply_markup=_models_back_keyboard(),
+                reply_markup=_models_back_keyboard(locale=locale),
             )
         except (aiohttp.ClientError, asyncio.TimeoutError, RuntimeError, ValueError) as exc:
             await status_msg.edit_text(
-                f"❌ <b>Ошибка подключения</b>\n<code>{deps.h(exc)}</code>",
-                reply_markup=_models_back_keyboard(),
+                _t(
+                    uid,
+                    "common.models.connection_error",
+                    "❌ <b>Ошибка подключения</b>\n<code>{error}</code>",
+                    telegram_locale=telegram_locale,
+                    params={"error": deps.h(exc)},
+                ),
+                reply_markup=_models_back_keyboard(locale=locale),
             )
 
-    async def _show_queue(message: Message, uid: int) -> None:
+    async def _show_queue(
+        message: Message,
+        uid: int,
+        *,
+        telegram_locale: str | None,
+    ) -> None:
+        locale = _resolved_locale(uid, telegram_locale=telegram_locale)
         try:
             queue = await deps.client.get_queue_status()
             running = len(queue.get("queue_running", []))
             pending = len(queue.get("queue_pending", []))
             if running == 0 and pending == 0:
-                status = "🟢 Очередь пуста"
+                status = _t(
+                    uid,
+                    "common.queue.empty",
+                    "🟢 Очередь пуста",
+                    telegram_locale=telegram_locale,
+                )
             else:
-                status = f"▶️ <b>Выполняется:</b> {running}\n⏳ <b>Ожидает:</b> {pending}"
+                status = _t(
+                    uid,
+                    "common.queue.running_pending",
+                    "▶️ <b>Выполняется:</b> {running}\n⏳ <b>Ожидает:</b> {pending}",
+                    telegram_locale=telegram_locale,
+                    params={"running": running, "pending": pending},
+                )
             await deps.render_user_panel(
                 message,
                 deps.runtime,
                 uid,
-                f"📊 <b>Очередь ComfyUI</b>\n{status}",
-                reply_markup=_service_back_keyboard(),
+                _t(
+                    uid,
+                    "common.queue.title",
+                    "📊 <b>Очередь ComfyUI</b>",
+                    telegram_locale=telegram_locale,
+                )
+                + "\n"
+                + status,
+                reply_markup=_service_back_keyboard(locale=locale),
             )
         except (aiohttp.ClientError, asyncio.TimeoutError, RuntimeError, ValueError) as exc:
             await deps.render_user_panel(
                 message,
                 deps.runtime,
                 uid,
-                f"❌ Не удалось получить статус: <code>{deps.h(exc)}</code>",
-                reply_markup=_service_back_keyboard(),
+                _t(
+                    uid,
+                    "common.queue.error",
+                    "❌ Не удалось получить статус: <code>{error}</code>",
+                    telegram_locale=telegram_locale,
+                    params={"error": deps.h(exc)},
+                ),
+                reply_markup=_service_back_keyboard(locale=locale),
             )
 
     @router.message(CommandStart())
@@ -815,7 +1606,11 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
     @router.message(Command("learn"))
     async def cmd_training(msg: Message):
         uid = deps.message_user_id(msg)
-        await _show_training(msg, uid)
+        await _show_training(
+            msg,
+            uid,
+            telegram_locale=msg.from_user.language_code if msg.from_user else None,
+        )
 
     async def _cancel_for_user(msg: Message, state: FSMContext, *, uid: int) -> None:
         telegram_locale = msg.from_user.language_code if msg.from_user else None
@@ -837,7 +1632,13 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
             match = re.search(r"(\d{1,3})%", status_text)
             if match:
                 pct = min(100, max(0, int(match.group(1))))
-                gen_progress = f" ({pct}% готово)"
+                gen_progress = _t(
+                    uid,
+                    "common.cancel.progress_suffix",
+                    " ({pct}% готово)",
+                    telegram_locale=telegram_locale,
+                    params={"pct": pct},
+                )
 
         dl_task = deps.runtime.active_downloads.get(uid)
         had_download = bool(dl_task and not dl_task.done())
@@ -846,17 +1647,73 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
         if prompt_req:
             pos = prompt_req.params.positive.strip() or "—"
             cancelled_items.append(
-                f"Редактор промптов (Positive: «{deps.h(deps.truncate(pos, 36))}»)"
+                _t(
+                    uid,
+                    "common.cancel.item.prompt_editor",
+                    "Редактор промптов (Positive: «{positive}»)",
+                    telegram_locale=telegram_locale,
+                    params={"positive": deps.h(deps.truncate(pos, 36))},
+                )
             )
         if had_generation:
             count = len(user_gens)
-            suffix = "" if count == 1 else f" ({count} задач)"
-            cancelled_items.append(f"Генерация{gen_progress or ' (в процессе)'}{suffix}")
+            suffix = (
+                ""
+                if count == 1
+                else _t(
+                    uid,
+                    "common.cancel.generation.count_suffix",
+                    " ({count} задач)",
+                    telegram_locale=telegram_locale,
+                    params={"count": count},
+                )
+            )
+            cancelled_items.append(
+                _t(
+                    uid,
+                    "common.cancel.item.generation",
+                    "Генерация{progress}{suffix}",
+                    telegram_locale=telegram_locale,
+                    params={
+                        "progress": gen_progress
+                        or _t(
+                            uid,
+                            "common.cancel.generation.in_progress_suffix",
+                            " (в процессе)",
+                            telegram_locale=telegram_locale,
+                        ),
+                        "suffix": suffix,
+                    },
+                )
+            )
         if had_download:
-            cancelled_items.append("Скачивание модели")
+            cancelled_items.append(
+                _t(
+                    uid,
+                    "common.cancel.item.download",
+                    "Скачивание модели",
+                    telegram_locale=telegram_locale,
+                )
+            )
         if had_state and not cancelled_items:
             state_short = state_name.split(":")[-1] if isinstance(state_name, str) else ""
-            cancelled_items.append(f"Текущее состояние ({deps.h(state_short) or 'активно'})")
+            cancelled_items.append(
+                _t(
+                    uid,
+                    "common.cancel.item.current_state",
+                    "Текущее состояние ({state})",
+                    telegram_locale=telegram_locale,
+                    params={
+                        "state": deps.h(state_short)
+                        or _t(
+                            uid,
+                            "common.cancel.state.active",
+                            "активно",
+                            telegram_locale=telegram_locale,
+                        )
+                    },
+                )
+            )
 
         if had_state:
             await state.clear()
@@ -925,27 +1782,51 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
     @router.message(Command("models"))
     async def cmd_models(message: Message):
         uid = deps.message_user_id(message)
-        await _show_models_report(message, uid)
+        await _show_models_report(
+            message,
+            uid,
+            telegram_locale=message.from_user.language_code if message.from_user else None,
+        )
 
     @router.callback_query(F.data == "menu:models_refresh")
     async def menu_models_refresh(cb: CallbackQuery):
         message = await _callback_message(cb)
         if message is None:
             return
-        await _show_models_report(message, deps.callback_user_id(cb))
-        await cb.answer("✅ Список обновлён")
+        uid = deps.callback_user_id(cb)
+        await _show_models_report(
+            message,
+            uid,
+            telegram_locale=cb.from_user.language_code,
+        )
+        await cb.answer(
+            _t(
+                uid,
+                "common.models.alert.updated",
+                "✅ Список обновлён",
+                telegram_locale=cb.from_user.language_code,
+            )
+        )
 
     @router.message(Command("queue"))
     async def cmd_queue(msg: Message):
         uid = deps.message_user_id(msg)
-        await _show_queue(msg, uid)
+        await _show_queue(
+            msg,
+            uid,
+            telegram_locale=msg.from_user.language_code if msg.from_user else None,
+        )
 
     @router.callback_query(F.data == "menu:queue")
     async def menu_queue(cb: CallbackQuery):
         message = await _callback_message(cb)
         if message is None:
             return
-        await _show_queue(message, deps.callback_user_id(cb))
+        await _show_queue(
+            message,
+            deps.callback_user_id(cb),
+            telegram_locale=cb.from_user.language_code,
+        )
         await cb.answer()
 
     @router.message(Command("settings"))
@@ -992,7 +1873,15 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
         locale = normalize_locale_code(data_value[len(prefix) :], default="")
         available_locales = set(deps.localization.available_locales())
         if not locale or locale not in available_locales:
-            await cb.answer("⚠️ Некорректный язык.", show_alert=True)
+            await cb.answer(
+                _t(
+                    deps.callback_user_id(cb),
+                    "common.alert.invalid_language",
+                    "⚠️ Некорректный язык.",
+                    telegram_locale=cb.from_user.language_code,
+                ),
+                show_alert=True,
+            )
             return
 
         uid = deps.callback_user_id(cb)
@@ -1002,7 +1891,14 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
             uid,
             telegram_locale=cb.from_user.language_code,
         )
-        await cb.answer("✅ Язык обновлён")
+        await cb.answer(
+            _t(
+                uid,
+                "common.alert.language_updated",
+                "✅ Язык обновлён",
+                telegram_locale=cb.from_user.language_code,
+            )
+        )
 
     @router.callback_query(F.data == "menu:settings:toggle_mode")
     async def menu_settings_toggle_mode(cb: CallbackQuery):
@@ -1019,7 +1915,14 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
             uid,
             telegram_locale=cb.from_user.language_code,
         )
-        await cb.answer("✅ Режим обновлён")
+        await cb.answer(
+            _t(
+                uid,
+                "common.alert.mode_updated",
+                "✅ Режим обновлён",
+                telegram_locale=cb.from_user.language_code,
+            )
+        )
 
     @router.callback_query(F.data == "menu:settings:gen")
     async def menu_settings_generation(cb: CallbackQuery, state: FSMContext):
@@ -1028,7 +1931,11 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
             return
         if await state.get_state() == ServiceSettingsStates.entering_generation_value.state:
             await state.clear()
-        await _show_generation_settings(message, deps.callback_user_id(cb))
+        await _show_generation_settings(
+            message,
+            deps.callback_user_id(cb),
+            telegram_locale=cb.from_user.language_code,
+        )
         await cb.answer()
 
     @router.callback_query(F.data == "menu:settings:dl")
@@ -1036,7 +1943,11 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
         message = await _callback_message(cb)
         if message is None:
             return
-        await _show_download_settings(message, deps.callback_user_id(cb))
+        await _show_download_settings(
+            message,
+            deps.callback_user_id(cb),
+            telegram_locale=cb.from_user.language_code,
+        )
         await cb.answer()
 
     @router.callback_query(F.data == "menu:settings:dl:base")
@@ -1044,7 +1955,11 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
         message = await _callback_message(cb)
         if message is None:
             return
-        await _show_download_base_settings(message, deps.callback_user_id(cb))
+        await _show_download_base_settings(
+            message,
+            deps.callback_user_id(cb),
+            telegram_locale=cb.from_user.language_code,
+        )
         await cb.answer()
 
     @router.callback_query(F.data == "menu:settings:reset:gen")
@@ -1064,8 +1979,19 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
             "gen_scheduler",
         ):
             prefs.pop(key, None)
-        await _show_generation_settings(message, uid)
-        await cb.answer("✅ Сброшено")
+        await _show_generation_settings(
+            message,
+            uid,
+            telegram_locale=cb.from_user.language_code,
+        )
+        await cb.answer(
+            _t(
+                uid,
+                "common.alert.reset_done",
+                "✅ Сброшено",
+                telegram_locale=cb.from_user.language_code,
+            )
+        )
 
     @router.callback_query(F.data == "menu:settings:reset:dl")
     async def menu_settings_reset_download(cb: CallbackQuery):
@@ -1083,8 +2009,19 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
             "dl_default_author",
         ):
             prefs.pop(key, None)
-        await _show_download_settings(message, uid)
-        await cb.answer("✅ Сброшено")
+        await _show_download_settings(
+            message,
+            uid,
+            telegram_locale=cb.from_user.language_code,
+        )
+        await cb.answer(
+            _t(
+                uid,
+                "common.alert.reset_done",
+                "✅ Сброшено",
+                telegram_locale=cb.from_user.language_code,
+            )
+        )
 
     @router.callback_query(F.data.startswith("menu:settings:gen:menu:"))
     async def menu_settings_generation_menu(cb: CallbackQuery, state: FSMContext):
@@ -1097,7 +2034,15 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
         uid = deps.callback_user_id(cb)
         parts = (cb.data or "").split(":")
         if len(parts) not in {5, 6}:
-            await cb.answer("⚠️ Некорректное меню.", show_alert=True)
+            await cb.answer(
+                _t(
+                    uid,
+                    "common.alert.invalid_menu",
+                    "⚠️ Некорректное меню.",
+                    telegram_locale=cb.from_user.language_code,
+                ),
+                show_alert=True,
+            )
             return
         field = parts[4]
         page = 0
@@ -1106,7 +2051,13 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
                 page = int(parts[5])
             except ValueError:
                 page = 0
-        await _show_generation_picker(message, uid, field=field, page=page)
+        await _show_generation_picker(
+            message,
+            uid,
+            field=field,
+            page=page,
+            telegram_locale=cb.from_user.language_code,
+        )
         await cb.answer()
 
     @router.callback_query(F.data.startswith("menu:settings:set:gen:"))
@@ -1117,41 +2068,123 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
         uid = deps.callback_user_id(cb)
         parts = (cb.data or "").split(":", 6)
         if len(parts) < 6:
-            await cb.answer("⚠️ Некорректный параметр.", show_alert=True)
+            await cb.answer(
+                _t(
+                    uid,
+                    "common.alert.invalid_param",
+                    "⚠️ Некорректный параметр.",
+                    telegram_locale=cb.from_user.language_code,
+                ),
+                show_alert=True,
+            )
             return
         key = parts[4]
         value = parts[5]
         try:
             updates = parse_generation_callback_value(key, value)
         except SettingsParseError as exc:
-            await cb.answer(str(exc), show_alert=True)
+            await cb.answer(
+                _alert_from_parse_error(
+                    uid,
+                    exc,
+                    telegram_locale=cb.from_user.language_code,
+                ),
+                show_alert=True,
+            )
             return
         except (TypeError, ValueError):
             if key == "size":
-                await cb.answer("⚠️ Некорректный размер.", show_alert=True)
+                await cb.answer(
+                    _t(
+                        uid,
+                        "common.alert.invalid_size",
+                        "⚠️ Некорректный размер.",
+                        telegram_locale=cb.from_user.language_code,
+                    ),
+                    show_alert=True,
+                )
                 return
             if key == "steps":
-                await cb.answer("⚠️ Некорректное значение steps.", show_alert=True)
+                await cb.answer(
+                    _t(
+                        uid,
+                        "common.alert.invalid_steps",
+                        "⚠️ Некорректное значение steps.",
+                        telegram_locale=cb.from_user.language_code,
+                    ),
+                    show_alert=True,
+                )
                 return
             if key == "cfg":
-                await cb.answer("⚠️ Некорректное значение cfg.", show_alert=True)
+                await cb.answer(
+                    _t(
+                        uid,
+                        "common.alert.invalid_cfg",
+                        "⚠️ Некорректное значение cfg.",
+                        telegram_locale=cb.from_user.language_code,
+                    ),
+                    show_alert=True,
+                )
                 return
             if key == "denoise":
-                await cb.answer("⚠️ Некорректное значение denoise.", show_alert=True)
+                await cb.answer(
+                    _t(
+                        uid,
+                        "common.alert.invalid_denoise",
+                        "⚠️ Некорректное значение denoise.",
+                        telegram_locale=cb.from_user.language_code,
+                    ),
+                    show_alert=True,
+                )
                 return
             if key == "seed":
-                await cb.answer("⚠️ Некорректный seed.", show_alert=True)
+                await cb.answer(
+                    _t(
+                        uid,
+                        "common.alert.invalid_seed",
+                        "⚠️ Некорректный seed.",
+                        telegram_locale=cb.from_user.language_code,
+                    ),
+                    show_alert=True,
+                )
                 return
             if key == "batch":
-                await cb.answer("⚠️ Некорректный batch.", show_alert=True)
+                await cb.answer(
+                    _t(
+                        uid,
+                        "common.alert.invalid_batch",
+                        "⚠️ Некорректный batch.",
+                        telegram_locale=cb.from_user.language_code,
+                    ),
+                    show_alert=True,
+                )
                 return
-            await cb.answer("⚠️ Неизвестный параметр.", show_alert=True)
+            await cb.answer(
+                _t(
+                    uid,
+                    "common.alert.unknown_param",
+                    "⚠️ Неизвестный параметр.",
+                    telegram_locale=cb.from_user.language_code,
+                ),
+                show_alert=True,
+            )
             return
 
         for pref_key, pref_value in updates.items():
             set_pref(deps.runtime, uid, pref_key, pref_value)
-        await _show_generation_settings(message, uid)
-        await cb.answer("✅ Сохранено")
+        await _show_generation_settings(
+            message,
+            uid,
+            telegram_locale=cb.from_user.language_code,
+        )
+        await cb.answer(
+            _t(
+                uid,
+                "common.alert.saved",
+                "✅ Сохранено",
+                telegram_locale=cb.from_user.language_code,
+            )
+        )
 
     @router.callback_query(F.data.startswith("menu:settings:set:dl:"))
     async def menu_settings_set_download(cb: CallbackQuery):
@@ -1161,7 +2194,15 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
         uid = deps.callback_user_id(cb)
         parts = (cb.data or "").split(":", 6)
         if len(parts) < 6:
-            await cb.answer("⚠️ Некорректный параметр.", show_alert=True)
+            await cb.answer(
+                _t(
+                    uid,
+                    "common.alert.invalid_param",
+                    "⚠️ Некорректный параметр.",
+                    telegram_locale=cb.from_user.language_code,
+                ),
+                show_alert=True,
+            )
             return
         key = parts[4]
         value = parts[5]
@@ -1176,23 +2217,51 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
                 apply_profile=lambda profile_code: _apply_download_profile(uid, profile_code),
             )
         except SettingsParseError as exc:
-            await cb.answer(str(exc), show_alert=True)
+            await cb.answer(
+                _alert_from_parse_error(
+                    uid,
+                    exc,
+                    telegram_locale=cb.from_user.language_code,
+                ),
+                show_alert=True,
+            )
             return
 
         for pref_key, pref_value in updates.items():
             set_pref(deps.runtime, uid, pref_key, pref_value)
-        await _show_download_settings(message, uid)
-        await cb.answer("✅ Сохранено")
+        await _show_download_settings(
+            message,
+            uid,
+            telegram_locale=cb.from_user.language_code,
+        )
+        await cb.answer(
+            _t(
+                uid,
+                "common.alert.saved",
+                "✅ Сохранено",
+                telegram_locale=cb.from_user.language_code,
+            )
+        )
 
     @router.callback_query(F.data.startswith("menu:settings:input:"))
     async def menu_settings_input_start(cb: CallbackQuery, state: FSMContext):
         message = await _callback_message(cb)
         if message is None:
             return
+        uid = deps.callback_user_id(cb)
+        locale = _resolved_locale(uid, telegram_locale=cb.from_user.language_code)
 
         parts = (cb.data or "").split(":", 3)
         if len(parts) != 4:
-            await cb.answer("⚠️ Некорректный запрос.", show_alert=True)
+            await cb.answer(
+                _t(
+                    uid,
+                    "common.alert.invalid_request",
+                    "⚠️ Некорректный запрос.",
+                    telegram_locale=cb.from_user.language_code,
+                ),
+                show_alert=True,
+            )
             return
         field = parts[3]
         if field == "dl_author":
@@ -1200,19 +2269,35 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
             await deps.render_user_panel(
                 message,
                 deps.runtime,
-                deps.callback_user_id(cb),
-                "👤 <b>Автор по умолчанию (CivitAI)</b>\n\n"
-                "Введите один или несколько ников через запятую (без @).\n"
-                "Отправьте <code>-</code>, чтобы убрать фильтр.",
+                uid,
+                _t(
+                    uid,
+                    "common.settings.download.author_prompt",
+                    "👤 <b>Автор по умолчанию (CivitAI)</b>\n\nВведите один или несколько ников через запятую (без @).\nОтправьте <code>-</code>, чтобы убрать фильтр.",
+                    telegram_locale=cb.from_user.language_code,
+                ),
                 reply_markup=InlineKeyboardMarkup(
                     inline_keyboard=[
                         [
                             InlineKeyboardButton(
-                                text="⬅️ К настройкам поиска",
+                                text=deps.localization.t(
+                                    "common.menu.back_to_download_settings",
+                                    locale=locale,
+                                    default="⬅️ К настройкам поиска",
+                                ),
                                 callback_data="menu:settings:dl",
                             )
                         ],
-                        [InlineKeyboardButton(text="🏠 В меню", callback_data="menu:root")],
+                        [
+                            InlineKeyboardButton(
+                                text=deps.localization.t(
+                                    "common.menu.root",
+                                    locale=locale,
+                                    default="🏠 В меню",
+                                ),
+                                callback_data="menu:root",
+                            )
+                        ],
                     ]
                 ),
             )
@@ -1228,18 +2313,66 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
             "sampler",
             "scheduler",
         }:
-            await cb.answer("⚠️ Неизвестное поле.", show_alert=True)
+            await cb.answer(
+                _t(
+                    uid,
+                    "common.alert.unknown_field",
+                    "⚠️ Неизвестное поле.",
+                    telegram_locale=cb.from_user.language_code,
+                ),
+                show_alert=True,
+            )
             return
 
         prompt_map = {
-            "size": "Введите размер в формате <code>WIDTHxHEIGHT</code> (например <code>896x1152</code>).",
-            "steps": "Введите Steps (1-200).",
-            "cfg": "Введите CFG (0.0-30.0).",
-            "denoise": "Введите Denoise (0.0-1.0).",
-            "seed": "Введите Seed (целое число, -1 = random).",
-            "batch": "Введите Batch size (1-16).",
-            "sampler": "Введите sampler (например <code>euler</code> или <code>dpmpp_2m</code>).",
-            "scheduler": "Введите scheduler (например <code>normal</code> или <code>karras</code>).",
+            "size": _t(
+                uid,
+                "common.settings.input.prompt.size",
+                "Введите размер в формате <code>WIDTHxHEIGHT</code> (например <code>896x1152</code>).",
+                telegram_locale=cb.from_user.language_code,
+            ),
+            "steps": _t(
+                uid,
+                "common.settings.input.prompt.steps",
+                "Введите Steps (1-200).",
+                telegram_locale=cb.from_user.language_code,
+            ),
+            "cfg": _t(
+                uid,
+                "common.settings.input.prompt.cfg",
+                "Введите CFG (0.0-30.0).",
+                telegram_locale=cb.from_user.language_code,
+            ),
+            "denoise": _t(
+                uid,
+                "common.settings.input.prompt.denoise",
+                "Введите Denoise (0.0-1.0).",
+                telegram_locale=cb.from_user.language_code,
+            ),
+            "seed": _t(
+                uid,
+                "common.settings.input.prompt.seed",
+                "Введите Seed (целое число, -1 = random).",
+                telegram_locale=cb.from_user.language_code,
+            ),
+            "batch": _t(
+                uid,
+                "common.settings.input.prompt.batch",
+                "Введите Batch size (1-16).",
+                telegram_locale=cb.from_user.language_code,
+            ),
+            "sampler": _t(
+                uid,
+                "common.settings.input.prompt.sampler",
+                "Введите sampler (например <code>euler</code> или <code>dpmpp_2m</code>).",
+                telegram_locale=cb.from_user.language_code,
+            ),
+            "scheduler": _t(
+                uid,
+                "common.settings.input.prompt.scheduler",
+                "Введите scheduler (например <code>normal</code> или <code>karras</code>).",
+                telegram_locale=cb.from_user.language_code,
+            ),
         }
 
         await state.set_state(ServiceSettingsStates.entering_generation_value)
@@ -1247,19 +2380,44 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
         await deps.render_user_panel(
             message,
             deps.runtime,
-            deps.callback_user_id(cb),
-            "⚙️ <b>Ввод значения</b>\n\n"
-            f"{prompt_map[field]}\n"
-            "\nНапишите значение одним сообщением.\n"
-            "Для отмены отправьте <code>cancel</code>.",
+            uid,
+            _t(
+                uid,
+                "common.settings.input.title",
+                "⚙️ <b>Ввод значения</b>",
+                telegram_locale=cb.from_user.language_code,
+            )
+            + "\n\n"
+            + f"{prompt_map[field]}\n"
+            + "\n"
+            + _t(
+                uid,
+                "common.settings.input.how_to",
+                "Напишите значение одним сообщением.\nДля отмены отправьте <code>cancel</code>.",
+                telegram_locale=cb.from_user.language_code,
+            ),
             reply_markup=InlineKeyboardMarkup(
                 inline_keyboard=[
                     [
                         InlineKeyboardButton(
-                            text="⬅️ К настройкам генерации", callback_data="menu:settings:gen"
+                            text=deps.localization.t(
+                                "common.menu.back_to_generation_settings",
+                                locale=locale,
+                                default="⬅️ К настройкам генерации",
+                            ),
+                            callback_data="menu:settings:gen",
                         )
                     ],
-                    [InlineKeyboardButton(text="🏠 В меню", callback_data="menu:root")],
+                    [
+                        InlineKeyboardButton(
+                            text=deps.localization.t(
+                                "common.menu.root",
+                                locale=locale,
+                                default="🏠 В меню",
+                            ),
+                            callback_data="menu:root",
+                        )
+                    ],
                 ]
             ),
         )
@@ -1279,7 +2437,11 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
 
         if raw.lower() in {"cancel", "отмена", "/cancel"}:
             await state.clear()
-            await _show_generation_settings(msg, uid)
+            await _show_generation_settings(
+                msg,
+                uid,
+                telegram_locale=msg.from_user.language_code if msg.from_user else None,
+            )
             return
 
         try:
@@ -1289,16 +2451,44 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
                 msg,
                 deps.runtime,
                 uid,
-                "⚠️ Некорректное значение. Попробуйте ещё раз или отправьте <code>cancel</code>.",
+                _t(
+                    uid,
+                    "common.settings.input.invalid_value",
+                    "⚠️ Некорректное значение. Попробуйте ещё раз или отправьте <code>cancel</code>.",
+                    telegram_locale=msg.from_user.language_code if msg.from_user else None,
+                ),
                 reply_markup=InlineKeyboardMarkup(
                     inline_keyboard=[
                         [
                             InlineKeyboardButton(
-                                text="⬅️ К настройкам генерации",
+                                text=deps.localization.t(
+                                    "common.menu.back_to_generation_settings",
+                                    locale=_resolved_locale(
+                                        uid,
+                                        telegram_locale=(
+                                            msg.from_user.language_code if msg.from_user else None
+                                        ),
+                                    ),
+                                    default="⬅️ К настройкам генерации",
+                                ),
                                 callback_data="menu:settings:gen",
                             )
                         ],
-                        [InlineKeyboardButton(text="🏠 В меню", callback_data="menu:root")],
+                        [
+                            InlineKeyboardButton(
+                                text=deps.localization.t(
+                                    "common.menu.root",
+                                    locale=_resolved_locale(
+                                        uid,
+                                        telegram_locale=(
+                                            msg.from_user.language_code if msg.from_user else None
+                                        ),
+                                    ),
+                                    default="🏠 В меню",
+                                ),
+                                callback_data="menu:root",
+                            )
+                        ],
                     ]
                 ),
             )
@@ -1308,7 +2498,11 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
             set_pref(deps.runtime, uid, pref_key, pref_value)
 
         await state.clear()
-        await _show_generation_settings(msg, uid)
+        await _show_generation_settings(
+            msg,
+            uid,
+            telegram_locale=msg.from_user.language_code if msg.from_user else None,
+        )
 
     @router.message(ServiceSettingsStates.entering_download_author, F.text)
     async def menu_settings_input_download_author(msg: Message, state: FSMContext):
@@ -1321,20 +2515,32 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
 
         if raw.lower() in {"cancel", "отмена", "/cancel"}:
             await state.clear()
-            await _show_download_settings(msg, uid)
+            await _show_download_settings(
+                msg,
+                uid,
+                telegram_locale=msg.from_user.language_code if msg.from_user else None,
+            )
             return
 
         author = parse_download_author(raw)
         set_pref(deps.runtime, uid, "dl_default_author", author)
         await state.clear()
-        await _show_download_settings(msg, uid)
+        await _show_download_settings(
+            msg,
+            uid,
+            telegram_locale=msg.from_user.language_code if msg.from_user else None,
+        )
 
     @router.callback_query(F.data == "menu:training")
     async def menu_training(cb: CallbackQuery):
         message = await _callback_message(cb)
         if message is None:
             return
-        await _show_training(message, deps.callback_user_id(cb))
+        await _show_training(
+            message,
+            deps.callback_user_id(cb),
+            telegram_locale=cb.from_user.language_code,
+        )
         await cb.answer()
 
     @router.callback_query(F.data.startswith("menu:training:page:"))
@@ -1345,14 +2551,35 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
         data_value = cb.data or ""
         parts = data_value.split(":")
         if len(parts) != 4:
-            await cb.answer("⚠️ Некорректная страница.", show_alert=True)
+            await cb.answer(
+                _t(
+                    deps.callback_user_id(cb),
+                    "common.training.invalid_page",
+                    "⚠️ Некорректная страница.",
+                    telegram_locale=cb.from_user.language_code,
+                ),
+                show_alert=True,
+            )
             return
         try:
             page = int(parts[3])
         except ValueError:
-            await cb.answer("⚠️ Некорректная страница.", show_alert=True)
+            await cb.answer(
+                _t(
+                    deps.callback_user_id(cb),
+                    "common.training.invalid_page",
+                    "⚠️ Некорректная страница.",
+                    telegram_locale=cb.from_user.language_code,
+                ),
+                show_alert=True,
+            )
             return
-        await _show_training(message, deps.callback_user_id(cb), page=page)
+        await _show_training(
+            message,
+            deps.callback_user_id(cb),
+            page=page,
+            telegram_locale=cb.from_user.language_code,
+        )
         await cb.answer()
 
     @router.callback_query(F.data.startswith("menu:training:mode:"))
@@ -1363,16 +2590,43 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
         data_value = cb.data or ""
         parts = data_value.split(":")
         if len(parts) != 4:
-            await cb.answer("⚠️ Некорректный режим.", show_alert=True)
+            await cb.answer(
+                _t(
+                    deps.callback_user_id(cb),
+                    "common.training.invalid_mode",
+                    "⚠️ Некорректный режим.",
+                    telegram_locale=cb.from_user.language_code,
+                ),
+                show_alert=True,
+            )
             return
         mode = parts[3]
         if mode not in {"simple", "advanced"}:
-            await cb.answer("⚠️ Некорректный режим.", show_alert=True)
+            await cb.answer(
+                _t(
+                    deps.callback_user_id(cb),
+                    "common.training.invalid_mode",
+                    "⚠️ Некорректный режим.",
+                    telegram_locale=cb.from_user.language_code,
+                ),
+                show_alert=True,
+            )
             return
         uid = deps.callback_user_id(cb)
         set_training_mode(deps.runtime, uid, mode)
-        await _show_training(message, uid)
-        await cb.answer("✅ Режим обучения обновлён")
+        await _show_training(
+            message,
+            uid,
+            telegram_locale=cb.from_user.language_code,
+        )
+        await cb.answer(
+            _t(
+                uid,
+                "common.training.mode_updated",
+                "✅ Режим обучения обновлён",
+                telegram_locale=cb.from_user.language_code,
+            )
+        )
 
     @router.callback_query(F.data == "noop")
     async def noop(cb: CallbackQuery):

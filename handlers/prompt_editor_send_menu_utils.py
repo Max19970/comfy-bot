@@ -1,9 +1,24 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from core.prompt_enhancements import numeric_enhancement_control
 from core.runtime import PreviewArtifact
+
+TranslateText = Callable[[str, str | None, str], str]
+
+
+def _tx(
+    translate: TranslateText | None,
+    key: str,
+    locale: str | None,
+    default: str,
+) -> str:
+    if translate is None:
+        return default
+    return translate(key, locale, default)
 
 
 def submenu_back_callback(menu_key: str, artifact_id: str) -> str:
@@ -32,6 +47,8 @@ def simple_value_keyboard(
     key: str,
     values: list[str],
     back_callback: str,
+    translate: TranslateText | None = None,
+    locale: str | None = None,
 ) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
     row: list[InlineKeyboardButton] = []
@@ -50,7 +67,12 @@ def simple_value_keyboard(
     rows.append(
         [
             InlineKeyboardButton(
-                text="✏️ Ввести свое",
+                text=_tx(
+                    translate,
+                    "prompt_editor.send.menu.value.enter_custom",
+                    locale,
+                    "✏️ Ввести свое",
+                ),
                 callback_data=f"img:custom:{key}:{artifact_id}",
             )
         ]
@@ -58,7 +80,7 @@ def simple_value_keyboard(
     rows.append(
         [
             InlineKeyboardButton(
-                text="⬅️ Назад",
+                text=_tx(translate, "common.action.back", locale, "⬅️ Назад"),
                 callback_data=back_callback,
             )
         ]
@@ -73,6 +95,8 @@ def paginated_pick_keyboard(
     items: list[str],
     page: int,
     back_callback: str,
+    translate: TranslateText | None = None,
+    locale: str | None = None,
 ) -> InlineKeyboardMarkup:
     page_size = 8
     total_pages = max(1, (len(items) + page_size - 1) // page_size)
@@ -110,7 +134,7 @@ def paginated_pick_keyboard(
     rows.append(
         [
             InlineKeyboardButton(
-                text="⬅️ Назад",
+                text=_tx(translate, "common.action.back", locale, "⬅️ Назад"),
                 callback_data=back_callback,
             )
         ]
@@ -118,7 +142,13 @@ def paginated_pick_keyboard(
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def shrink_value_keyboard(*, artifact_id: str, back_callback: str) -> InlineKeyboardMarkup:
+def shrink_value_keyboard(
+    *,
+    artifact_id: str,
+    back_callback: str,
+    translate: TranslateText | None = None,
+    locale: str | None = None,
+) -> InlineKeyboardMarkup:
     rows = [
         [
             InlineKeyboardButton(
@@ -142,19 +172,29 @@ def shrink_value_keyboard(*, artifact_id: str, back_callback: str) -> InlineKeyb
         ],
         [
             InlineKeyboardButton(
-                text="❌ Выключить",
+                text=_tx(
+                    translate,
+                    "prompt_editor.send.menu.shrink.disable",
+                    locale,
+                    "❌ Выключить",
+                ),
                 callback_data=f"img:set:shrink_size:{artifact_id}:off",
             )
         ],
         [
             InlineKeyboardButton(
-                text="✏️ Ввести XxY",
+                text=_tx(
+                    translate,
+                    "prompt_editor.send.menu.shrink.custom",
+                    locale,
+                    "✏️ Ввести XxY",
+                ),
                 callback_data=f"img:custom:shrink_size:{artifact_id}",
             )
         ],
         [
             InlineKeyboardButton(
-                text="⬅️ Назад",
+                text=_tx(translate, "common.action.back", locale, "⬅️ Назад"),
                 callback_data=back_callback,
             )
         ],
@@ -186,18 +226,43 @@ def enhancement_preset_values(field: str) -> list[str]:
     return list(control.presets)
 
 
-def custom_field_meta(field: str) -> tuple[str, float | int, float | int]:
+def custom_field_meta(
+    field: str,
+    *,
+    translate: TranslateText | None = None,
+    locale: str | None = None,
+) -> tuple[str, float | int, float | int]:
     control = numeric_enhancement_control(field)
     if control is not None:
-        return (control.label, control.min_value, control.max_value)
+        label = control.label
+        if control.label_i18n_key is not None:
+            label = _tx(translate, control.label_i18n_key, locale, control.label)
+        return (label, control.min_value, control.max_value)
     if field == "steps":
-        return ("Steps", 1, 150)
+        return (
+            _tx(translate, "common.settings.generation.value.steps", locale, "Steps"),
+            1,
+            150,
+        )
     if field == "cfg":
-        return ("CFG", 0.0, 30.0)
+        return (_tx(translate, "common.settings.generation.value.cfg", locale, "CFG"), 0.0, 30.0)
     if field == "denoise":
-        return ("Denoise", 0.0, 1.0)
+        return (
+            _tx(translate, "common.settings.generation.value.denoise", locale, "Denoise"),
+            0.0,
+            1.0,
+        )
     if field == "compression_percent":
-        return ("Сжатие (%)", 1, 100)
+        return (
+            _tx(
+                translate,
+                "prompt_editor.send.input.label.compression_percent",
+                locale,
+                "Compression (%)",
+            ),
+            1,
+            100,
+        )
     raise ValueError("unknown field")
 
 

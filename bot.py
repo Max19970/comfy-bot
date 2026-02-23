@@ -27,6 +27,7 @@ from aiogram.types import BotCommand
 from app_context import AppContext, create_app_context, create_app_services
 from comfyui_client import ComfyUIClient
 from config import Config
+from domain.localization import LocalizationService
 from handlers.registry import HandlerRegistryDeps, register_handlers_with_deps
 from model_downloader import ModelDownloader
 from smart_prompt import SmartPromptService
@@ -38,25 +39,56 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-async def configure_bot_commands(bot: Bot) -> None:
-    await bot.set_my_commands(default_bot_commands())
+BOT_COMMAND_SPECS: tuple[tuple[str, str, str], ...] = (
+    ("start", "bot.command.start", "Главное меню"),
+    ("help", "bot.command.help", "Помощь"),
+    ("generate", "bot.command.generate", "Новая генерация"),
+    ("repeat", "bot.command.repeat", "Повтор последней"),
+    ("presets", "bot.command.presets", "Мои пресеты"),
+    ("download", "bot.command.download", "Скачать модель"),
+    ("models", "bot.command.models", "Список моделей"),
+    ("queue", "bot.command.queue", "Очередь ComfyUI"),
+    ("jobs", "bot.command.jobs", "Активные задачи"),
+    ("settings", "bot.command.settings", "Настройки"),
+    ("training", "bot.command.training", "Обучение"),
+    ("cancel", "bot.command.cancel", "Отменить операцию"),
+)
 
 
-def default_bot_commands() -> list[BotCommand]:
-    return [
-        BotCommand(command="start", description="Главное меню"),
-        BotCommand(command="help", description="Помощь"),
-        BotCommand(command="generate", description="Новая генерация"),
-        BotCommand(command="repeat", description="Повтор последней"),
-        BotCommand(command="presets", description="Мои пресеты"),
-        BotCommand(command="download", description="Скачать модель"),
-        BotCommand(command="models", description="Список моделей"),
-        BotCommand(command="queue", description="Очередь ComfyUI"),
-        BotCommand(command="jobs", description="Активные задачи"),
-        BotCommand(command="settings", description="Настройки"),
-        BotCommand(command="training", description="Обучение"),
-        BotCommand(command="cancel", description="Отменить операцию"),
-    ]
+async def configure_bot_commands(
+    bot: Bot,
+    localization: LocalizationService | None = None,
+) -> None:
+    if localization is None:
+        await bot.set_my_commands(default_bot_commands())
+        return
+
+    default_locale = localization.default_locale()
+    await bot.set_my_commands(default_bot_commands(localization, locale=default_locale))
+
+    for locale_code in localization.available_locales():
+        if locale_code == default_locale:
+            continue
+        await bot.set_my_commands(
+            default_bot_commands(localization, locale=locale_code),
+            language_code=locale_code,
+        )
+
+
+def default_bot_commands(
+    localization: LocalizationService | None = None,
+    *,
+    locale: str | None = None,
+) -> list[BotCommand]:
+    commands: list[BotCommand] = []
+    for command, key, default_text in BOT_COMMAND_SPECS:
+        description = (
+            localization.t(key, locale=locale, default=default_text)
+            if localization is not None
+            else default_text
+        )
+        commands.append(BotCommand(command=command, description=description))
+    return commands
 
 
 def create_bot(
@@ -92,7 +124,7 @@ async def main() -> None:
     app = create_app(cfg)
 
     try:
-        await configure_bot_commands(app.bot)
+        await configure_bot_commands(app.bot, app.localization)
     except TelegramAPIError:
         logger.warning("Failed to configure Telegram commands", exc_info=True)
 

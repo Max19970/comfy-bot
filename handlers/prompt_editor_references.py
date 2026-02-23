@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from collections.abc import Callable
 from io import BytesIO
 
 from aiogram.exceptions import TelegramBadRequest
@@ -20,26 +21,57 @@ from .prompt_editor_session import show_prompt_panel
 
 logger = logging.getLogger(__name__)
 
+TranslateText = Callable[[str, str | None, str], str]
+
+
+def _tx(translate: TranslateText | None, key: str, locale: str | None, default: str) -> str:
+    if translate is None:
+        return default
+    return translate(key, locale, default)
+
 
 def make_reference_image(file_id: str) -> dict[str, str]:
     return {"id": uuid.uuid4().hex, "file_id": file_id}
 
 
-async def download_reference_image(message: Message, file_id: str) -> bytes:
+async def download_reference_image(
+    message: Message,
+    file_id: str,
+    *,
+    translate: TranslateText | None = None,
+    locale: str | None = None,
+) -> bytes:
     bot = message.bot
     if bot is None:
-        raise RuntimeError("Bot недоступен в текущем сообщении")
+        raise RuntimeError(
+            _tx(
+                translate,
+                "prompt_editor.references.error.bot_unavailable",
+                locale,
+                "Bot недоступен в текущем сообщении",
+            )
+        )
 
     buffer = BytesIO()
     stream = await bot.download(file_id, destination=buffer)
     if stream is None:
-        raise RuntimeError("Не удалось загрузить файл из Telegram")
+        raise RuntimeError(
+            _tx(
+                translate,
+                "prompt_editor.references.error.telegram_download_failed",
+                locale,
+                "Не удалось загрузить файл из Telegram",
+            )
+        )
     return buffer.getvalue()
 
 
 async def collect_reference_images(
     message: Message,
     refs: list[dict[str, str]],
+    *,
+    translate: TranslateText | None = None,
+    locale: str | None = None,
 ) -> tuple[list[bytes], int]:
     images: list[bytes] = []
     failed = 0
@@ -50,7 +82,14 @@ async def collect_reference_images(
             failed += 1
             continue
         try:
-            images.append(await download_reference_image(message, file_id))
+            images.append(
+                await download_reference_image(
+                    message,
+                    file_id,
+                    translate=translate,
+                    locale=locale,
+                )
+            )
         except (TelegramBadRequest, RuntimeError, OSError):
             logger.exception("Failed to download reference image")
             failed += 1
@@ -97,10 +136,19 @@ async def show_reference_menu(
     client: ComfyUIClient,
     edit: bool = True,
     notice: str = "",
+    translate: TranslateText | None = None,
+    locale: str | None = None,
 ) -> None:
     req = runtime.active_prompt_requests.get(uid)
     if not req:
-        await message.answer("Активный запрос не найден. Используйте /generate.")
+        await message.answer(
+            _tx(
+                translate,
+                "prompt_editor.references.error.active_request_not_found",
+                locale,
+                "Активный запрос не найден. Используйте /generate.",
+            )
+        )
         return
 
     refs = req.params.reference_images
@@ -111,19 +159,85 @@ async def show_reference_menu(
         lines.append("")
     lines.extend(
         [
-            f"🖼 <b>Референс-картинки</b>  {len(refs)}/{MAX_REFERENCE_IMAGES}",
+            (
+                _tx(
+                    translate,
+                    "prompt_editor.references.menu.title",
+                    locale,
+                    "🖼 <b>Референс-картинки</b>",
+                )
+                + f"  {len(refs)}/{MAX_REFERENCE_IMAGES}"
+            ),
             "",
-            "Отправьте фото в чат для добавления. Можно альбомом.",
-            f"IP-Adapter: {ipadapter_icon} {'доступен' if client.supports_ipadapter() else 'недоступен'}",
+            _tx(
+                translate,
+                "prompt_editor.references.menu.send_photo_hint",
+                locale,
+                "Отправьте фото в чат для добавления. Можно альбомом.",
+            ),
+            (
+                _tx(
+                    translate,
+                    "prompt_editor.references.menu.ipadapter_prefix",
+                    locale,
+                    "IP-Adapter:",
+                )
+                + f" {ipadapter_icon} "
+                + _tx(
+                    translate,
+                    (
+                        "prompt_editor.references.menu.ipadapter_available"
+                        if client.supports_ipadapter()
+                        else "prompt_editor.references.menu.ipadapter_unavailable"
+                    ),
+                    locale,
+                    "доступен" if client.supports_ipadapter() else "недоступен",
+                )
+            ),
         ]
     )
 
     kb = build_keyboard(
         [
-            [button("👁 Превью", "pe:refs:view")],
-            [button("➖ Удалить последнюю", "pe:refs:remove_last")],
-            [button("🗑 Очистить все", "pe:refs:clear")],
-            [back_button("pe:back")],
+            [
+                button(
+                    _tx(
+                        translate,
+                        "prompt_editor.references.button.preview",
+                        locale,
+                        "👁 Превью",
+                    ),
+                    "pe:refs:view",
+                )
+            ],
+            [
+                button(
+                    _tx(
+                        translate,
+                        "prompt_editor.references.button.remove_last",
+                        locale,
+                        "➖ Удалить последнюю",
+                    ),
+                    "pe:refs:remove_last",
+                )
+            ],
+            [
+                button(
+                    _tx(
+                        translate,
+                        "prompt_editor.references.button.clear_all",
+                        locale,
+                        "🗑 Очистить все",
+                    ),
+                    "pe:refs:clear",
+                )
+            ],
+            [
+                back_button(
+                    "pe:back",
+                    text=_tx(translate, "common.action.back", locale, "⬅️ Назад"),
+                )
+            ],
         ]
     )
 

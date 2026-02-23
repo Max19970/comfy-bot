@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 
 from aiogram import F, Router
@@ -20,6 +20,8 @@ from core.states import PromptEditorStates
 from core.ui import custom_btn
 from core.ui_kit import build_keyboard
 from core.ui_kit.buttons import button
+from core.user_preferences import read_user_locale
+from domain.localization import LocalizationService
 from domain.loras import EditorLoraSelection
 
 from .prompt_editor_handler_guards import require_message_and_request
@@ -50,12 +52,58 @@ class PromptEditorLoraHandlersDeps:
     back_keyboard: Callable[..., InlineKeyboardMarkup]
     list_available_loras: Callable[[], list[str]]
     cleanup_user_message: Callable[[Message], Awaitable[None]]
+    localization: LocalizationService
+    resolve_user_locale: Callable[..., str]
 
 
 def register_prompt_editor_lora_handlers(
     router: Router,
     deps: PromptEditorLoraHandlersDeps,
 ) -> None:
+    def _resolved_locale(uid: int, *, telegram_locale: str | None) -> str:
+        prefs = deps.runtime.user_preferences.get(uid, {})
+        selected_locale = read_user_locale(
+            prefs,
+            default_locale=deps.localization.default_locale(),
+        )
+        return deps.resolve_user_locale(
+            user_locale=selected_locale,
+            telegram_locale=telegram_locale,
+        )
+
+    def _t(
+        uid: int,
+        key: str,
+        default: str,
+        *,
+        telegram_locale: str | None,
+        params: Mapping[str, object] | None = None,
+    ) -> str:
+        locale = _resolved_locale(uid, telegram_locale=telegram_locale)
+        return deps.localization.t(key, locale=locale, params=params, default=default)
+
+    def _t_cb(
+        cb: CallbackQuery,
+        key: str,
+        default: str,
+        *,
+        params: Mapping[str, object] | None = None,
+    ) -> str:
+        uid = cb.from_user.id if cb.from_user else 0
+        telegram_locale = cb.from_user.language_code if cb.from_user else None
+        return _t(uid, key, default, telegram_locale=telegram_locale, params=params)
+
+    def _t_msg(
+        msg: Message,
+        key: str,
+        default: str,
+        *,
+        params: Mapping[str, object] | None = None,
+    ) -> str:
+        uid = msg.from_user.id if msg.from_user else 0
+        telegram_locale = msg.from_user.language_code if msg.from_user else None
+        return _t(uid, key, default, telegram_locale=telegram_locale, params=params)
+
     async def offer_lora_trigger_prompt(
         message: Message,
         state: FSMContext,
@@ -66,13 +114,22 @@ def register_prompt_editor_lora_handlers(
         edit: bool,
     ) -> None:
         words = deps.lora_trained_words(lora_name)
+        telegram_locale = message.from_user.language_code if message.from_user else None
         if not words:
             await deps.show_lora_menu(
                 message,
                 state,
                 uid,
                 edit=edit,
-                notice="✅ LoRA добавлена.",
+                notice=_t(
+                    uid,
+                    "prompt_editor.lora.notice.added",
+                    "✅ LoRA added.",
+                    telegram_locale=telegram_locale,
+                ),
+                localization=deps.localization,
+                resolve_user_locale=deps.resolve_user_locale,
+                telegram_locale=telegram_locale,
             )
             return
 
@@ -85,7 +142,15 @@ def register_prompt_editor_lora_handlers(
                 state,
                 uid,
                 edit=edit,
-                notice="✅ LoRA добавлена. Триггер-слова уже присутствуют в prompt.",
+                notice=_t(
+                    uid,
+                    "prompt_editor.lora.notice.added_words_already_present",
+                    "✅ LoRA added. Trigger words are already present in prompt.",
+                    telegram_locale=telegram_locale,
+                ),
+                localization=deps.localization,
+                resolve_user_locale=deps.resolve_user_locale,
+                telegram_locale=telegram_locale,
             )
             return
 
@@ -99,26 +164,45 @@ def register_prompt_editor_lora_handlers(
         if len(words_to_offer) > 8:
             preview += "..."
 
-        text = (
-            f"✅ LoRA <code>{h(lora_name)}</code> добавлена.\n"
-            f"🔑 Триггер-слова: <code>{h(preview)}</code>\n"
-            "Добавить их в Positive prompt?"
+        text = _t(
+            uid,
+            "prompt_editor.lora.prompt.words_offer",
+            "✅ LoRA <code>{name}</code> added.\n"
+            "🔑 Trigger words: <code>{words}</code>\n"
+            "Add them to Positive prompt?",
+            telegram_locale=telegram_locale,
+            params={"name": h(lora_name), "words": h(preview)},
         )
         kb = InlineKeyboardMarkup(
             inline_keyboard=[
                 [
                     InlineKeyboardButton(
-                        text="➕ Добавить",
+                        text=_t(
+                            uid,
+                            "prompt_editor.lora.button.add_words",
+                            "➕ Add",
+                            telegram_locale=telegram_locale,
+                        ),
                         callback_data="pe:lora:trg:add",
                     ),
                     InlineKeyboardButton(
-                        text="Пропустить",
+                        text=_t(
+                            uid,
+                            "prompt_editor.lora.button.skip",
+                            "Skip",
+                            telegram_locale=telegram_locale,
+                        ),
                         callback_data="pe:lora:trg:skip",
                     ),
                 ],
                 [
                     InlineKeyboardButton(
-                        text="⬅️ К LoRA меню",
+                        text=_t(
+                            uid,
+                            "prompt_editor.lora.button.back_to_menu",
+                            "⬅️ To LoRA menu",
+                            telegram_locale=telegram_locale,
+                        ),
                         callback_data="pe:lora:trg:skip",
                     )
                 ],
@@ -172,7 +256,15 @@ def register_prompt_editor_lora_handlers(
         if message is None:
             return
         uid = deps.callback_user_id(cb)
-        await deps.show_lora_menu(message, state, uid, edit=True)
+        await deps.show_lora_menu(
+            message,
+            state,
+            uid,
+            edit=True,
+            localization=deps.localization,
+            resolve_user_locale=deps.resolve_user_locale,
+            telegram_locale=cb.from_user.language_code,
+        )
         await cb.answer()
 
     @router.callback_query(F.data == "pe:lora:add")
@@ -184,13 +276,24 @@ def register_prompt_editor_lora_handlers(
         _, req = payload
         names, labels = deps.lora_picker_items(req.params.checkpoint)
         if not names:
-            await cb.answer("На сервере нет доступных LoRA.", show_alert=True)
+            await cb.answer(
+                _t_cb(
+                    cb,
+                    "prompt_editor.lora.alert.no_loras",
+                    "No LoRA models available on the server.",
+                ),
+                show_alert=True,
+            )
             return
 
         await state.update_data(pe_lora_pick_names=names, pe_lora_pick_labels=labels)
         await deps.open_paginated_choice(
             cb,
-            title="Выберите LoRA для добавления:",
+            title=_t_cb(
+                cb,
+                "prompt_editor.lora.choose.title",
+                "Choose LoRA to add:",
+            ),
             items=labels,
             prefix="pe_lora_pick",
             back_callback="pe:edit:lora",
@@ -222,7 +325,11 @@ def register_prompt_editor_lora_handlers(
         idx = await parse_indexed_selection(
             cb,
             prefix="pe_lora_pick",
-            invalid_text="❌ Неверный формат выбора LoRA.",
+            invalid_text=_t_cb(
+                cb,
+                "prompt_editor.lora.alert.invalid_selection_format",
+                "❌ Invalid LoRA selection format.",
+            ),
         )
         if idx is None:
             return
@@ -232,7 +339,10 @@ def register_prompt_editor_lora_handlers(
         if not isinstance(items, list) or not items:
             items = deps.list_available_loras()
         if idx < 0 or idx >= len(items):
-            await cb.answer("❌ Неверный индекс.", show_alert=True)
+            await cb.answer(
+                _t_cb(cb, "prompt_editor.lora.alert.invalid_index", "❌ Invalid index."),
+                show_alert=True,
+            )
             return
 
         chosen = items[idx]
@@ -242,22 +352,36 @@ def register_prompt_editor_lora_handlers(
         status, ckpt_base, lora_base = deps.lora_compatibility(req.params.checkpoint, chosen)
         compatibility_line = ""
         if status == "compatible" and ckpt_base and lora_base:
-            compatibility_line = (
-                f"✅ Совместимо: checkpoint <code>{h(ckpt_base)}</code> "
-                f"↔ LoRA <code>{h(lora_base)}</code>"
+            compatibility_line = _t_cb(
+                cb,
+                "prompt_editor.lora.compatibility.compatible",
+                "✅ Compatible: checkpoint <code>{checkpoint}</code> ↔ LoRA <code>{lora}</code>",
+                params={"checkpoint": h(ckpt_base), "lora": h(lora_base)},
             )
         elif status == "incompatible" and ckpt_base and lora_base:
-            compatibility_line = (
-                f"⚠️ Возможна несовместимость: checkpoint <code>{h(ckpt_base)}</code> "
-                f"↔ LoRA <code>{h(lora_base)}</code>"
+            compatibility_line = _t_cb(
+                cb,
+                "prompt_editor.lora.compatibility.incompatible",
+                "⚠️ Potential mismatch: checkpoint <code>{checkpoint}</code> ↔ LoRA <code>{lora}</code>",
+                params={"checkpoint": h(ckpt_base), "lora": h(lora_base)},
             )
         elif lora_base:
-            compatibility_line = f"ℹ️ Base LoRA: <code>{h(lora_base)}</code>"
+            compatibility_line = _t_cb(
+                cb,
+                "prompt_editor.lora.compatibility.base",
+                "ℹ️ LoRA base: <code>{base}</code>",
+                params={"base": h(lora_base)},
+            )
 
         trigger_words = deps.lora_trained_words(chosen)
         trigger_line = ""
         if trigger_words:
-            trigger_line = f"🔑 Триггер-слова: <code>{h(', '.join(trigger_words[:8]))}</code>"
+            trigger_line = _t_cb(
+                cb,
+                "prompt_editor.lora.trigger_words",
+                "🔑 Trigger words: <code>{words}</code>",
+                params={"words": h(", ".join(trigger_words[:8]))},
+            )
 
         kb = InlineKeyboardMarkup(
             inline_keyboard=[
@@ -274,19 +398,26 @@ def register_prompt_editor_lora_handlers(
                 custom_btn("pe_lstr:custom"),
                 [
                     InlineKeyboardButton(
-                        text="⬅️ Назад",
+                        text=_t_cb(cb, "common.action.back", "⬅️ Back"),
                         callback_data="pe:edit:lora",
                     )
                 ],
             ]
         )
 
-        text_lines = [f"LoRA: <code>{h(chosen)}</code>"]
+        text_lines = [
+            _t_cb(
+                cb,
+                "prompt_editor.lora.selected",
+                "LoRA: <code>{name}</code>",
+                params={"name": h(chosen)},
+            )
+        ]
         if compatibility_line:
             text_lines.append(compatibility_line)
         if trigger_line:
             text_lines.append(trigger_line)
-        text_lines.append("Выберите strength:")
+        text_lines.append(_t_cb(cb, "prompt_editor.lora.choose.strength", "Choose strength:"))
 
         await message.edit_text("\n".join(text_lines), reply_markup=kb)
         await cb.answer()
@@ -304,7 +435,11 @@ def register_prompt_editor_lora_handlers(
         value = await parse_value_selection(
             cb,
             prefix="pe_lstr",
-            invalid_text="❌ Неверный формат силы LoRA.",
+            invalid_text=_t_cb(
+                cb,
+                "prompt_editor.lora.alert.invalid_strength_format",
+                "❌ Invalid LoRA strength format.",
+            ),
         )
         if value is None:
             return
@@ -312,7 +447,11 @@ def register_prompt_editor_lora_handlers(
         if value == "custom":
             await state.set_state(PromptEditorStates.entering_custom_lora_strength)
             await message.edit_text(
-                "Введите LoRA strength (0.0 - 2.0):",
+                _t_cb(
+                    cb,
+                    "prompt_editor.lora.prompt.enter_strength",
+                    "Enter LoRA strength (0.0 - 2.0):",
+                ),
                 reply_markup=deps.back_keyboard(),
             )
             await cb.answer()
@@ -321,7 +460,10 @@ def register_prompt_editor_lora_handlers(
         data = await state.get_data()
         lora_name = data.get("pe_pending_lora")
         if not lora_name:
-            await cb.answer("LoRA не выбрана.", show_alert=True)
+            await cb.answer(
+                _t_cb(cb, "prompt_editor.lora.alert.not_selected", "LoRA is not selected."),
+                show_alert=True,
+            )
             return
 
         deps.add_editor_lora(req, lora_name, float(value))
@@ -348,14 +490,36 @@ def register_prompt_editor_lora_handlers(
             if not 0.0 <= value <= 2.0:
                 raise ValueError
         except ValueError:
-            await msg.answer("Некорректное значение (0.0 - 2.0):")
+            await msg.answer(
+                _t_msg(
+                    msg,
+                    "prompt_editor.lora.alert.invalid_strength_value",
+                    "Invalid value (0.0 - 2.0):",
+                )
+            )
             return
 
         data = await state.get_data()
         lora_name = data.get("pe_pending_lora")
         if not lora_name:
-            await msg.answer("LoRA не выбрана. Начните добавление заново.")
-            await deps.show_lora_menu(msg, state, uid, edit=False)
+            telegram_locale = msg.from_user.language_code if msg.from_user else None
+            await msg.answer(
+                _t(
+                    uid,
+                    "prompt_editor.lora.alert.not_selected_restart",
+                    "LoRA is not selected. Start adding again.",
+                    telegram_locale=telegram_locale,
+                )
+            )
+            await deps.show_lora_menu(
+                msg,
+                state,
+                uid,
+                edit=False,
+                localization=deps.localization,
+                resolve_user_locale=deps.resolve_user_locale,
+                telegram_locale=telegram_locale,
+            )
             return
 
         deps.add_editor_lora(req, lora_name, value)
@@ -386,7 +550,11 @@ def register_prompt_editor_lora_handlers(
         action = await parse_value_selection(
             cb,
             prefix="pe:lora:trg",
-            invalid_text="❌ Некорректное действие.",
+            invalid_text=_t_cb(
+                cb,
+                "prompt_editor.lora.alert.invalid_action",
+                "❌ Invalid action.",
+            ),
         )
         if action is None:
             return
@@ -396,18 +564,38 @@ def register_prompt_editor_lora_handlers(
         lora_name = str(data.get("pe_pending_trigger_lora") or "").strip()
         words = [str(word).strip() for word in words_raw or [] if str(word).strip()]
 
-        notice = "✅ LoRA добавлена."
+        default_lora_name = _t_cb(cb, "prompt_editor.lora.name", "LoRA")
+        notice = _t_cb(cb, "prompt_editor.lora.notice.added", "✅ LoRA added.")
         if action == "add" and words:
             req.params.positive = deps.merge_prompt_with_words(req.params.positive, words)
-            notice = f"✅ Триггер-слова для {lora_name or 'LoRA'} добавлены в Positive prompt."
+            notice = _t_cb(
+                cb,
+                "prompt_editor.lora.notice.trigger_words_added",
+                "✅ Trigger words for {name} were added to Positive prompt.",
+                params={"name": lora_name or default_lora_name},
+            )
         elif words:
-            notice = f"ℹ️ Триггер-слова для {lora_name or 'LoRA'} не добавлены."
+            notice = _t_cb(
+                cb,
+                "prompt_editor.lora.notice.trigger_words_skipped",
+                "ℹ️ Trigger words for {name} were not added.",
+                params={"name": lora_name or default_lora_name},
+            )
 
         await state.update_data(
             pe_pending_trigger_words=None,
             pe_pending_trigger_lora=None,
         )
-        await deps.show_lora_menu(message, state, uid, edit=True, notice=notice)
+        await deps.show_lora_menu(
+            message,
+            state,
+            uid,
+            edit=True,
+            notice=notice,
+            localization=deps.localization,
+            resolve_user_locale=deps.resolve_user_locale,
+            telegram_locale=cb.from_user.language_code,
+        )
         await cb.answer()
 
     @router.callback_query(F.data == "pe:lora:remove_last")
@@ -420,10 +608,27 @@ def register_prompt_editor_lora_handlers(
             return
 
         message, uid, req = context
-        notice = "ℹ️ Цепочка LoRA не изменилась."
+        notice = _t_cb(
+            cb,
+            "prompt_editor.lora.notice.chain_unchanged",
+            "ℹ️ LoRA chain is unchanged.",
+        )
         if deps.remove_last_editor_lora(req):
-            notice = "✅ Последняя LoRA удалена."
-        await deps.show_lora_menu(message, state, uid, edit=True, notice=notice)
+            notice = _t_cb(
+                cb,
+                "prompt_editor.lora.notice.last_removed",
+                "✅ Last LoRA was removed.",
+            )
+        await deps.show_lora_menu(
+            message,
+            state,
+            uid,
+            edit=True,
+            notice=notice,
+            localization=deps.localization,
+            resolve_user_locale=deps.resolve_user_locale,
+            telegram_locale=cb.from_user.language_code,
+        )
         await cb.answer()
 
     @router.callback_query(F.data == "pe:lora:clear")
@@ -443,16 +648,36 @@ def register_prompt_editor_lora_handlers(
                 state,
                 uid,
                 edit=True,
-                notice="ℹ️ Цепочка LoRA уже пуста.",
+                notice=_t_cb(
+                    cb,
+                    "prompt_editor.lora.notice.already_empty",
+                    "ℹ️ LoRA chain is already empty.",
+                ),
+                localization=deps.localization,
+                resolve_user_locale=deps.resolve_user_locale,
+                telegram_locale=cb.from_user.language_code,
             )
             await cb.answer()
             return
 
         kb = build_keyboard(
-            [[button("✅ Удалить", "pe:lora:clear:yes"), button("❌ Отмена", "pe:lora:clear:no")]]
+            [
+                [
+                    button(
+                        _t_cb(cb, "prompt_editor.lora.button.confirm_delete", "✅ Remove"),
+                        "pe:lora:clear:yes",
+                    ),
+                    button(_t_cb(cb, "common.action.cancel", "❌ Cancel"), "pe:lora:clear:no"),
+                ]
+            ]
         )
         await message.edit_text(
-            f"⚠️ Удалить {count} LoRA из цепочки?",
+            _t_cb(
+                cb,
+                "prompt_editor.lora.confirm.clear",
+                "⚠️ Remove {count} LoRA from the chain?",
+                params={"count": count},
+            ),
             reply_markup=kb,
         )
         await cb.answer()
@@ -473,7 +698,14 @@ def register_prompt_editor_lora_handlers(
             state,
             uid,
             edit=True,
-            notice="✅ Цепочка LoRA очищена.",
+            notice=_t_cb(
+                cb,
+                "prompt_editor.lora.notice.chain_cleared",
+                "✅ LoRA chain cleared.",
+            ),
+            localization=deps.localization,
+            resolve_user_locale=deps.resolve_user_locale,
+            telegram_locale=cb.from_user.language_code,
         )
         await cb.answer()
 
@@ -492,6 +724,13 @@ def register_prompt_editor_lora_handlers(
             state,
             uid,
             edit=True,
-            notice="↩️ Очистка LoRA отменена.",
+            notice=_t_cb(
+                cb,
+                "prompt_editor.lora.notice.clear_cancelled",
+                "↩️ LoRA clear cancelled.",
+            ),
+            localization=deps.localization,
+            resolve_user_locale=deps.resolve_user_locale,
+            telegram_locale=cb.from_user.language_code,
         )
         await cb.answer()

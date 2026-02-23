@@ -7,6 +7,7 @@ from typing import Any, Protocol
 GenerationProgressCallback = Callable[[int, int, str], Awaitable[None]]
 GenerationImageCallback = Callable[[bytes], Awaitable[None]]
 PromptIdCallback = Callable[[str], Awaitable[None]]
+TranslateText = Callable[[str, str | None, str], str]
 
 
 class ComfyExecutionGateway(Protocol):
@@ -46,8 +47,21 @@ class ComfyExecutionGateway(Protocol):
 
 
 class ComfyExecutionOrchestrator:
-    def __init__(self, gateway: ComfyExecutionGateway) -> None:
+    def __init__(
+        self,
+        gateway: ComfyExecutionGateway,
+        *,
+        translate: TranslateText | None = None,
+        locale: str | None = None,
+    ) -> None:
         self._gateway = gateway
+        self._translate = translate
+        self._locale = locale
+
+    def _t(self, key: str, default: str) -> str:
+        if self._translate is None:
+            return default
+        return self._translate(key, self._locale, default)
 
     async def _emit_progress(
         self,
@@ -75,7 +89,15 @@ class ComfyExecutionOrchestrator:
         if prompt_id_cb:
             await prompt_id_cb(prompt_id)
 
-        await self._emit_progress(progress_cb, 0, 0, "Промпт отправлен в очередь ComfyUI...")
+        await self._emit_progress(
+            progress_cb,
+            0,
+            0,
+            self._t(
+                "infrastructure.comfy_execution.status.prompt_queued",
+                "Промпт отправлен в очередь ComfyUI...",
+            ),
+        )
 
         if progress_cb and client_id:
             history = await self._gateway.wait_for_completion_realtime(
@@ -89,7 +111,15 @@ class ComfyExecutionOrchestrator:
         else:
             history = await self._gateway.wait_for_completion(prompt_id)
 
-        await self._emit_progress(progress_cb, 1, 1, "Генерация завершена. Получаю изображения...")
+        await self._emit_progress(
+            progress_cb,
+            1,
+            1,
+            self._t(
+                "infrastructure.comfy_execution.status.collecting_images",
+                "Генерация завершена. Получаю изображения...",
+            ),
+        )
 
         images_with_keys = await self._gateway.get_images_with_keys(history)
         if image_cb:

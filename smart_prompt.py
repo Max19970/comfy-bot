@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import random
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Mapping
 
 from application.smart_prompt_text import (
     dedupe_tags,
@@ -14,6 +14,7 @@ from application.smart_prompt_text import (
     split_tags,
 )
 from config import Config
+from domain.localization import LocalizationService
 from infrastructure.tipo_backend import TipoBackend, TipoBackendError, TipoBackendProtocol
 
 _MAX_DESCRIPTION_LEN = 4000
@@ -40,7 +41,14 @@ class SmartPromptError(RuntimeError):
 
 
 class SmartPromptService:
-    def __init__(self, cfg: Config, *, backend: TipoBackendProtocol | None = None) -> None:
+    def __init__(
+        self,
+        cfg: Config,
+        *,
+        backend: TipoBackendProtocol | None = None,
+        localization: LocalizationService | None = None,
+        locale: str | None = None,
+    ) -> None:
         self.provider = self._normalize_provider(cfg.smart_prompt_provider)
         raw_model = cfg.smart_prompt_model.strip()
         if raw_model in {"", "gpt-4o-mini", "gemini-2.0-flash", "llama3.2-vision"}:
@@ -59,6 +67,8 @@ class SmartPromptService:
         self.output_format = self._normalize_format(cfg.smart_prompt_format)
         self.ban_tags = cfg.smart_prompt_ban_tags.strip()
         self.negative_base = cfg.smart_prompt_negative_base.strip()
+        self.localization = localization
+        self.locale = locale
 
         if not self.negative_base:
             self.negative_base = (
@@ -72,6 +82,25 @@ class SmartPromptService:
             model=self.model,
             device=self.device,
         )
+
+    def _t(
+        self,
+        key: str,
+        default: str,
+        *,
+        params: Mapping[str, object] | None = None,
+    ) -> str:
+        if self.localization is None:
+            text = default
+        else:
+            locale = self.locale or self.localization.default_locale()
+            text = self.localization.t(key, locale=locale, params=params, default=default)
+        if params:
+            try:
+                return text.format(**params)
+            except Exception:
+                return text
+        return text
 
     # ------------------------------------------------------------------
     # Static helpers
@@ -148,15 +177,28 @@ class SmartPromptService:
 
     def configuration_hint(self) -> str:
         if self.provider == "disabled":
-            return "Умный промпт выключен. Укажите SMART_PROMPT_PROVIDER=tipo в .env."
+            return self._t(
+                "smart_prompt.error.provider_disabled",
+                "Умный промпт выключен. Укажите SMART_PROMPT_PROVIDER=tipo в .env.",
+            )
         if self.provider != "tipo":
-            return "Неизвестный SMART_PROMPT_PROVIDER. Поддерживаются: tipo, disabled."
+            return self._t(
+                "smart_prompt.error.provider_invalid",
+                "Неизвестный SMART_PROMPT_PROVIDER. Поддерживаются: tipo, disabled.",
+            )
         if not self.model:
-            return "Не задан SMART_PROMPT_MODEL для TIPO."
+            return self._t(
+                "smart_prompt.error.model_missing",
+                "Не задан SMART_PROMPT_MODEL для TIPO.",
+            )
 
         missing = self._missing_dependencies()
         if missing:
-            return f"Отсутствуют зависимости для TIPO. Установите: pip install {' '.join(missing)}"
+            return self._t(
+                "smart_prompt.error.dependencies_missing",
+                "Отсутствуют зависимости для TIPO. Установите: pip install {packages}",
+                params={"packages": " ".join(missing)},
+            )
 
         if self._backend.backend_error:
             return self._backend.backend_error
@@ -196,14 +238,29 @@ class SmartPromptService:
 
         if not self.is_enabled():
             hint = self.configuration_hint()
-            raise SmartPromptError(hint or "Сервис умного промпта недоступен.")
+            raise SmartPromptError(
+                hint
+                or self._t(
+                    "smart_prompt.error.service_unavailable",
+                    "Сервис умного промпта недоступен.",
+                )
+            )
 
         user_description = description.strip()
         if not user_description:
-            raise SmartPromptError("Пустое описание запроса.")
+            raise SmartPromptError(
+                self._t(
+                    "smart_prompt.error.empty_description",
+                    "Пустое описание запроса.",
+                )
+            )
         if len(user_description) > _MAX_DESCRIPTION_LEN:
             raise SmartPromptError(
-                f"Описание слишком длинное. Сократите до {_MAX_DESCRIPTION_LEN} символов."
+                self._t(
+                    "smart_prompt.error.description_too_long",
+                    "Описание слишком длинное. Сократите до {max_chars} символов.",
+                    params={"max_chars": _MAX_DESCRIPTION_LEN},
+                )
             )
 
         await self._ensure_backend_loaded()
@@ -220,8 +277,10 @@ class SmartPromptService:
                 )
         except asyncio.TimeoutError as exc:
             raise SmartPromptError(
-                "TIPO не успел обработать запрос по таймауту. "
-                "Попробуйте сократить описание или увеличить SMART_PROMPT_TIMEOUT."
+                self._t(
+                    "smart_prompt.error.timeout",
+                    "TIPO не успел обработать запрос по таймауту. Попробуйте сократить описание или увеличить SMART_PROMPT_TIMEOUT.",
+                )
             ) from exc
 
     # ------------------------------------------------------------------
@@ -301,7 +360,12 @@ class SmartPromptService:
         # 8. Build positive prompt via apply_format
         positive = self._build_positive_prompt(result_map)
         if not positive:
-            raise SmartPromptError("TIPO вернул пустой промпт.")
+            raise SmartPromptError(
+                self._t(
+                    "smart_prompt.error.empty_result",
+                    "TIPO вернул пустой промпт.",
+                )
+            )
         negative = self._build_negative_prompt()
         return SmartPromptResult(positive=positive, negative=negative)
 

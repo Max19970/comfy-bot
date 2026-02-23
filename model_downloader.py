@@ -6,7 +6,7 @@ import asyncio
 import logging
 import os
 import re
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
@@ -17,6 +17,7 @@ import aiohttp
 from config import Config
 from core.formatting import human_size, short_number
 from domain.base_model_policy import BaseModelPolicy
+from domain.localization import LocalizationService
 from domain.loras import LoraCatalogEntry, lora_catalog_entry_from_metadata
 from infrastructure.model_metadata_index import ModelMetadataIndexRepository
 from infrastructure.model_source_clients import (
@@ -27,6 +28,19 @@ from infrastructure.model_source_clients import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _t(
+    localization: LocalizationService | None,
+    key: str,
+    *,
+    locale: str | None,
+    default: str,
+    params: Mapping[str, object] | None = None,
+) -> str:
+    if localization is None:
+        return default
+    return localization.t(key, locale=locale, params=params, default=default)
 
 
 # Internal model type -> CivitAI "types" parameter
@@ -294,14 +308,37 @@ def _strip_html(raw: str) -> str:
 class ModelDownloader:
     """Async downloader with CivitAI/HuggingFace search and local metadata index."""
 
-    def __init__(self, config: Config) -> None:
+    def __init__(
+        self,
+        config: Config,
+        *,
+        localization: LocalizationService | None = None,
+        locale: str | None = None,
+    ) -> None:
         self.cfg = config
+        self._localization = localization
+        self._locale = locale
         self._session: aiohttp.ClientSession | None = None
         self._metadata_index = ModelMetadataIndexRepository(self.cfg.comfyui_models_path)
         self._base_model_policy = BaseModelPolicy()
         self._civitai_api = CivitaiApiClient(self._get_session)
         self._huggingface_api = HuggingFaceApiClient(self._get_session)
         self._remote_file_downloader = RemoteFileDownloader(self._get_session)
+
+    def _translate(
+        self,
+        key: str,
+        default: str,
+        *,
+        params: Mapping[str, object] | None = None,
+    ) -> str:
+        return _t(
+            self._localization,
+            key,
+            locale=self._locale,
+            default=default,
+            params=params,
+        )
 
     async def _get_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
@@ -1156,7 +1193,14 @@ class ModelDownloader:
             headers["Authorization"] = f"Bearer {self.cfg.huggingface_token}"
 
         if progress_cb:
-            await progress_cb(0, result.size_bytes, "📥 Начинаю скачивание...")
+            await progress_cb(
+                0,
+                result.size_bytes,
+                self._translate(
+                    "model_downloader.progress.start",
+                    "📥 Начинаю скачивание...",
+                ),
+            )
 
         tmp_path = target_path + ".tmp"
         total = int(result.size_bytes or 0)
@@ -1178,7 +1222,15 @@ class ModelDownloader:
                 await progress_cb(
                     downloaded_bytes,
                     total,
-                    f"📥 {pct}% ({_human_size(downloaded_bytes)} / {_human_size(total)})",
+                    self._translate(
+                        "model_downloader.progress.percent",
+                        "📥 {pct}% ({downloaded} / {total})",
+                        params={
+                            "pct": pct,
+                            "downloaded": _human_size(downloaded_bytes),
+                            "total": _human_size(total),
+                        },
+                    ),
                 )
 
         try:
@@ -1204,7 +1256,15 @@ class ModelDownloader:
             raise
 
         if progress_cb:
-            await progress_cb(total, total, f"✅ Скачано: {safe_name} ({_human_size(total)})")
+            await progress_cb(
+                total,
+                total,
+                self._translate(
+                    "model_downloader.progress.done",
+                    "✅ Скачано: {filename} ({size})",
+                    params={"filename": safe_name, "size": _human_size(total)},
+                ),
+            )
 
         logger.info("Downloaded %s to %s", result.filename, target_path)
         return target_path

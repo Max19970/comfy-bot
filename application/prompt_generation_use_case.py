@@ -6,6 +6,14 @@ from dataclasses import dataclass
 
 from core.models import GenerationParams
 
+TranslateText = Callable[[str, str | None, str], str]
+
+
+def _tx(translate: TranslateText | None, key: str, locale: str | None, default: str) -> str:
+    if translate is None:
+        return default
+    return translate(key, locale, default)
+
 
 @dataclass(frozen=True, slots=True)
 class GenerationPreparation:
@@ -42,11 +50,23 @@ class PromptGenerationUseCase:
         params: GenerationParams,
         *,
         reference_image_count: int,
+        translate: TranslateText | None = None,
+        locale: str | None = None,
     ) -> str | None:
         if params.controlnet_name and reference_image_count <= 0:
-            return "❌ Для ControlNet нужно добавить хотя бы один референс."
+            return _tx(
+                translate,
+                "application.prompt_generation.reference.controlnet_required",
+                locale,
+                "❌ Для ControlNet нужно добавить хотя бы один референс.",
+            )
         if params.reference_images and reference_image_count <= 0:
-            return "❌ Не удалось загрузить референс-картинки. Загрузите их заново в редакторе."
+            return _tx(
+                translate,
+                "application.prompt_generation.reference.reload_failed",
+                locale,
+                "❌ Не удалось загрузить референс-картинки. Загрузите их заново в редакторе.",
+            )
         return None
 
     def resolve_mode(self, params: GenerationParams, *, has_reference_images: bool) -> str:
@@ -72,6 +92,8 @@ class PromptGenerationUseCase:
         incompatible_loras: tuple[tuple[str, str, str], ...],
         *,
         max_items: int = 3,
+        translate: TranslateText | None = None,
+        locale: str | None = None,
     ) -> tuple[str, str] | None:
         if not incompatible_loras:
             return None
@@ -79,6 +101,11 @@ class PromptGenerationUseCase:
         suffix = (
             ""
             if len(incompatible_loras) <= max_items
-            else f" и ещё {len(incompatible_loras) - max_items}"
+            else _tx(
+                translate,
+                "application.prompt_generation.lora.more_suffix",
+                locale,
+                " и ещё {count}",
+            ).format(count=len(incompatible_loras) - max_items)
         )
         return listed, suffix

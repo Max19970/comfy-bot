@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 
 from aiogram import F, Router
@@ -18,6 +18,7 @@ from core.html_utils import h
 from core.interaction import require_callback_message
 from core.runtime import PromptRequest
 from core.states import PromptEditorStates
+from domain.localization import LocalizationService
 from smart_prompt import SmartPromptError, SmartPromptService
 
 
@@ -42,12 +43,57 @@ class PromptEditorSmartHandlersDeps:
     prompt_input_text: Callable[..., str]
     back_keyboard: Callable[..., InlineKeyboardMarkup]
     cleanup_user_message: Callable[[Message], Awaitable[None]]
+    localization: LocalizationService | None = None
+    resolve_user_locale: Callable[..., str] | None = None
 
 
 def register_prompt_editor_smart_handlers(
     router: Router,
     deps: PromptEditorSmartHandlersDeps,
 ) -> None:
+    def _resolved_locale(uid: int, *, telegram_locale: str | None) -> str | None:
+        _ = uid
+        if deps.localization is None:
+            return None
+        selected_locale = deps.localization.default_locale()
+        if deps.resolve_user_locale is None:
+            return selected_locale
+        return deps.resolve_user_locale(
+            user_locale=selected_locale,
+            telegram_locale=telegram_locale,
+        )
+
+    def _t(
+        uid: int,
+        key: str,
+        default: str,
+        *,
+        telegram_locale: str | None,
+        params: Mapping[str, object] | None = None,
+    ) -> str:
+        if deps.localization is None:
+            text = default
+        else:
+            locale = _resolved_locale(uid, telegram_locale=telegram_locale)
+            text = deps.localization.t(key, locale=locale, params=params, default=default)
+        if params:
+            try:
+                return text.format(**params)
+            except Exception:
+                return text
+        return text
+
+    def _t_cb(
+        cb: CallbackQuery,
+        key: str,
+        default: str,
+        *,
+        params: Mapping[str, object] | None = None,
+    ) -> str:
+        uid = cb.from_user.id if cb.from_user else 0
+        telegram_locale = cb.from_user.language_code if cb.from_user else None
+        return _t(uid, key, default, telegram_locale=telegram_locale, params=params)
+
     @router.callback_query(F.data == "pe:smart:start")
     async def pe_smart_prompt_start(cb: CallbackQuery, state: FSMContext):
         message = await require_callback_message(cb)
@@ -63,19 +109,49 @@ def register_prompt_editor_smart_handlers(
             hint = (
                 deps.smart_prompt.configuration_hint()
                 if deps.smart_prompt is not None
-                else "Сервис умного промпта недоступен."
+                else _t_cb(
+                    cb,
+                    "prompt_editor.smart.error.service_unavailable",
+                    "Сервис умного промпта недоступен.",
+                )
             )
             await cb.answer(hint, show_alert=True)
             return
 
         lines = [
-            "🧠 <b>Smart Prompt</b>",
+            _t_cb(cb, "prompt_editor.smart.start.title", "🧠 <b>Smart Prompt</b>"),
             "",
-            "Опишите желаемую картинку естественным языком.",
-            "TIPO преобразует текст в теговый Positive/Negative.",
-            "Можно приложить фото с подписью - фото добавится в референсы.",
+            _t_cb(
+                cb,
+                "prompt_editor.smart.start.description_line1",
+                "Опишите желаемую картинку естественным языком.",
+            ),
+            _t_cb(
+                cb,
+                "prompt_editor.smart.start.description_line2",
+                "TIPO преобразует текст в теговый Positive/Negative.",
+            ),
+            _t_cb(
+                cb,
+                "prompt_editor.smart.start.description_line3",
+                "Можно приложить фото с подписью - фото добавится в референсы.",
+            ),
             "",
-            f"🧪 <b>Checkpoint:</b> <code>{h(req.params.checkpoint or '(не выбран)')}</code>",
+            _t_cb(
+                cb,
+                "prompt_editor.smart.start.checkpoint",
+                "🧪 <b>Checkpoint:</b> <code>{checkpoint}</code>",
+                params={
+                    "checkpoint": h(
+                        req.params.checkpoint
+                        or _t_cb(
+                            cb,
+                            "prompt_editor.smart.start.checkpoint_not_selected",
+                            "(не выбран)",
+                        )
+                    )
+                },
+            ),
         ]
         await state.set_state(PromptEditorStates.entering_smart_prompt)
         await message.edit_text("\n".join(lines), reply_markup=deps.back_keyboard("pe:back"))
@@ -88,6 +164,7 @@ def register_prompt_editor_smart_handlers(
             return
 
         uid, req = payload
+        telegram_locale = msg.from_user.language_code if msg.from_user else None
         if not deps.smart_prompt_is_enabled() or deps.smart_prompt is None:
             await deps.show_prompt_editor(
                 msg,
@@ -96,7 +173,12 @@ def register_prompt_editor_smart_handlers(
                 notice=(
                     deps.smart_prompt.configuration_hint()
                     if deps.smart_prompt is not None
-                    else "Сервис умного промпта недоступен."
+                    else _t(
+                        uid,
+                        "prompt_editor.smart.error.service_unavailable",
+                        "Сервис умного промпта недоступен.",
+                        telegram_locale=telegram_locale,
+                    )
                 ),
             )
             return
@@ -104,13 +186,24 @@ def register_prompt_editor_smart_handlers(
         description = (msg.text or msg.caption or "").strip()
         if not description:
             await msg.answer(
-                "Отправьте текстовое описание. Можно прикрепить изображение с подписью."
+                _t(
+                    uid,
+                    "prompt_editor.smart.input.description_required",
+                    "Отправьте текстовое описание. Можно прикрепить изображение с подписью.",
+                    telegram_locale=telegram_locale,
+                )
             )
             return
 
         if len(description) > deps.smart_prompt_input_max_chars:
             await msg.answer(
-                f"Описание слишком длинное. Лимит: {deps.smart_prompt_input_max_chars} символов."
+                _t(
+                    uid,
+                    "prompt_editor.smart.input.description_too_long",
+                    "Описание слишком длинное. Лимит: {limit} символов.",
+                    telegram_locale=telegram_locale,
+                    params={"limit": deps.smart_prompt_input_max_chars},
+                )
             )
             return
 
@@ -119,7 +212,14 @@ def register_prompt_editor_smart_handlers(
             req.params.reference_images,
         )
 
-        status_msg = await msg.answer("🧠 <b>TIPO:</b> оптимизирую в теги…")
+        status_msg = await msg.answer(
+            _t(
+                uid,
+                "prompt_editor.smart.status.optimizing",
+                "🧠 <b>TIPO:</b> оптимизирую в теги…",
+                telegram_locale=telegram_locale,
+            )
+        )
 
         try:
             result = await deps.smart_prompt.generate_prompts(
@@ -135,7 +235,13 @@ def register_prompt_editor_smart_handlers(
                 msg,
                 state,
                 uid,
-                notice=f"Умный промпт не выполнен: {exc}",
+                notice=_t(
+                    uid,
+                    "prompt_editor.smart.error.execution_failed",
+                    "Умный промпт не выполнен: {error}",
+                    telegram_locale=telegram_locale,
+                    params={"error": exc},
+                ),
             )
             return
         except (RuntimeError, ValueError, OSError, asyncio.TimeoutError) as exc:
@@ -148,16 +254,43 @@ def register_prompt_editor_smart_handlers(
                 msg,
                 state,
                 uid,
-                notice=f"❌ Умный промпт не выполнен: {exc}",
+                notice=_t(
+                    uid,
+                    "prompt_editor.smart.error.runtime_failed",
+                    "❌ Умный промпт не выполнен: {error}",
+                    telegram_locale=telegram_locale,
+                    params={"error": exc},
+                ),
             )
             return
 
-        notice_lines = ["✅ TIPO: теговые промпты готовы к применению."]
+        notice_lines = [
+            _t(
+                uid,
+                "prompt_editor.smart.notice.ready",
+                "✅ TIPO: теговые промпты готовы к применению.",
+                telegram_locale=telegram_locale,
+            )
+        ]
         if added_refs:
-            notice_lines.append(f"Добавлено референсов из сообщения: {added_refs}.")
+            notice_lines.append(
+                _t(
+                    uid,
+                    "prompt_editor.smart.notice.refs_added",
+                    "Добавлено референсов из сообщения: {count}.",
+                    telegram_locale=telegram_locale,
+                    params={"count": added_refs},
+                )
+            )
         if refs_limit_hit:
             notice_lines.append(
-                f"Лимит референсов ({deps.max_reference_images}) достигнут: часть файлов не добавлена."
+                _t(
+                    uid,
+                    "prompt_editor.smart.notice.refs_limit_hit",
+                    "Лимит референсов ({limit}) достигнут: часть файлов не добавлена.",
+                    telegram_locale=telegram_locale,
+                    params={"limit": deps.max_reference_images},
+                )
             )
 
         await state.update_data(
@@ -179,7 +312,11 @@ def register_prompt_editor_smart_handlers(
     @router.callback_query(F.data == "pe:smart:guide")
     async def pe_smart_guide_disabled(cb: CallbackQuery):
         await cb.answer(
-            "Prompting Guide отключён и больше не используется.",
+            _t_cb(
+                cb,
+                "prompt_editor.smart.guide.disabled",
+                "Prompting Guide отключён и больше не используется.",
+            ),
             show_alert=True,
         )
 
@@ -196,7 +333,14 @@ def register_prompt_editor_smart_handlers(
         data = await state.get_data()
         req.params.positive = str(data.get("pe_smart_generated_positive") or "").strip()
         req.params.negative = str(data.get("pe_smart_generated_negative") or "").strip()
-        notice = str(data.get("pe_smart_notice") or "✅ TIPO-промпт применён.").strip()
+        notice = str(
+            data.get("pe_smart_notice")
+            or _t_cb(
+                cb,
+                "prompt_editor.smart.notice.applied",
+                "✅ TIPO-промпт применён.",
+            )
+        ).strip()
 
         await deps.clear_smart_prompt_result_data(state)
         await deps.show_prompt_editor(message, state, uid, edit=True, notice=notice)
@@ -220,7 +364,11 @@ def register_prompt_editor_smart_handlers(
         req.params.negative = deps.merge_prompt_text(req.params.negative, generated_negative)
 
         meta_notice = str(data.get("pe_smart_notice") or "").strip()
-        notice = "📝 TIPO-промпт объединён с текущими Positive/Negative."
+        notice = _t_cb(
+            cb,
+            "prompt_editor.smart.notice.merged",
+            "📝 TIPO-промпт объединён с текущими Positive/Negative.",
+        )
         if meta_notice:
             notice += "\n" + meta_notice
 
@@ -248,7 +396,11 @@ def register_prompt_editor_smart_handlers(
             state,
             uid,
             edit=True,
-            notice="↩️ Возвращены прежние Positive/Negative.",
+            notice=_t_cb(
+                cb,
+                "prompt_editor.smart.notice.restored",
+                "↩️ Возвращены прежние Positive/Negative.",
+            ),
         )
         await cb.answer()
 
@@ -268,7 +420,11 @@ def register_prompt_editor_smart_handlers(
             state,
             uid,
             edit=True,
-            notice="ℹ️ Результат TIPO не применён.",
+            notice=_t_cb(
+                cb,
+                "prompt_editor.smart.notice.not_applied",
+                "ℹ️ Результат TIPO не применён.",
+            ),
         )
         await cb.answer()
 
@@ -343,5 +499,10 @@ def register_prompt_editor_smart_handlers(
             state,
             uid,
             edit=False,
-            notice="✏️ Результат TIPO отредактирован.",
+            notice=_t(
+                uid,
+                "prompt_editor.smart.notice.edited",
+                "✏️ Результат TIPO отредактирован.",
+                telegram_locale=msg.from_user.language_code if msg.from_user else None,
+            ),
         )

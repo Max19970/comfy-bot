@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from domain.base_model_policy import BaseModelPolicy
 
 DOWNLOAD_SOURCE_LABELS = {
@@ -7,12 +9,22 @@ DOWNLOAD_SOURCE_LABELS = {
     "civitai": "CivitAI",
     "huggingface": "HuggingFace",
 }
+DOWNLOAD_SOURCE_CODE_TO_I18N_KEY = {
+    "all": "download.filter.source.all",
+    "civitai": "download.filter.source.civitai",
+    "huggingface": "download.filter.source.huggingface",
+}
 DOWNLOAD_SOURCE_CODES = frozenset(DOWNLOAD_SOURCE_LABELS)
 
 DOWNLOAD_SORT_CODE_TO_LABEL = {
     "downloads": "По скачиваниям",
     "rating": "По рейтингу",
     "newest": "Новые",
+}
+DOWNLOAD_SORT_CODE_TO_I18N_KEY = {
+    "downloads": "download.filter.sort.downloads",
+    "rating": "download.filter.sort.rating",
+    "newest": "download.filter.sort.newest",
 }
 DOWNLOAD_SORT_CODE_TO_API = {
     "downloads": "Most Downloaded",
@@ -25,6 +37,11 @@ DOWNLOAD_PERIOD_CODE_TO_LABEL = {
     "all": "Всё время",
     "month": "Месяц",
     "week": "Неделя",
+}
+DOWNLOAD_PERIOD_CODE_TO_I18N_KEY = {
+    "all": "download.filter.period.all",
+    "month": "download.filter.period.month",
+    "week": "download.filter.period.week",
 }
 DOWNLOAD_PERIOD_CODE_TO_API = {
     "all": "AllTime",
@@ -45,6 +62,19 @@ DOWNLOAD_BASE_CODE_TO_LABEL = {
     "flux": "Flux",
     "illustrious": "Illustrious",
     "noobai": "NoobAI",
+}
+DOWNLOAD_BASE_CODE_TO_I18N_KEY = {
+    "all": "download.filter.base.all",
+    "sd15": "download.filter.base.sd15",
+    "sd2": "download.filter.base.sd2",
+    "sdxl09": "download.filter.base.sdxl09",
+    "sdxl": "download.filter.base.sdxl",
+    "sd3": "download.filter.base.sd3",
+    "sd35": "download.filter.base.sd35",
+    "pony": "download.filter.base.pony",
+    "flux": "download.filter.base.flux",
+    "illustrious": "download.filter.base.illustrious",
+    "noobai": "download.filter.base.noobai",
 }
 DOWNLOAD_BASE_CODE_TO_API = {
     "all": [],
@@ -95,8 +125,16 @@ DOWNLOAD_FILTER_PROFILES = {
         "nsfw": False,
     },
 }
+DOWNLOAD_PROFILE_CODE_TO_I18N_KEY = {
+    "popular": "download.filter.profile.popular",
+    "fresh": "download.filter.profile.fresh",
+    "quality": "download.filter.profile.quality",
+    "anime": "download.filter.profile.anime",
+}
 
 _base_model_policy = BaseModelPolicy()
+
+TranslateLabel = Callable[[str, str | None, str], str]
 
 
 def normalize_download_source(value: str, *, default: str = "all") -> str:
@@ -127,12 +165,103 @@ def normalize_download_base_code(value: str, *, default: str = "all") -> str:
     return default
 
 
-def download_base_label(code: str) -> str:
-    return DOWNLOAD_BASE_CODE_TO_LABEL.get(code, DOWNLOAD_BASE_CODE_TO_LABEL["all"])
+def _localized_label(
+    *,
+    code: str,
+    defaults: dict[str, str],
+    keys: dict[str, str],
+    fallback: str,
+    translate: TranslateLabel | None = None,
+    locale: str | None = None,
+) -> str:
+    default = defaults.get(code, fallback)
+    if translate is None:
+        return default
+    key = keys.get(code)
+    if not key:
+        return default
+    return translate(key, locale, default)
 
 
-def download_source_label(code: str) -> str:
-    return DOWNLOAD_SOURCE_LABELS.get(code, code)
+def download_base_label(
+    code: str,
+    *,
+    translate: TranslateLabel | None = None,
+    locale: str | None = None,
+) -> str:
+    return _localized_label(
+        code=code,
+        defaults=DOWNLOAD_BASE_CODE_TO_LABEL,
+        keys=DOWNLOAD_BASE_CODE_TO_I18N_KEY,
+        fallback=DOWNLOAD_BASE_CODE_TO_LABEL["all"],
+        translate=translate,
+        locale=locale,
+    )
+
+
+def download_source_label(
+    code: str,
+    *,
+    translate: TranslateLabel | None = None,
+    locale: str | None = None,
+) -> str:
+    return _localized_label(
+        code=code,
+        defaults=DOWNLOAD_SOURCE_LABELS,
+        keys=DOWNLOAD_SOURCE_CODE_TO_I18N_KEY,
+        fallback=code,
+        translate=translate,
+        locale=locale,
+    )
+
+
+def download_sort_label(
+    code: str,
+    *,
+    translate: TranslateLabel | None = None,
+    locale: str | None = None,
+) -> str:
+    return _localized_label(
+        code=code,
+        defaults=DOWNLOAD_SORT_CODE_TO_LABEL,
+        keys=DOWNLOAD_SORT_CODE_TO_I18N_KEY,
+        fallback=DOWNLOAD_SORT_CODE_TO_LABEL["downloads"],
+        translate=translate,
+        locale=locale,
+    )
+
+
+def download_period_label(
+    code: str,
+    *,
+    translate: TranslateLabel | None = None,
+    locale: str | None = None,
+) -> str:
+    return _localized_label(
+        code=code,
+        defaults=DOWNLOAD_PERIOD_CODE_TO_LABEL,
+        keys=DOWNLOAD_PERIOD_CODE_TO_I18N_KEY,
+        fallback=DOWNLOAD_PERIOD_CODE_TO_LABEL["all"],
+        translate=translate,
+        locale=locale,
+    )
+
+
+def download_profile_label(
+    code: str,
+    *,
+    translate: TranslateLabel | None = None,
+    locale: str | None = None,
+) -> str:
+    defaults = {k: str(v.get("label", "")) for k, v in DOWNLOAD_FILTER_PROFILES.items()}
+    return _localized_label(
+        code=code,
+        defaults=defaults,
+        keys=DOWNLOAD_PROFILE_CODE_TO_I18N_KEY,
+        fallback=code,
+        translate=translate,
+        locale=locale,
+    )
 
 
 def base_code_from_base_model(base_model: str) -> str:

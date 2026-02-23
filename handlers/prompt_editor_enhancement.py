@@ -5,7 +5,7 @@ import logging
 import random
 import time
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import asdict, dataclass
 from typing import Protocol
 
@@ -17,6 +17,8 @@ from core.html_utils import h
 from core.image_utils import image_dimensions, resize_image_by_percent, shrink_image_to_box
 from core.models import GenerationParams
 from core.runtime import ActiveGeneration, PreviewArtifact, RuntimeStore
+from core.user_preferences import read_user_locale
+from domain.localization import LocalizationService
 
 
 class _ClientLike(Protocol):
@@ -47,6 +49,49 @@ class PromptEditorEnhancementDeps:
     deliver_generated_images: Callable[..., Awaitable[list[Message]]]
     preview_image_keyboard: Callable[[str, str | None], InlineKeyboardMarkup]
     move_main_panel_to_bottom: Callable[[int, Message, str], Awaitable[None]]
+    localization: LocalizationService | None = None
+    resolve_user_locale: Callable[..., str] | None = None
+
+
+def _resolved_locale(
+    deps: PromptEditorEnhancementDeps,
+    uid: int,
+    *,
+    telegram_locale: str | None,
+) -> str | None:
+    if deps.localization is None:
+        return None
+    default_locale = deps.localization.default_locale()
+    prefs = deps.runtime.user_preferences.get(uid, {})
+    selected_locale = read_user_locale(prefs, default_locale=default_locale)
+    if deps.resolve_user_locale is None:
+        return selected_locale
+    return deps.resolve_user_locale(
+        user_locale=selected_locale,
+        telegram_locale=telegram_locale,
+    )
+
+
+def _t(
+    deps: PromptEditorEnhancementDeps,
+    uid: int,
+    key: str,
+    default: str,
+    *,
+    telegram_locale: str | None,
+    params: Mapping[str, object] | None = None,
+) -> str:
+    if deps.localization is None:
+        text = default
+    else:
+        locale = _resolved_locale(deps, uid, telegram_locale=telegram_locale)
+        text = deps.localization.t(key, locale=locale, params=params, default=default)
+    if params:
+        try:
+            return text.format(**params)
+        except Exception:
+            return text
+    return text
 
 
 async def start_image_enhancement(
@@ -56,12 +101,32 @@ async def start_image_enhancement(
     artifact: PreviewArtifact,
     deps: PromptEditorEnhancementDeps,
 ) -> None:
-    status_msg = await message.answer("⏳ Запускаю улучшение...")
+    telegram_locale = message.from_user.language_code if message.from_user else None
+    status_msg = await message.answer(
+        _t(
+            deps,
+            uid,
+            "prompt_editor.enhancement.status.starting",
+            "⏳ Запускаю улучшение...",
+            telegram_locale=telegram_locale,
+        )
+    )
     generation_id = f"enh_{uuid.uuid4().hex}"
     temp_job_id = f"job_{time.time_ns()}"
 
     try:
-        await status_msg.edit_reply_markup(reply_markup=_enhancement_cancel_keyboard(generation_id))
+        await status_msg.edit_reply_markup(
+            reply_markup=_enhancement_cancel_keyboard(
+                generation_id,
+                cancel_text=_t(
+                    deps,
+                    uid,
+                    "prompt_editor.enhancement.button.cancel",
+                    "❌ Отменить улучшение",
+                    telegram_locale=telegram_locale,
+                ),
+            )
+        )
     except (TelegramBadRequest, TelegramNetworkError):
         pass
 
@@ -71,7 +136,17 @@ async def start_image_enhancement(
             line = f"⏳ {h(text)} ({current}/{total})"
         try:
             await status_msg.edit_text(
-                line, reply_markup=_enhancement_cancel_keyboard(generation_id)
+                line,
+                reply_markup=_enhancement_cancel_keyboard(
+                    generation_id,
+                    cancel_text=_t(
+                        deps,
+                        uid,
+                        "prompt_editor.enhancement.button.cancel",
+                        "❌ Отменить улучшение",
+                        telegram_locale=telegram_locale,
+                    ),
+                ),
             )
         except (TelegramBadRequest, TelegramNetworkError):
             deps.logger.debug("Image enhancement progress update failed", exc_info=True)
@@ -86,7 +161,15 @@ async def start_image_enhancement(
         try:
             source_bytes = deps.runtime.artifact_bytes(artifact)
             if not source_bytes:
-                await _safe_edit_status("❌ Не найдены данные исходной картинки.")
+                await _safe_edit_status(
+                    _t(
+                        deps,
+                        uid,
+                        "prompt_editor.enhancement.error.source_missing",
+                        "❌ Не найдены данные исходной картинки.",
+                        telegram_locale=telegram_locale,
+                    )
+                )
                 return
 
             run_params = GenerationParams(**asdict(artifact.params))
@@ -119,19 +202,62 @@ async def start_image_enhancement(
                     prompt_id_cb=_prompt_id_cb,
                 )
             else:
-                await _progress(0, 0, "Без ComfyUI: только сжатие")
+                await _progress(
+                    0,
+                    0,
+                    _t(
+                        deps,
+                        uid,
+                        "prompt_editor.enhancement.progress.comfy_disabled",
+                        "Без ComfyUI: только сжатие",
+                        telegram_locale=telegram_locale,
+                    ),
+                )
                 images = [source_bytes]
 
             if not images:
-                await _safe_edit_status("❌ ComfyUI не вернул изображение.")
+                await _safe_edit_status(
+                    _t(
+                        deps,
+                        uid,
+                        "prompt_editor.enhancement.error.empty_result",
+                        "❌ ComfyUI не вернул изображение.",
+                        telegram_locale=telegram_locale,
+                    )
+                )
                 return
 
             result_image = images[0]
             if artifact.compression_percent < 100:
-                await _progress(0, 0, f"Сжимаю до {artifact.compression_percent}%")
+                await _progress(
+                    0,
+                    0,
+                    _t(
+                        deps,
+                        uid,
+                        "prompt_editor.enhancement.progress.compress",
+                        "Сжимаю до {percent}%",
+                        telegram_locale=telegram_locale,
+                        params={"percent": artifact.compression_percent},
+                    ),
+                )
                 result_image = resize_image_by_percent(result_image, artifact.compression_percent)
             if artifact.shrink_width and artifact.shrink_height:
-                await _progress(0, 0, f"Shrink до {artifact.shrink_width}x{artifact.shrink_height}")
+                await _progress(
+                    0,
+                    0,
+                    _t(
+                        deps,
+                        uid,
+                        "prompt_editor.enhancement.progress.shrink",
+                        "Shrink до {width}x{height}",
+                        telegram_locale=telegram_locale,
+                        params={
+                            "width": artifact.shrink_width,
+                            "height": artifact.shrink_height,
+                        },
+                    ),
+                )
                 result_image = shrink_image_to_box(
                     result_image,
                     artifact.shrink_width,
@@ -183,11 +309,28 @@ async def start_image_enhancement(
             extra_lines: list[str] = []
             if artifact.compression_percent < 100:
                 extra_lines.append(
-                    f"🗜 Сжатие применено: {artifact.compression_percent}% от результата."
+                    _t(
+                        deps,
+                        uid,
+                        "prompt_editor.enhancement.notice.compression_applied",
+                        "🗜 Сжатие применено: {percent}% от результата.",
+                        telegram_locale=telegram_locale,
+                        params={"percent": artifact.compression_percent},
+                    )
                 )
             if artifact.shrink_width and artifact.shrink_height:
                 extra_lines.append(
-                    f"📦 Shrink применен: {artifact.shrink_width}x{artifact.shrink_height}."
+                    _t(
+                        deps,
+                        uid,
+                        "prompt_editor.enhancement.notice.shrink_applied",
+                        "📦 Shrink применен: {width}x{height}.",
+                        telegram_locale=telegram_locale,
+                        params={
+                            "width": artifact.shrink_width,
+                            "height": artifact.shrink_height,
+                        },
+                    )
                 )
             detail_block = "\n".join(extra_lines)
             if detail_block:
@@ -195,12 +338,27 @@ async def start_image_enhancement(
             await deps.move_main_panel_to_bottom(
                 artifact.owner_uid,
                 status_msg,
-                "✅ Улучшение завершено. Отправил новую превью.\n"
-                f"{detail_block}"
-                "Для каждой превью доступны: отправка PNG и меню улучшений.",
+                _t(
+                    deps,
+                    uid,
+                    "prompt_editor.enhancement.notice.completed",
+                    "✅ Улучшение завершено. Отправил новую превью.\n"
+                    "{details}"
+                    "Для каждой превью доступны: отправка PNG и меню улучшений.",
+                    telegram_locale=telegram_locale,
+                    params={"details": detail_block},
+                ),
             )
         except asyncio.CancelledError:
-            await _safe_edit_status("❌ Улучшение отменено.")
+            await _safe_edit_status(
+                _t(
+                    deps,
+                    uid,
+                    "prompt_editor.enhancement.error.cancelled",
+                    "❌ Улучшение отменено.",
+                    telegram_locale=telegram_locale,
+                )
+            )
         except (
             aiohttp.ClientError,
             asyncio.TimeoutError,
@@ -210,7 +368,16 @@ async def start_image_enhancement(
             TelegramNetworkError,
         ) as exc:
             deps.logger.exception("Image enhancement failed")
-            await _safe_edit_status(f"❌ Ошибка улучшения: <code>{h(exc)}</code>")
+            await _safe_edit_status(
+                _t(
+                    deps,
+                    uid,
+                    "prompt_editor.enhancement.error.failed",
+                    "❌ Ошибка улучшения: <code>{error}</code>",
+                    telegram_locale=telegram_locale,
+                    params={"error": h(exc)},
+                )
+            )
         finally:
             deps.runtime.active_image_jobs.pop(temp_job_id, None)
             deps.runtime.active_generations.pop(generation_id, None)
@@ -223,7 +390,13 @@ async def start_image_enhancement(
         generation_id=generation_id,
         task=task,
         kind="enhancement",
-        title="Улучшение",
+        title=_t(
+            deps,
+            uid,
+            "prompt_editor.enhancement.title",
+            "Улучшение",
+            telegram_locale=telegram_locale,
+        ),
         status_msg=status_msg,
         status_chat_id=status_msg.chat.id,
         status_message_id=status_msg.message_id,
@@ -231,8 +404,8 @@ async def start_image_enhancement(
     deps.runtime.persist()
 
 
-def _enhancement_cancel_keyboard(generation_id: str) -> InlineKeyboardMarkup:
+def _enhancement_cancel_keyboard(generation_id: str, *, cancel_text: str) -> InlineKeyboardMarkup:
     from core.ui_kit import build_keyboard
     from core.ui_kit.buttons import button
 
-    return build_keyboard([[button("❌ Отменить улучшение", f"pe:gen:cancel:{generation_id}")]])
+    return build_keyboard([[button(cancel_text, f"pe:gen:cancel:{generation_id}")]])

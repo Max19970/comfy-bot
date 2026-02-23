@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -20,6 +21,20 @@ from domain.loras import EditorLoraSelection
 logger = logging.getLogger(__name__)
 
 RUNTIME_SCHEMA_VERSION = _RUNTIME_SCHEMA_VERSION
+GENERATION_TITLE_DEFAULT = "Генерация"
+GENERATION_TITLE_KEY = "core.runtime.active_generation.title"
+
+TranslateText = Callable[[str, str | None, str], str]
+
+
+def resolve_generation_title(
+    *,
+    translate: TranslateText | None = None,
+    locale: str | None = None,
+) -> str:
+    if translate is None:
+        return GENERATION_TITLE_DEFAULT
+    return translate(GENERATION_TITLE_KEY, locale, GENERATION_TITLE_DEFAULT)
 
 
 @dataclass
@@ -88,7 +103,7 @@ class ActiveGeneration:
     generation_id: str
     task: asyncio.Task[Any] | None = None
     kind: str = "generate"
-    title: str = "Генерация"
+    title: str = GENERATION_TITLE_DEFAULT
     prompt_id: str | None = None
     status_msg: Message | None = None
     status_chat_id: int | None = None

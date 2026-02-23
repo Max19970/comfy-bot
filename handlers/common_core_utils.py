@@ -2,6 +2,20 @@ from __future__ import annotations
 
 from typing import Any
 
+from domain.localization import LocalizationService
+
+
+def _t(
+    localization: LocalizationService | None,
+    key: str,
+    *,
+    locale: str | None,
+    default: str,
+) -> str:
+    if localization is None:
+        return default
+    return localization.t(key, locale=locale, default=default)
+
 
 def ensure_user_preferences(runtime: Any, uid: int) -> dict[str, Any]:
     if uid not in runtime.user_preferences:
@@ -35,46 +49,154 @@ def set_training_page(runtime: Any, uid: int, page: int) -> None:
     set_pref(runtime, uid, "training_page", max(0, page))
 
 
-def training_pages() -> list[tuple[str, str]]:
+def training_pages(
+    *,
+    localization: LocalizationService | None = None,
+    locale: str | None = None,
+) -> list[tuple[str, str]]:
     return [
         (
-            "Что делает бот",
-            "ComfyBot - это интерфейс к ComfyUI.\n"
-            "Вы выбираете параметры и запускаете задачи кнопками.",
+            _t(
+                localization,
+                "common.training.page.1.title",
+                locale=locale,
+                default="Что делает бот",
+            ),
+            _t(
+                localization,
+                "common.training.page.1.simple",
+                locale=locale,
+                default=(
+                    "ComfyBot - это интерфейс к ComfyUI.\n"
+                    "Вы выбираете параметры и запускаете задачи кнопками."
+                ),
+            ),
         ),
         (
-            "Первый запуск",
-            "1) Обновите список моделей.\n"
-            "2) Откройте генерацию.\n"
-            "3) Выберите Checkpoint и заполните Positive.\n"
-            "4) Нажмите Генерировать.",
+            _t(
+                localization,
+                "common.training.page.2.title",
+                locale=locale,
+                default="Первый запуск",
+            ),
+            _t(
+                localization,
+                "common.training.page.2.simple",
+                locale=locale,
+                default=(
+                    "1) Обновите список моделей.\n"
+                    "2) Откройте генерацию.\n"
+                    "3) Выберите Checkpoint и заполните Positive.\n"
+                    "4) Нажмите Генерировать."
+                ),
+            ),
         ),
         (
-            "Главные параметры",
-            "Steps - детализация и время.\n"
-            "CFG - строгость следования prompt.\n"
-            "Seed - повторяемость результата.\n"
-            "Размер - нагрузка на VRAM и скорость.",
+            _t(
+                localization,
+                "common.training.page.3.title",
+                locale=locale,
+                default="Главные параметры",
+            ),
+            _t(
+                localization,
+                "common.training.page.3.simple",
+                locale=locale,
+                default=(
+                    "Steps - детализация и время.\n"
+                    "CFG - строгость следования prompt.\n"
+                    "Seed - повторяемость результата.\n"
+                    "Размер - нагрузка на VRAM и скорость."
+                ),
+            ),
         ),
         (
-            "Улучшение результата",
-            "Откройте меню улучшений у превью.\n"
-            "Включите нужные режимы (sampler/upscale/hi-res).\n"
-            "Запустите улучшение и при необходимости отмените задачу.",
+            _t(
+                localization,
+                "common.training.page.4.title",
+                locale=locale,
+                default="Улучшение результата",
+            ),
+            _t(
+                localization,
+                "common.training.page.4.simple",
+                locale=locale,
+                default=(
+                    "Откройте меню улучшений у превью.\n"
+                    "Включите нужные режимы (sampler/upscale/hi-res).\n"
+                    "Запустите улучшение и при необходимости отмените задачу."
+                ),
+            ),
         ),
         (
-            "Диагностика",
-            "Если что-то не работает: проверьте соединение с ComfyUI,\n"
-            "наличие checkpoint, очередь задач и статус ошибок в боте.",
+            _t(
+                localization,
+                "common.training.page.5.title",
+                locale=locale,
+                default="Диагностика",
+            ),
+            _t(
+                localization,
+                "common.training.page.5.simple",
+                locale=locale,
+                default=(
+                    "Если что-то не работает: проверьте соединение с ComfyUI,\n"
+                    "наличие checkpoint, очередь задач и статус ошибок в боте."
+                ),
+            ),
         ),
     ]
 
 
-def training_advanced() -> list[str]:
+def training_advanced(
+    *,
+    localization: LocalizationService | None = None,
+    locale: str | None = None,
+) -> list[str]:
     return [
-        "Бот не рисует сам: он собирает параметры, ставит задачу в очередь ComfyUI и отслеживает выполнение.",
-        "Минимум для стабильного старта: валидный checkpoint, положительный prompt и доступный ComfyUI URL.",
-        "Steps увеличивает количество итераций денойзинга; CFG управляет силой conditioning; seed фиксирует стохастику.",
-        "Для улучшений: sampler-pass полезен для перерендера, upscaler - для роста размера, hi-res - для детализации.",
-        "Если задача пропала из списка, обновите «Мои задачи», проверьте очередь и статус prompt_id в ComfyUI.",
+        _t(
+            localization,
+            "common.training.page.1.advanced",
+            locale=locale,
+            default=(
+                "Бот не рисует сам: он собирает параметры, ставит задачу в очередь ComfyUI "
+                "и отслеживает выполнение."
+            ),
+        ),
+        _t(
+            localization,
+            "common.training.page.2.advanced",
+            locale=locale,
+            default=(
+                "Минимум для стабильного старта: валидный checkpoint, положительный "
+                "prompt и доступный ComfyUI URL."
+            ),
+        ),
+        _t(
+            localization,
+            "common.training.page.3.advanced",
+            locale=locale,
+            default=(
+                "Steps увеличивает количество итераций денойзинга; CFG управляет силой "
+                "conditioning; seed фиксирует стохастику."
+            ),
+        ),
+        _t(
+            localization,
+            "common.training.page.4.advanced",
+            locale=locale,
+            default=(
+                "Для улучшений: sampler-pass полезен для перерендера, upscaler - для роста "
+                "размера, hi-res - для детализации."
+            ),
+        ),
+        _t(
+            localization,
+            "common.training.page.5.advanced",
+            locale=locale,
+            default=(
+                "Если задача пропала из списка, обновите «Мои задачи», проверьте очередь "
+                "и статус prompt_id в ComfyUI."
+            ),
+        ),
     ]

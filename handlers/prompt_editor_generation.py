@@ -6,7 +6,7 @@ import time
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass
-from typing import Protocol
+from typing import Mapping, Protocol
 
 import aiohttp
 from aiogram.exceptions import TelegramBadRequest, TelegramNetworkError
@@ -18,6 +18,8 @@ from core.html_utils import h, progress_bar, truncate
 from core.image_utils import image_dimensions
 from core.models import GenerationParams
 from core.runtime import ActiveGeneration, PreviewArtifact, PromptRequest, RuntimeStore
+from core.user_preferences import read_user_locale
+from domain.localization import LocalizationService
 
 
 @dataclass
@@ -37,22 +39,53 @@ class PromptEditorGenerationDeps:
     preview_image_keyboard: Callable[[str, str | None], InlineKeyboardMarkup]
     deliver_generated_images: Callable[..., Awaitable[list[Message]]]
     prune_preview_artifacts: Callable[[int], None]
+    localization: LocalizationService
+    resolve_user_locale: Callable[..., str]
 
 
-def _return_to_editor_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="🔄 Вернуться в редактор", callback_data="pe:gen:back")]
-        ]
+def _resolved_locale(
+    deps: PromptEditorGenerationDeps,
+    uid: int,
+    *,
+    telegram_locale: str | None,
+) -> str:
+    prefs = deps.runtime.user_preferences.get(uid, {})
+    selected_locale = read_user_locale(
+        prefs,
+        default_locale=deps.localization.default_locale(),
+    )
+    return deps.resolve_user_locale(
+        user_locale=selected_locale,
+        telegram_locale=telegram_locale,
     )
 
 
-def _cancel_generation_keyboard(generation_id: str) -> InlineKeyboardMarkup:
+def _t(
+    deps: PromptEditorGenerationDeps,
+    uid: int,
+    key: str,
+    default: str,
+    *,
+    telegram_locale: str | None,
+    params: Mapping[str, object] | None = None,
+) -> str:
+    locale = _resolved_locale(deps, uid, telegram_locale=telegram_locale)
+    return deps.localization.t(key, locale=locale, params=params, default=default)
+
+
+def _return_to_editor_keyboard(*, back_text: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text=back_text, callback_data="pe:gen:back")]]
+    )
+
+
+def _cancel_generation_keyboard(generation_id: str, *, cancel_text: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="❌ Отменить", callback_data=f"pe:gen:cancel:{generation_id}"
+                    text=cancel_text,
+                    callback_data=f"pe:gen:cancel:{generation_id}",
                 )
             ]
         ]
@@ -67,56 +100,119 @@ def _build_generation_status_intro(
     failed_refs: int,
     reference_mode: str,
     lora_warning: str,
+    t: Callable[[str, str, Mapping[str, object] | None], str],
 ) -> str:
     ckpt_short = h(truncate(params.checkpoint, 30))
-    start_lines = [f"⏳ <b>Генерация</b> | {ckpt_short} | {params.width}×{params.height}"]
+    start_lines = [
+        t(
+            "prompt_editor.generation.status.title",
+            "⏳ <b>Generation</b> | {checkpoint} | {width}×{height}",
+            {
+                "checkpoint": ckpt_short,
+                "width": params.width,
+                "height": params.height,
+            },
+        )
+    ]
 
     if reference_images:
-        ref_info = f"🖼 <b>Ref:</b> {len(reference_images)}"
+        ref_info = t(
+            "prompt_editor.generation.status.ref.count",
+            "🖼 <b>Ref:</b> {count}",
+            {"count": len(reference_images)},
+        )
         if failed_refs:
-            ref_info += f" (❌ {failed_refs})"
+            ref_info += t(
+                "prompt_editor.generation.status.ref.failed",
+                " (❌ {count})",
+                {"count": failed_refs},
+            )
         if reference_mode == "ipadapter":
-            ref_info += f" | IP-Adapter, str={generation_params.reference_strength}"
+            ref_info += t(
+                "prompt_editor.generation.status.ref.ipadapter",
+                " | IP-Adapter, str={strength}",
+                {"strength": generation_params.reference_strength},
+            )
         elif reference_mode == "none":
-            ref_info += " | референс загружен"
+            ref_info += t(
+                "prompt_editor.generation.status.ref.loaded",
+                " | reference attached",
+                None,
+            )
         else:
-            ref_info += (
-                f" | img2img, str={generation_params.reference_strength}"
-                f", dn={generation_params.denoise}"
+            ref_info += t(
+                "prompt_editor.generation.status.ref.img2img",
+                " | img2img, str={strength}, dn={denoise}",
+                {
+                    "strength": generation_params.reference_strength,
+                    "denoise": generation_params.denoise,
+                },
             )
         start_lines.append(ref_info)
 
     if generation_params.vae_name:
-        start_lines.append(f"🧬 <b>VAE:</b> <code>{h(generation_params.vae_name)}</code>")
+        start_lines.append(
+            t(
+                "prompt_editor.generation.status.vae",
+                "🧬 <b>VAE:</b> <code>{value}</code>",
+                {"value": h(generation_params.vae_name)},
+            )
+        )
     if generation_params.controlnet_name:
         start_lines.append(
-            "🧷 <b>ControlNet:</b> "
-            f"<code>{h(generation_params.controlnet_name)}</code> "
-            f"(str={generation_params.controlnet_strength})"
+            t(
+                "prompt_editor.generation.status.controlnet",
+                "🧷 <b>ControlNet:</b> <code>{name}</code> (str={strength})",
+                {
+                    "name": h(generation_params.controlnet_name),
+                    "strength": generation_params.controlnet_strength,
+                },
+            )
         )
     if generation_params.embedding_name:
         start_lines.append(
-            f"🔤 <b>Embedding:</b> <code>{h(generation_params.embedding_name)}</code>"
+            t(
+                "prompt_editor.generation.status.embedding",
+                "🔤 <b>Embedding:</b> <code>{value}</code>",
+                {"value": h(generation_params.embedding_name)},
+            )
         )
     if lora_warning:
         start_lines.append(lora_warning)
     return "\n".join(start_lines)
 
 
-def _preview_notice_text(*, sent_previews: int, ready_previews: int, failures: int) -> str:
+def _preview_notice_text(
+    *,
+    sent_previews: int,
+    ready_previews: int,
+    failures: int,
+    t: Callable[[str, str, Mapping[str, object] | None], str],
+) -> str:
     if failures <= 0:
-        return "🖼 Превью отправлялись по мере готовности."
-    return (
-        "⚠️ Часть превью не удалось отправить как фото "
-        f"({sent_previews}/{ready_previews}). Можно скачать PNG без сжатия."
+        return t(
+            "prompt_editor.generation.preview_notice.all_sent",
+            "🖼 Previews were sent as they became ready.",
+            None,
+        )
+    return t(
+        "prompt_editor.generation.preview_notice.partial",
+        "⚠️ Some previews could not be sent as photos ({sent}/{ready}). You can download PNG without compression.",
+        {"sent": sent_previews, "ready": ready_previews},
     )
 
 
-def _generation_done_text(*, ready_previews: int, used_seed: int, preview_notice: str) -> str:
-    return (
-        f"✅ <b>Готово!</b> {ready_previews} изобр. | Seed: <code>{used_seed}</code>\n"
-        f"\n{preview_notice}\n"
-        "Для каждой превью доступны: отправка PNG и меню улучшений."
+def _generation_done_text(
+    *,
+    ready_previews: int,
+    used_seed: int,
+    preview_notice: str,
+    t: Callable[[str, str, Mapping[str, object] | None], str],
+) -> str:
+    return t(
+        "prompt_editor.generation.done",
+        "✅ <b>Done!</b> {count} image(s) | Seed: <code>{seed}</code>\n\n{notice}\nFor each preview you can send PNG or open enhancements.",
+        {"count": ready_previews, "seed": used_seed, "notice": preview_notice},
     )
 
 
@@ -127,9 +223,26 @@ async def run_generate_operation(
     *,
     deps: PromptEditorGenerationDeps,
 ) -> None:
+    telegram_locale = message.from_user.language_code if message.from_user else None
+
+    def t_local(key: str, default: str, params: Mapping[str, object] | None = None) -> str:
+        return _t(
+            deps,
+            uid,
+            key,
+            default,
+            telegram_locale=telegram_locale,
+            params=params,
+        )
+
     req = deps.runtime.active_prompt_requests.get(uid)
     if not req:
-        await message.answer("❌ Активный запрос не найден. Используйте /generate.")
+        await message.answer(
+            t_local(
+                "prompt_editor.generation.error.active_request_not_found",
+                "❌ Active request not found. Use /generate.",
+            )
+        )
         return
 
     prepared = deps.generation_use_case.prepare(req.params)
@@ -140,7 +253,10 @@ async def run_generate_operation(
             state,
             uid,
             edit=True,
-            notice="❌ Выберите checkpoint в редакторе перед генерацией.",
+            notice=t_local(
+                "prompt_editor.generation.error.select_checkpoint",
+                "❌ Select a checkpoint in editor before generation.",
+            ),
         )
         return
 
@@ -149,9 +265,10 @@ async def run_generate_operation(
     warning_payload = deps.generation_use_case.lora_warning_payload(bad_loras)
     if warning_payload is not None:
         listed, suffix = warning_payload
-        lora_warning = (
-            "⚠️ <b>Внимание:</b> потенциально несовместимые LoRA: "
-            f"<code>{h(listed)}</code>{h(suffix)}"
+        lora_warning = t_local(
+            "prompt_editor.generation.warning.lora_incompatible",
+            "⚠️ <b>Warning:</b> potentially incompatible LoRA: <code>{listed}</code>{suffix}",
+            {"listed": h(listed), "suffix": h(suffix)},
         )
 
     used_seed = prepared.used_seed
@@ -192,12 +309,21 @@ async def run_generate_operation(
         failed_refs=failed_refs,
         reference_mode=reference_mode,
         lora_warning=lora_warning,
+        t=t_local,
     )
 
-    return_to_editor_kb = _return_to_editor_keyboard()
+    return_to_editor_kb = _return_to_editor_keyboard(
+        back_text=t_local(
+            "prompt_editor.generation.button.return_to_editor",
+            "🔄 Back to editor",
+        )
+    )
 
     generation_id = uuid.uuid4().hex
-    cancel_kb = _cancel_generation_keyboard(generation_id)
+    cancel_kb = _cancel_generation_keyboard(
+        generation_id,
+        cancel_text=t_local("common.action.cancel", "❌ Cancel"),
+    )
 
     status_msg = await deps.show_prompt_panel(
         message,
@@ -226,14 +352,28 @@ async def run_generate_operation(
 
                 if total > 0:
                     pct = min(100, max(0, (current * 100) // total))
-                    first_line = f"🔄 {h(text)} | {pct}%"
+                    first_line = t_local(
+                        "prompt_editor.generation.status.progress.percent",
+                        "🔄 {text} | {pct}%",
+                        {"text": h(text), "pct": pct},
+                    )
                 else:
-                    first_line = f"⏳ {h(text)}"
+                    first_line = t_local(
+                        "prompt_editor.generation.status.progress.indeterminate",
+                        "⏳ {text}",
+                        {"text": h(text)},
+                    )
 
                 lines = [first_line]
                 if total > 0:
                     lines.append(progress_bar(current, total))
-                lines.append(f"🖼 Получено: <code>{sent_previews}/{expected_previews}</code>")
+                lines.append(
+                    t_local(
+                        "prompt_editor.generation.status.received",
+                        "🖼 Received: <code>{sent}/{total}</code>",
+                        {"sent": sent_previews, "total": expected_previews},
+                    )
+                )
                 lines.extend(["", status_intro])
 
                 next_text = "\n".join(lines)
@@ -310,13 +450,25 @@ async def run_generate_operation(
                 await _progress(
                     overall_current,
                     overall_total,
-                    f"Батч {batch_index + 1}/{expected_previews}: {text}",
+                    t_local(
+                        "prompt_editor.generation.status.batch_progress",
+                        "Batch {index}/{total}: {text}",
+                        {
+                            "index": batch_index + 1,
+                            "total": expected_previews,
+                            "text": text,
+                        },
+                    ),
                 )
                 return
             await _progress(
                 0,
                 0,
-                f"Батч {batch_index + 1}/{expected_previews}: {text}",
+                t_local(
+                    "prompt_editor.generation.status.batch_progress",
+                    "Batch {index}/{total}: {text}",
+                    {"index": batch_index + 1, "total": expected_previews, "text": text},
+                ),
             )
 
         def _progress_for_batch(
@@ -344,14 +496,24 @@ async def run_generate_operation(
                         await _deliver_preview_image(image_bytes)
         except asyncio.CancelledError:
             try:
-                await status_msg.edit_text(f"{status_intro}\n\n❌ Генерация отменена.")
+                await status_msg.edit_text(
+                    f"{status_intro}\n\n"
+                    + t_local(
+                        "prompt_editor.generation.error.cancelled",
+                        "❌ Generation cancelled.",
+                    )
+                )
             except (TelegramBadRequest, TelegramNetworkError, RuntimeError):
                 pass
             raise
         except TimeoutError:
             try:
                 await status_msg.edit_text(
-                    f"{status_intro}\n\n⏰ Время ожидания истекло.",
+                    f"{status_intro}\n\n"
+                    + t_local(
+                        "prompt_editor.generation.error.timeout",
+                        "⏰ Request timed out.",
+                    ),
                     reply_markup=return_to_editor_kb,
                 )
             except (TelegramBadRequest, TelegramNetworkError, RuntimeError):
@@ -367,7 +529,12 @@ async def run_generate_operation(
         ) as exc:
             try:
                 await status_msg.edit_text(
-                    f"{status_intro}\n\n❌ Ошибка: <code>{h(exc)}</code>",
+                    f"{status_intro}\n\n"
+                    + t_local(
+                        "prompt_editor.generation.error.failed",
+                        "❌ Error: <code>{error}</code>",
+                        {"error": h(exc)},
+                    ),
                     reply_markup=return_to_editor_kb,
                 )
             except (TelegramBadRequest, TelegramNetworkError, RuntimeError):
@@ -377,7 +544,12 @@ async def run_generate_operation(
             deps.logger.exception("Unexpected generation task failure", exc_info=exc)
             try:
                 await status_msg.edit_text(
-                    f"{status_intro}\n\n❌ Неожиданная ошибка: <code>{h(exc)}</code>",
+                    f"{status_intro}\n\n"
+                    + t_local(
+                        "prompt_editor.generation.error.unexpected",
+                        "❌ Unexpected error: <code>{error}</code>",
+                        {"error": h(exc)},
+                    ),
                     reply_markup=return_to_editor_kb,
                 )
             except (TelegramBadRequest, TelegramNetworkError, RuntimeError):
@@ -389,7 +561,11 @@ async def run_generate_operation(
 
         if ready_previews <= 0:
             await status_msg.edit_text(
-                f"{status_intro}\n\n❌ Изображения не найдены.",
+                f"{status_intro}\n\n"
+                + t_local(
+                    "prompt_editor.generation.error.images_not_found",
+                    "❌ No images generated.",
+                ),
                 reply_markup=return_to_editor_kb,
             )
             return
@@ -402,11 +578,13 @@ async def run_generate_operation(
             sent_previews=sent_previews,
             ready_previews=ready_previews,
             failures=preview_send_failures,
+            t=t_local,
         )
         done_text = _generation_done_text(
             ready_previews=ready_previews,
             used_seed=used_seed,
             preview_notice=preview_notice,
+            t=t_local,
         )
         try:
             await deps.move_prompt_panel_to_bottom(
@@ -431,7 +609,7 @@ async def run_generate_operation(
         generation_id=generation_id,
         task=task,
         kind="generate",
-        title="Генерация",
+        title=t_local("prompt_editor.generation.title", "Generation"),
         status_msg=status_msg,
         status_chat_id=status_msg.chat.id,
         status_message_id=status_msg.message_id,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -15,15 +16,35 @@ if TYPE_CHECKING:
 
 
 RUNTIME_SCHEMA_VERSION = 2
+GENERATION_TITLE_DEFAULT = "Генерация"
+GENERATION_TITLE_KEY = "core.runtime.active_generation.title"
+
+TranslateText = Callable[[str, str | None, str], str]
 
 
-def runtime_to_persisted_dict(runtime: RuntimeStore) -> dict[str, Any]:
+def _tx(translate: TranslateText | None, key: str, locale: str | None, default: str) -> str:
+    if translate is None:
+        return default
+    return translate(key, locale, default)
+
+
+def runtime_to_persisted_dict(
+    runtime: RuntimeStore,
+    *,
+    translate: TranslateText | None = None,
+    locale: str | None = None,
+) -> dict[str, Any]:
     snapshot = _RuntimeSessionSnapshot.from_runtime(runtime)
-    return snapshot.to_dict()
+    return snapshot.to_dict(translate=translate, locale=locale)
 
 
-def runtime_from_persisted_dict(raw: dict[str, Any]) -> RuntimeStore:
-    snapshot = _RuntimeSessionSnapshot.from_raw(raw)
+def runtime_from_persisted_dict(
+    raw: dict[str, Any],
+    *,
+    translate: TranslateText | None = None,
+    locale: str | None = None,
+) -> RuntimeStore:
+    snapshot = _RuntimeSessionSnapshot.from_raw(raw, translate=translate, locale=locale)
     return snapshot.to_runtime_store()
 
 
@@ -158,7 +179,12 @@ class _RuntimeSessionSnapshot:
         }
         return snapshot
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(
+        self,
+        *,
+        translate: TranslateText | None = None,
+        locale: str | None = None,
+    ) -> dict[str, Any]:
         return {
             "schema_version": self.schema_version,
             "last_params": {
@@ -189,14 +215,20 @@ class _RuntimeSessionSnapshot:
                 if item.owner_uid > 0
             },
             "active_generations": {
-                gid: _active_generation_to_dict(item)
+                gid: _active_generation_to_dict(item, translate=translate, locale=locale)
                 for gid, item in self.active_generations.items()
                 if item.owner_uid > 0
             },
         }
 
     @classmethod
-    def from_raw(cls, raw: dict[str, Any]) -> _RuntimeSessionSnapshot:
+    def from_raw(
+        cls,
+        raw: dict[str, Any],
+        *,
+        translate: TranslateText | None = None,
+        locale: str | None = None,
+    ) -> _RuntimeSessionSnapshot:
         from core.runtime import PromptRequest
 
         migrated = _migrate_runtime_payload(raw)
@@ -264,7 +296,12 @@ class _RuntimeSessionSnapshot:
             for generation_id, payload in active_raw.items():
                 if not isinstance(payload, dict):
                     continue
-                generation = _active_generation_from_dict(str(generation_id), payload)
+                generation = _active_generation_from_dict(
+                    str(generation_id),
+                    payload,
+                    translate=translate,
+                    locale=locale,
+                )
                 if generation is None:
                     continue
                 snapshot.active_generations[generation.generation_id] = generation
@@ -404,7 +441,12 @@ def _preview_artifact_from_dict(
         return None
 
 
-def _active_generation_to_dict(item: ActiveGeneration) -> dict[str, Any]:
+def _active_generation_to_dict(
+    item: ActiveGeneration,
+    *,
+    translate: TranslateText | None = None,
+    locale: str | None = None,
+) -> dict[str, Any]:
     status_chat_id = item.status_chat_id
     status_message_id = item.status_message_id
     if item.status_msg is not None:
@@ -413,7 +455,9 @@ def _active_generation_to_dict(item: ActiveGeneration) -> dict[str, Any]:
     return {
         "owner_uid": int(item.owner_uid),
         "kind": str(item.kind or "generate"),
-        "title": str(item.title or "Генерация"),
+        "title": str(
+            item.title or _tx(translate, GENERATION_TITLE_KEY, locale, GENERATION_TITLE_DEFAULT)
+        ),
         "prompt_id": item.prompt_id,
         "created_at": float(item.created_at),
         "status_chat_id": status_chat_id,
@@ -424,6 +468,9 @@ def _active_generation_to_dict(item: ActiveGeneration) -> dict[str, Any]:
 def _active_generation_from_dict(
     generation_id: str,
     payload: dict[str, Any],
+    *,
+    translate: TranslateText | None = None,
+    locale: str | None = None,
 ) -> ActiveGeneration | None:
     from core.runtime import ActiveGeneration
 
@@ -439,7 +486,10 @@ def _active_generation_from_dict(
             generation_id=generation_id,
             task=None,
             kind=str(payload.get("kind") or "generate"),
-            title=str(payload.get("title") or "Генерация"),
+            title=str(
+                payload.get("title")
+                or _tx(translate, GENERATION_TITLE_KEY, locale, GENERATION_TITLE_DEFAULT)
+            ),
             prompt_id=(str(payload.get("prompt_id")).strip() if payload.get("prompt_id") else None),
             status_chat_id=status_chat_id,
             status_message_id=status_message_id,

@@ -4,9 +4,12 @@ import asyncio
 import importlib
 import importlib.util
 import logging
+from collections.abc import Callable
 from typing import Any, Protocol, cast
 
 logger = logging.getLogger(__name__)
+
+TranslateText = Callable[[str, str | None, str], str]
 
 
 class TipoBackendError(RuntimeError):
@@ -58,9 +61,18 @@ class TipoBackendProtocol(Protocol):
 
 
 class TipoBackend:
-    def __init__(self, *, model: str, device: str) -> None:
+    def __init__(
+        self,
+        *,
+        model: str,
+        device: str,
+        translate: TranslateText | None = None,
+        locale: str | None = None,
+    ) -> None:
         self.model = model
         self.device = device
+        self._translate = translate
+        self._locale = locale
 
         self._load_lock = asyncio.Lock()
         self._backend_ready = False
@@ -75,6 +87,18 @@ class TipoBackend:
         self._separate_tags: Any = None
         self._apply_format: Any = None
         self._tipo_default_format: Any = None
+
+    def _t(self, key: str, default: str) -> str:
+        if self._translate is None:
+            return default
+        return self._translate(key, self._locale, default)
+
+    def _tf(self, key: str, default: str, **params: object) -> str:
+        template = self._t(key, default)
+        try:
+            return template.format(**params)
+        except (KeyError, ValueError, TypeError):
+            return default.format(**params)
 
     def missing_dependencies(self) -> list[str]:
         required = {
@@ -163,8 +187,22 @@ class TipoBackend:
             tipo_default_format = kgen_metainfo.TIPO_DEFAULT_FORMAT
         except (ImportError, AttributeError) as exc:
             missing = self.missing_dependencies()
-            deps_hint = f" Установите: pip install {' '.join(missing)}" if missing else ""
-            self._backend_error = "Не удалось загрузить зависимости TIPO." + deps_hint
+            deps_hint = (
+                self._tf(
+                    "infrastructure.tipo_backend.error.dependencies_install_hint",
+                    " Установите: pip install {packages}",
+                    packages=" ".join(missing),
+                )
+                if missing
+                else ""
+            )
+            self._backend_error = (
+                self._t(
+                    "infrastructure.tipo_backend.error.dependencies_load_failed",
+                    "Не удалось загрузить зависимости TIPO.",
+                )
+                + deps_hint
+            )
             raise TipoBackendError(self._backend_error) from exc
 
         self._torch = torch
@@ -178,9 +216,10 @@ class TipoBackend:
 
         runtime_device = self._resolve_runtime_device(torch)
         if self.device.startswith("cuda") and runtime_device == "cpu":
-            self._backend_error = (
+            self._backend_error = self._t(
+                "infrastructure.tipo_backend.error.cuda_unavailable",
                 "SMART_PROMPT_DEVICE настроен на CUDA, но CUDA недоступна в PyTorch. "
-                "Установите CUDA-сборку torch или переключите SMART_PROMPT_DEVICE=cpu."
+                "Установите CUDA-сборку torch или переключите SMART_PROMPT_DEVICE=cpu.",
             )
             raise TipoBackendError(self._backend_error)
 
@@ -207,12 +246,20 @@ class TipoBackend:
                 try:
                     model, tokenizer = self._load_tipo_model(device=runtime_device)
                 except (OSError, RuntimeError, ValueError) as cpu_exc:
-                    self._backend_error = (
-                        f"Не удалось загрузить TIPO модель {self.model} (CUDA и CPU): {cpu_exc}"
+                    self._backend_error = self._tf(
+                        "infrastructure.tipo_backend.error.model_load_failed_cuda_and_cpu",
+                        "Не удалось загрузить TIPO модель {model} (CUDA и CPU): {error}",
+                        model=self.model,
+                        error=cpu_exc,
                     )
                     raise TipoBackendError(self._backend_error) from cpu_exc
             else:
-                self._backend_error = f"Не удалось загрузить TIPO модель {self.model}: {exc}"
+                self._backend_error = self._tf(
+                    "infrastructure.tipo_backend.error.model_load_failed",
+                    "Не удалось загрузить TIPO модель {model}: {error}",
+                    model=self.model,
+                    error=exc,
+                )
                 raise TipoBackendError(self._backend_error) from exc
 
         kgen_models_any.text_model = model
@@ -253,7 +300,12 @@ class TipoBackend:
             nl_length_target=nl_length,
         )
         if not isinstance(meta, dict):
-            raise TipoBackendError("TIPO parse_tipo_request вернул некорректный meta payload")
+            raise TipoBackendError(
+                self._t(
+                    "infrastructure.tipo_backend.error.invalid_meta_payload",
+                    "TIPO parse_tipo_request вернул некорректный meta payload",
+                )
+            )
         meta["aspect_ratio"] = "1.0"
         return meta, operations, general, parsed_nl
 
@@ -282,9 +334,20 @@ class TipoBackend:
                 **runner_kwargs,
             )
         except (RuntimeError, ValueError, TypeError) as exc:
-            raise TipoBackendError(f"Ошибка TIPO: {exc}") from exc
+            raise TipoBackendError(
+                self._tf(
+                    "infrastructure.tipo_backend.error.run_failed",
+                    "Ошибка TIPO: {error}",
+                    error=exc,
+                )
+            ) from exc
         if not isinstance(result_map, dict):
-            raise TipoBackendError("TIPO вернул некорректный result_map")
+            raise TipoBackendError(
+                self._t(
+                    "infrastructure.tipo_backend.error.invalid_result_map",
+                    "TIPO вернул некорректный result_map",
+                )
+            )
         return result_map, extra
 
     def apply_format(self, result_map: dict[str, Any], format_key: str) -> str:

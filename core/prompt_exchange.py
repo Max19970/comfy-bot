@@ -5,6 +5,7 @@ import binascii
 import json
 import re
 import zlib
+from collections.abc import Callable
 from typing import Any
 
 from core.models import GenerationParams
@@ -14,6 +15,28 @@ PROMPT_EXCHANGE_VERSION = 1
 PROMPT_EXCHANGE_PREFIX = f"CBOT_PROMPT_V{PROMPT_EXCHANGE_VERSION}:"
 PROMPT_EXCHANGE_TOKEN_RE = re.compile(r"CBOT_PROMPT_V(?P<version>\d+):(?P<payload>[A-Za-z0-9_-]+)")
 PROMPT_EXCHANGE_MAX_BYTES = 64_000
+
+TranslateText = Callable[[str, str | None, str], str]
+
+
+def _tx(translate: TranslateText | None, key: str, locale: str | None, default: str) -> str:
+    if translate is None:
+        return default
+    return translate(key, locale, default)
+
+
+def _txf(
+    translate: TranslateText | None,
+    key: str,
+    locale: str | None,
+    default: str,
+    **params: object,
+) -> str:
+    template = _tx(translate, key, locale, default)
+    try:
+        return template.format(**params)
+    except (KeyError, ValueError, TypeError):
+        return default.format(**params)
 
 
 class PromptExchangeError(ValueError):
@@ -31,39 +54,90 @@ def export_prompt_token(params: GenerationParams) -> str:
     return f"{PROMPT_EXCHANGE_PREFIX}{encoded}"
 
 
-def import_prompt_token(text: str) -> GenerationParams:
-    payload = _payload_from_text(text)
-    params_payload = _extract_params_payload(payload)
+def import_prompt_token(
+    text: str,
+    *,
+    translate: TranslateText | None = None,
+    locale: str | None = None,
+) -> GenerationParams:
+    payload = _payload_from_text(text, translate=translate, locale=locale)
+    params_payload = _extract_params_payload(payload, translate=translate, locale=locale)
     try:
         return dict_to_params(params_payload)
     except (TypeError, ValueError, KeyError) as exc:
-        raise PromptExchangeError("Не удалось прочитать параметры из кода обмена.") from exc
+        raise PromptExchangeError(
+            _tx(
+                translate,
+                "core.prompt_exchange.error.read_params_failed",
+                locale,
+                "Не удалось прочитать параметры из кода обмена.",
+            )
+        ) from exc
 
 
-def _payload_from_text(text: str) -> dict[str, Any]:
+def _payload_from_text(
+    text: str,
+    *,
+    translate: TranslateText | None = None,
+    locale: str | None = None,
+) -> dict[str, Any]:
     source = (text or "").strip()
     if not source:
-        raise PromptExchangeError("Код обмена пустой.")
+        raise PromptExchangeError(
+            _tx(
+                translate,
+                "core.prompt_exchange.error.empty",
+                locale,
+                "Код обмена пустой.",
+            )
+        )
 
     token_match = PROMPT_EXCHANGE_TOKEN_RE.search(source)
     if token_match:
-        return _decode_token_payload(token_match)
+        return _decode_token_payload(token_match, translate=translate, locale=locale)
 
     json_payload = _try_parse_json_payload(source)
     if json_payload is not None:
         return json_payload
 
-    raise PromptExchangeError("Код обмена не найден. Вставьте код вида CBOT_PROMPT_V1:...")
+    raise PromptExchangeError(
+        _tx(
+            translate,
+            "core.prompt_exchange.error.not_found",
+            locale,
+            "Код обмена не найден. Вставьте код вида CBOT_PROMPT_V1:...",
+        )
+    )
 
 
-def _decode_token_payload(token_match: re.Match) -> dict[str, Any]:
+def _decode_token_payload(
+    token_match: re.Match,
+    *,
+    translate: TranslateText | None = None,
+    locale: str | None = None,
+) -> dict[str, Any]:
     try:
         version = int(token_match.group("version"))
     except (TypeError, ValueError) as exc:
-        raise PromptExchangeError("Не удалось распознать версию кода обмена.") from exc
+        raise PromptExchangeError(
+            _tx(
+                translate,
+                "core.prompt_exchange.error.version_parse_failed",
+                locale,
+                "Не удалось распознать версию кода обмена.",
+            )
+        ) from exc
 
     if version != PROMPT_EXCHANGE_VERSION:
-        raise PromptExchangeError(f"Неподдерживаемая версия кода обмена: v{version}.")
+        raise PromptExchangeError(
+            _txf(
+                translate,
+                "core.prompt_exchange.error.unsupported_version",
+                locale,
+                "Неподдерживаемая версия кода обмена: v{version}.",
+                version=version,
+            )
+        )
 
     encoded = token_match.group("payload")
     padded = encoded + "=" * (-len(encoded) % 4)
@@ -71,27 +145,70 @@ def _decode_token_payload(token_match: re.Match) -> dict[str, Any]:
     try:
         compressed = base64.urlsafe_b64decode(padded)
     except (binascii.Error, ValueError) as exc:
-        raise PromptExchangeError("Код обмена повреждён: ошибка base64-декодирования.") from exc
+        raise PromptExchangeError(
+            _tx(
+                translate,
+                "core.prompt_exchange.error.base64_decode_failed",
+                locale,
+                "Код обмена повреждён: ошибка base64-декодирования.",
+            )
+        ) from exc
 
     try:
         raw = zlib.decompress(compressed)
     except zlib.error as exc:
-        raise PromptExchangeError("Код обмена повреждён: ошибка распаковки.") from exc
+        raise PromptExchangeError(
+            _tx(
+                translate,
+                "core.prompt_exchange.error.decompress_failed",
+                locale,
+                "Код обмена повреждён: ошибка распаковки.",
+            )
+        ) from exc
 
     if len(raw) > PROMPT_EXCHANGE_MAX_BYTES:
-        raise PromptExchangeError("Код обмена слишком большой.")
+        raise PromptExchangeError(
+            _tx(
+                translate,
+                "core.prompt_exchange.error.too_large",
+                locale,
+                "Код обмена слишком большой.",
+            )
+        )
 
     try:
         payload = json.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError) as exc:
-        raise PromptExchangeError("Код обмена повреждён: некорректный JSON.") from exc
+        raise PromptExchangeError(
+            _tx(
+                translate,
+                "core.prompt_exchange.error.invalid_json",
+                locale,
+                "Код обмена повреждён: некорректный JSON.",
+            )
+        ) from exc
 
     if not isinstance(payload, dict):
-        raise PromptExchangeError("Код обмена имеет неверный формат.")
+        raise PromptExchangeError(
+            _tx(
+                translate,
+                "core.prompt_exchange.error.invalid_format",
+                locale,
+                "Код обмена имеет неверный формат.",
+            )
+        )
 
     payload_version = int(payload.get("v") or PROMPT_EXCHANGE_VERSION)
     if payload_version != PROMPT_EXCHANGE_VERSION:
-        raise PromptExchangeError(f"Неподдерживаемая версия данных: v{payload_version}.")
+        raise PromptExchangeError(
+            _txf(
+                translate,
+                "core.prompt_exchange.error.unsupported_payload_version",
+                locale,
+                "Неподдерживаемая версия данных: v{payload_version}.",
+                payload_version=payload_version,
+            )
+        )
 
     return payload
 
@@ -126,7 +243,12 @@ def _extract_json_candidate(source: str) -> str:
     return ""
 
 
-def _extract_params_payload(payload: dict[str, Any]) -> dict[str, Any]:
+def _extract_params_payload(
+    payload: dict[str, Any],
+    *,
+    translate: TranslateText | None = None,
+    locale: str | None = None,
+) -> dict[str, Any]:
     params_payload = payload.get("params") if isinstance(payload, dict) else None
     if isinstance(params_payload, dict):
         return params_payload
@@ -141,4 +263,11 @@ def _extract_params_payload(payload: dict[str, Any]) -> dict[str, Any]:
     if any(key in payload for key in likely_params_keys):
         return payload
 
-    raise PromptExchangeError("В коде обмена отсутствуют параметры генерации (params).")
+    raise PromptExchangeError(
+        _tx(
+            translate,
+            "core.prompt_exchange.error.params_missing",
+            locale,
+            "В коде обмена отсутствуют параметры генерации (params).",
+        )
+    )

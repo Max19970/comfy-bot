@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import asdict, dataclass
 
 from aiogram import F, Router
@@ -17,8 +17,10 @@ from core.callbacks import ValueSelectionCallback
 from core.interaction import require_callback_message
 from core.models import GenerationParams
 from core.runtime import PromptRequest, RuntimeStore
+from core.user_preferences import read_user_locale
 from core.ui_kit import back_button, build_keyboard
 from core.ui_kit.buttons import button
+from domain.localization import LocalizationService
 
 
 @dataclass
@@ -36,12 +38,47 @@ class PromptEditorFlowHandlersDeps:
     show_prompt_editor: Callable[..., Awaitable[None]]
     changed_params_count: Callable[[GenerationParams], int]
     run_generate_operation: Callable[[Message, FSMContext, int], Awaitable[None]]
+    localization: LocalizationService
+    resolve_user_locale: Callable[..., str]
 
 
 def register_prompt_editor_flow_handlers(
     router: Router,
     deps: PromptEditorFlowHandlersDeps,
 ) -> None:
+    def _resolved_locale(uid: int, *, telegram_locale: str | None) -> str:
+        prefs = deps.runtime.user_preferences.get(uid, {})
+        selected_locale = read_user_locale(
+            prefs,
+            default_locale=deps.localization.default_locale(),
+        )
+        return deps.resolve_user_locale(
+            user_locale=selected_locale,
+            telegram_locale=telegram_locale,
+        )
+
+    def _t(
+        uid: int,
+        key: str,
+        default: str,
+        *,
+        telegram_locale: str | None,
+        params: Mapping[str, object] | None = None,
+    ) -> str:
+        locale = _resolved_locale(uid, telegram_locale=telegram_locale)
+        return deps.localization.t(key, locale=locale, params=params, default=default)
+
+    def _t_cb(
+        cb: CallbackQuery,
+        key: str,
+        default: str,
+        *,
+        params: Mapping[str, object] | None = None,
+    ) -> str:
+        uid = cb.from_user.id if cb.from_user else 0
+        telegram_locale = cb.from_user.language_code if cb.from_user else None
+        return _t(uid, key, default, telegram_locale=telegram_locale, params=params)
+
     def _latest_user_generation(uid: int):
         candidates = [
             item for item in deps.runtime.active_generations.values() if item.owner_uid == uid
@@ -54,18 +91,32 @@ def register_prompt_editor_flow_handlers(
     async def _start_generate(msg: Message, state: FSMContext, uid: int) -> None:
         if not await deps.ensure_models(msg):
             return
+        telegram_locale = msg.from_user.language_code if msg.from_user else None
         await deps.open_prompt_request(
             msg,
             state,
             uid,
             deps.default_params_for_user(uid),
             operation="generate",
-            notice="✨ Новый запрос создан.",
+            notice=_t(
+                uid,
+                "prompt_editor.flow.notice.new_request",
+                "✨ Новый запрос создан.",
+                telegram_locale=telegram_locale,
+            ),
         )
 
     async def _start_repeat(msg: Message, state: FSMContext, uid: int) -> None:
+        telegram_locale = msg.from_user.language_code if msg.from_user else None
         if uid not in deps.runtime.last_params:
-            await msg.answer("❌ Нет предыдущей генерации. Используйте /generate.")
+            await msg.answer(
+                _t(
+                    uid,
+                    "prompt_editor.flow.error.no_previous_generation",
+                    "❌ Нет предыдущей генерации. Используйте /generate.",
+                    telegram_locale=telegram_locale,
+                )
+            )
             return
         if not await deps.ensure_models(msg):
             return
@@ -78,20 +129,75 @@ def register_prompt_editor_flow_handlers(
             uid,
             params,
             operation="generate",
-            notice="🔁 Загружен последний запрос (seed = random).",
+            notice=_t(
+                uid,
+                "prompt_editor.flow.notice.repeat_loaded",
+                "🔁 Загружен последний запрос (seed = random).",
+                telegram_locale=telegram_locale,
+            ),
         )
 
-    def _cancel_editor_keyboard():
+    def _cancel_editor_keyboard(*, uid: int, telegram_locale: str | None):
         return build_keyboard(
             [
-                [button("✅ Отменить", "pe:cancel:confirm"), button("💾 Сохранить", "pe:save")],
-                [back_button("pe:back")],
+                [
+                    button(
+                        _t(
+                            uid,
+                            "prompt_editor.flow.button.confirm_cancel",
+                            "✅ Отменить",
+                            telegram_locale=telegram_locale,
+                        ),
+                        "pe:cancel:confirm",
+                    ),
+                    button(
+                        _t(
+                            uid,
+                            "prompt_editor.flow.button.save",
+                            "💾 Сохранить",
+                            telegram_locale=telegram_locale,
+                        ),
+                        "pe:save",
+                    ),
+                ],
+                [
+                    back_button(
+                        "pe:back",
+                        text=_t(
+                            uid,
+                            "common.action.back",
+                            "⬅️ Назад",
+                            telegram_locale=telegram_locale,
+                        ),
+                    )
+                ],
             ]
         )
 
-    def _empty_positive_confirm_keyboard():
+    def _empty_positive_confirm_keyboard(*, uid: int, telegram_locale: str | None):
         return build_keyboard(
-            [[button("✅ Да", "pe:gen:empty:yes"), button("❌ Нет", "pe:gen:empty:no")]]
+            [
+                [
+                    button(
+                        _t(
+                            uid,
+                            "prompt_editor.flow.button.yes",
+                            "✅ Да",
+                            telegram_locale=telegram_locale,
+                        ),
+                        "pe:gen:empty:yes",
+                    ),
+                    button(
+                        _t(
+                            uid,
+                            "prompt_editor.flow.button.no",
+                            "❌ Нет",
+                            telegram_locale=telegram_locale,
+                        ),
+                        "pe:gen:empty:no",
+                    ),
+                ]
+            ]
         )
 
     @router.message(Command("generate"))
@@ -138,17 +244,31 @@ def register_prompt_editor_flow_handlers(
 
         uid, req = payload
         changed_count = deps.changed_params_count(req.params)
+        telegram_locale = cb.from_user.language_code if cb.from_user else None
         if changed_count > 0:
             await message.edit_text(
-                f"⚠️ Вы изменили {changed_count} параметров. Точно отменить редактор?",
-                reply_markup=_cancel_editor_keyboard(),
+                _t(
+                    uid,
+                    "prompt_editor.flow.confirm.cancel_with_changes",
+                    "⚠️ Вы изменили {count} параметров. Точно отменить редактор?",
+                    telegram_locale=telegram_locale,
+                    params={"count": changed_count},
+                ),
+                reply_markup=_cancel_editor_keyboard(uid=uid, telegram_locale=telegram_locale),
             )
             await cb.answer()
             return
 
         deps.runtime.active_prompt_requests.pop(uid, None)
         await state.clear()
-        await message.edit_text("❌ Операция отменена.")
+        await message.edit_text(
+            _t(
+                uid,
+                "prompt_editor.flow.notice.operation_cancelled",
+                "❌ Операция отменена.",
+                telegram_locale=telegram_locale,
+            )
+        )
         await cb.answer()
 
     @router.callback_query(F.data == "pe:cancel:confirm")
@@ -159,7 +279,13 @@ def register_prompt_editor_flow_handlers(
         uid = deps.callback_user_id(cb)
         deps.runtime.active_prompt_requests.pop(uid, None)
         await state.clear()
-        await message.edit_text("❌ Операция отменена.")
+        await message.edit_text(
+            _t_cb(
+                cb,
+                "prompt_editor.flow.notice.operation_cancelled",
+                "❌ Операция отменена.",
+            )
+        )
         await cb.answer()
 
     @router.callback_query(F.data.startswith("pe:gen:cancel"))
@@ -181,9 +307,19 @@ def register_prompt_editor_flow_handlers(
                 gen.task.cancel()
             if gen.prompt_id:
                 asyncio.create_task(deps.client.cancel_prompt(gen.prompt_id))
-            await cb.answer("❌ Отменяю...", show_alert=False)
+            await cb.answer(
+                _t_cb(cb, "prompt_editor.flow.alert.cancelling", "❌ Отменяю..."),
+                show_alert=False,
+            )
         else:
-            await cb.answer("Нечего отменять.", show_alert=True)
+            await cb.answer(
+                _t_cb(
+                    cb,
+                    "prompt_editor.flow.alert.nothing_to_cancel",
+                    "Нечего отменять.",
+                ),
+                show_alert=True,
+            )
 
     @router.callback_query(F.data == "pe:proceed")
     async def pe_proceed(cb: CallbackQuery, state: FSMContext):
@@ -197,9 +333,18 @@ def register_prompt_editor_flow_handlers(
         uid, req = payload
         if req.operation == "generate":
             if not req.params.positive.strip():
+                telegram_locale = cb.from_user.language_code if cb.from_user else None
                 await message.edit_text(
-                    "⚠️ Positive prompt пустой. Всё равно генерировать?",
-                    reply_markup=_empty_positive_confirm_keyboard(),
+                    _t(
+                        uid,
+                        "prompt_editor.flow.confirm.empty_positive",
+                        "⚠️ Positive prompt пустой. Всё равно генерировать?",
+                        telegram_locale=telegram_locale,
+                    ),
+                    reply_markup=_empty_positive_confirm_keyboard(
+                        uid=uid,
+                        telegram_locale=telegram_locale,
+                    ),
                 )
                 await cb.answer()
                 return
@@ -208,7 +353,15 @@ def register_prompt_editor_flow_handlers(
             await deps.run_generate_operation(message, state, uid)
             return
         await cb.answer()
-        await message.answer(f"Неизвестная операция: {req.operation}")
+        await message.answer(
+            _t(
+                uid,
+                "prompt_editor.flow.error.unknown_operation",
+                "Неизвестная операция: {operation}",
+                telegram_locale=cb.from_user.language_code if cb.from_user else None,
+                params={"operation": req.operation},
+            )
+        )
 
     @router.callback_query(F.data == "pe:gen:empty:yes")
     async def pe_generate_empty_yes(cb: CallbackQuery, state: FSMContext):
@@ -238,7 +391,12 @@ def register_prompt_editor_flow_handlers(
             state,
             uid,
             edit=True,
-            notice="ℹ️ Генерация отменена: заполните Positive или подтвердите пустой prompt.",
+            notice=_t(
+                uid,
+                "prompt_editor.flow.notice.generation_cancelled_fill_positive",
+                "ℹ️ Генерация отменена: заполните Positive или подтвердите пустой prompt.",
+                telegram_locale=cb.from_user.language_code if cb.from_user else None,
+            ),
         )
         await cb.answer()
 
@@ -257,6 +415,11 @@ def register_prompt_editor_flow_handlers(
             state,
             uid,
             edit=True,
-            notice="↩️ Возвращаемся в редактор.",
+            notice=_t(
+                uid,
+                "prompt_editor.flow.notice.back_to_editor",
+                "↩️ Возвращаемся в редактор.",
+                telegram_locale=cb.from_user.language_code if cb.from_user else None,
+            ),
         )
         await cb.answer()

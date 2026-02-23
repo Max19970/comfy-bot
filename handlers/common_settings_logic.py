@@ -36,7 +36,7 @@ def parse_generation_callback_value(key: str, value: str) -> dict[str, Any]:
         return {"gen_seed": int(value)}
     if key == "batch":
         return {"gen_batch": int(value)}
-    raise SettingsParseError("⚠️ Неизвестный параметр.")
+    raise SettingsParseError("common.alert.unknown_param")
 
 
 def parse_generation_manual_value(field: str, raw: str) -> dict[str, Any]:
@@ -100,30 +100,30 @@ def parse_download_callback_value(
     if key == "source":
         source = normalize_download_source(normalized, default="")
         if not source:
-            raise SettingsParseError("⚠️ Некорректный source.")
+            raise SettingsParseError("common.alert.invalid_param")
         return {"dl_default_source": source}
     if key == "sort":
         sort_code = normalize_download_sort_code(normalized, default="")
         if not sort_code:
-            raise SettingsParseError("⚠️ Некорректный sort.")
+            raise SettingsParseError("common.alert.invalid_param")
         return {"dl_default_sort": sort_code}
     if key == "period":
         period_code = normalize_download_period_code(normalized, default="")
         if not period_code:
-            raise SettingsParseError("⚠️ Некорректный period.")
+            raise SettingsParseError("common.alert.invalid_param")
         return {"dl_default_period": period_code}
     if key == "base":
         base_code = normalize_download_base_code(normalized, default="")
         if not base_code:
-            raise SettingsParseError("⚠️ Некорректная базовая модель.")
+            raise SettingsParseError("common.alert.invalid_param")
         return {"dl_default_base": base_code}
     if key == "profile":
         if not apply_profile(normalized):
-            raise SettingsParseError("⚠️ Неизвестный профиль.")
+            raise SettingsParseError("common.alert.invalid_param")
         return {}
     if key == "nsfw" and normalized == "toggle":
         return {"dl_default_nsfw": not current_nsfw}
-    raise SettingsParseError("⚠️ Неизвестный параметр.")
+    raise SettingsParseError("common.alert.unknown_param")
 
 
 def parse_download_author(raw: str) -> str:

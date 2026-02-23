@@ -12,6 +12,14 @@ from core.interaction import require_callback_message
 from core.models import GenerationParams
 from core.ui_kit import back_button
 
+TranslateText = Callable[[str, str | None, str], str]
+
+
+def _tx(translate: TranslateText | None, key: str, locale: str | None, default: str) -> str:
+    if translate is None:
+        return default
+    return translate(key, locale, default)
+
 
 async def open_paginated_choice(
     cb: CallbackQuery,
@@ -21,12 +29,21 @@ async def open_paginated_choice(
     prefix: str,
     back_callback: str = "pe:back",
     paginated_keyboard: Callable[..., Any],
+    translate: TranslateText | None = None,
+    locale: str | None = None,
 ) -> None:
     kb = paginated_keyboard(
         items,
         0,
         prefix,
-        extra=[[back_button(back_callback)]],
+        extra=[
+            [
+                back_button(
+                    back_callback,
+                    text=_tx(translate, "common.action.back", locale, "⬅️ Назад"),
+                )
+            ]
+        ],
     )
     message = await require_callback_message(cb)
     if message is None:
@@ -42,17 +59,34 @@ async def change_paginated_choice_page(
     prefix: str,
     back_callback: str = "pe:back",
     paginated_keyboard: Callable[..., Any],
+    translate: TranslateText | None = None,
+    locale: str | None = None,
 ) -> None:
     page_cb = PagedSelectionCallback.parse(cb.data or "", prefix=prefix)
     if page_cb is None:
-        await cb.answer("❌ Некорректный запрос.", show_alert=True)
+        await cb.answer(
+            _tx(
+                translate,
+                "common.alert.invalid_request",
+                locale,
+                "❌ Некорректный запрос.",
+            ),
+            show_alert=True,
+        )
         return
     page = page_cb.page
     kb = paginated_keyboard(
         items,
         page,
         prefix,
-        extra=[[back_button(back_callback)]],
+        extra=[
+            [
+                back_button(
+                    back_callback,
+                    text=_tx(translate, "common.action.back", locale, "⬅️ Назад"),
+                )
+            ]
+        ],
     )
     message = await require_callback_message(cb)
     if message is None:

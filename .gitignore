@@ -32,3 +32,6 @@ smart_prompt_guides/*.json
 sessions/*.json
 !sessions/.gitkeep
 sessions/preview_artifacts/
+
+# Local development docs artifacts
+docs/dev/

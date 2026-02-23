@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any, cast
 
@@ -19,6 +19,8 @@ from core.models import GenerationParams
 from core.runtime import PromptRequest, RuntimeStore
 from core.states import PromptEditorStates
 from core.ui import custom_btn
+from core.user_preferences import read_user_locale
+from domain.localization import LocalizationService
 
 from .prompt_editor_handler_guards import require_message_and_request
 from .prompt_editor_scalar_utils import parse_scalar_value
@@ -51,6 +53,8 @@ class PromptEditorEditHandlersDeps:
     back_keyboard: Callable[..., InlineKeyboardMarkup]
     incompatible_loras: Callable[[GenerationParams], list[tuple[str, str, str]]]
     cleanup_user_message: Callable[[Message], Awaitable[None]]
+    localization: LocalizationService | None = None
+    resolve_user_locale: Callable[..., str] | None = None
 
 
 @dataclass
@@ -84,6 +88,63 @@ def register_prompt_editor_edit_handlers(
     router: Router,
     deps: PromptEditorEditHandlersDeps,
 ) -> None:
+    def _resolved_locale(uid: int, *, telegram_locale: str | None) -> str | None:
+        if deps.localization is None:
+            return None
+        prefs = deps.runtime.user_preferences.get(uid, {})
+        selected_locale = read_user_locale(
+            prefs,
+            default_locale=deps.localization.default_locale(),
+        )
+        if deps.resolve_user_locale is None:
+            return selected_locale
+        return deps.resolve_user_locale(
+            user_locale=selected_locale,
+            telegram_locale=telegram_locale,
+        )
+
+    def _t(
+        uid: int,
+        key: str,
+        default: str,
+        *,
+        telegram_locale: str | None,
+        params: Mapping[str, object] | None = None,
+    ) -> str:
+        if deps.localization is None:
+            text = default
+        else:
+            locale = _resolved_locale(uid, telegram_locale=telegram_locale)
+            text = deps.localization.t(key, locale=locale, params=params, default=default)
+        if params:
+            try:
+                return text.format(**params)
+            except Exception:
+                return text
+        return text
+
+    def _t_cb(
+        cb: CallbackQuery,
+        key: str,
+        default: str,
+        *,
+        params: Mapping[str, object] | None = None,
+    ) -> str:
+        uid = cb.from_user.id if cb.from_user else 0
+        telegram_locale = cb.from_user.language_code if cb.from_user else None
+        return _t(uid, key, default, telegram_locale=telegram_locale, params=params)
+
+    def _t_msg(
+        uid: int,
+        msg: Message,
+        key: str,
+        default: str,
+        *,
+        params: Mapping[str, object] | None = None,
+    ) -> str:
+        telegram_locale = msg.from_user.language_code if msg.from_user else None
+        return _t(uid, key, default, telegram_locale=telegram_locale, params=params)
+
     async def _callback_context(
         cb: CallbackQuery,
     ) -> tuple[Message, int, PromptRequest] | None:
@@ -97,7 +158,11 @@ def register_prompt_editor_edit_handlers(
         async def _open(cb: CallbackQuery):
             await deps.open_paginated_choice(
                 cb,
-                title=config.title,
+                title=_t_cb(
+                    cb,
+                    f"prompt_editor.edit.{config.prefix}.title",
+                    config.title,
+                ),
                 items=config.items_getter(),
                 prefix=config.prefix,
             )
@@ -117,14 +182,25 @@ def register_prompt_editor_edit_handlers(
                 return
             items = config.items_getter()
             if idx < 0 or idx >= len(items):
-                await cb.answer("❌ Неверный индекс.", show_alert=True)
+                await cb.answer(
+                    _t_cb(
+                        cb,
+                        "prompt_editor.edit.error.invalid_index",
+                        "❌ Неверный индекс.",
+                    ),
+                    show_alert=True,
+                )
                 return
             await deps.set_prompt_param_from_callback(
                 cb,
                 state,
                 field=config.field,
                 value=config.transform_value(items[idx]),
-                notice=config.notice,
+                notice=_t_cb(
+                    cb,
+                    f"prompt_editor.edit.{config.prefix}.notice",
+                    config.notice,
+                ),
             )
 
     def _register_scalar_param(config: ScalarParamConfig) -> None:
@@ -134,7 +210,11 @@ def register_prompt_editor_edit_handlers(
             if message is None:
                 return
             await message.edit_text(
-                config.menu_text,
+                _t_cb(
+                    cb,
+                    f"prompt_editor.edit.{config.prefix}.menu_text",
+                    config.menu_text,
+                ),
                 reply_markup=scalar_choice_keyboard(
                     prefix=config.prefix,
                     values_rows=config.values_rows,
@@ -157,7 +237,11 @@ def register_prompt_editor_edit_handlers(
             if raw_value == "custom":
                 await state.set_state(cast(Any, config.custom_state))
                 await message.edit_text(
-                    config.custom_prompt,
+                    _t_cb(
+                        cb,
+                        f"prompt_editor.edit.{config.prefix}.custom_prompt",
+                        config.custom_prompt,
+                    ),
                     reply_markup=deps.back_keyboard(),
                 )
                 await cb.answer()
@@ -174,7 +258,14 @@ def register_prompt_editor_edit_handlers(
                 if parsed is None:
                     raise ValueError
             except ValueError:
-                await cb.answer("❌ Некорректное значение.", show_alert=True)
+                await cb.answer(
+                    _t_cb(
+                        cb,
+                        "prompt_editor.edit.error.invalid_value",
+                        "❌ Некорректное значение.",
+                    ),
+                    show_alert=True,
+                )
                 return
 
             config.set_value(req.params, parsed)
@@ -183,7 +274,12 @@ def register_prompt_editor_edit_handlers(
                 state,
                 uid,
                 edit=True,
-                notice=config.notice,
+                notice=_t(
+                    uid,
+                    f"prompt_editor.edit.{config.prefix}.notice",
+                    config.notice,
+                    telegram_locale=cb.from_user.language_code if cb.from_user else None,
+                ),
             )
             await cb.answer()
 
@@ -200,12 +296,29 @@ def register_prompt_editor_edit_handlers(
                 validate_value=config.validate_value,
             )
             if parsed is None:
-                await msg.answer(config.invalid_input_text)
+                await msg.answer(
+                    _t_msg(
+                        uid,
+                        msg,
+                        f"prompt_editor.edit.{config.prefix}.invalid_input",
+                        config.invalid_input_text,
+                    )
+                )
                 return
 
             config.set_value(req.params, parsed)
             await deps.cleanup_user_message(msg)
-            await deps.show_prompt_editor(msg, state, uid, notice=config.notice)
+            await deps.show_prompt_editor(
+                msg,
+                state,
+                uid,
+                notice=_t_msg(
+                    uid,
+                    msg,
+                    f"prompt_editor.edit.{config.prefix}.notice",
+                    config.notice,
+                ),
+            )
 
     @router.callback_query(F.data == "pe:edit:positive")
     async def pe_edit_positive(cb: CallbackQuery, state: FSMContext):
@@ -230,7 +343,17 @@ def register_prompt_editor_edit_handlers(
         uid, req = payload
         req.params.positive = (msg.text or "").strip()
         await deps.cleanup_user_message(msg)
-        await deps.show_prompt_editor(msg, state, uid, notice="✅ Positive обновлён.")
+        await deps.show_prompt_editor(
+            msg,
+            state,
+            uid,
+            notice=_t_msg(
+                uid,
+                msg,
+                "prompt_editor.edit.notice.positive_updated",
+                "✅ Positive обновлён.",
+            ),
+        )
 
     @router.callback_query(F.data == "pe:edit:negative")
     async def pe_edit_negative(cb: CallbackQuery, state: FSMContext):
@@ -260,13 +383,23 @@ def register_prompt_editor_edit_handlers(
         value = (msg.text or "").strip()
         req.params.negative = "" if value == "-" else value
         await deps.cleanup_user_message(msg)
-        await deps.show_prompt_editor(msg, state, uid, notice="✅ Negative обновлён.")
+        await deps.show_prompt_editor(
+            msg,
+            state,
+            uid,
+            notice=_t_msg(
+                uid,
+                msg,
+                "prompt_editor.edit.notice.negative_updated",
+                "✅ Negative обновлён.",
+            ),
+        )
 
     @router.callback_query(F.data == "pe:edit:checkpoint")
     async def pe_edit_checkpoint(cb: CallbackQuery):
         await deps.open_paginated_choice(
             cb,
-            title="Выберите checkpoint:",
+            title=_t_cb(cb, "prompt_editor.edit.checkpoint.title", "Выберите checkpoint:"),
             items=deps.client.info.checkpoints,
             prefix="pe_ckpt",
         )
@@ -286,7 +419,10 @@ def register_prompt_editor_edit_handlers(
             return
         items = deps.client.info.checkpoints
         if idx < 0 or idx >= len(items):
-            await cb.answer("❌ Неверный индекс.", show_alert=True)
+            await cb.answer(
+                _t_cb(cb, "prompt_editor.edit.error.invalid_index", "❌ Неверный индекс."),
+                show_alert=True,
+            )
             return
 
         context = await _callback_context(cb)
@@ -296,12 +432,30 @@ def register_prompt_editor_edit_handlers(
         message, uid, req = context
         req.params.checkpoint = items[idx]
 
-        notice = "✅ Checkpoint обновлён."
+        notice = _t_cb(
+            cb,
+            "prompt_editor.edit.notice.checkpoint_updated",
+            "✅ Checkpoint обновлён.",
+        )
         bad_loras = deps.incompatible_loras(req.params)
         if bad_loras:
             names = ", ".join(name for name, _, _ in bad_loras[:3])
-            suffix = "" if len(bad_loras) <= 3 else f" и ещё {len(bad_loras) - 3}"
-            notice += f" ⚠️ Несовместимые LoRA: {names}{suffix}."
+            suffix = (
+                ""
+                if len(bad_loras) <= 3
+                else _t_cb(
+                    cb,
+                    "prompt_editor.edit.notice.lora_incompatible_suffix",
+                    " и ещё {count}",
+                    params={"count": len(bad_loras) - 3},
+                )
+            )
+            notice += _t_cb(
+                cb,
+                "prompt_editor.edit.notice.lora_incompatible",
+                " ⚠️ Несовместимые LoRA: {names}{suffix}.",
+                params={"names": names, "suffix": suffix},
+            )
 
         await deps.show_prompt_editor(message, state, uid, edit=True, notice=notice)
         await cb.answer()
@@ -401,17 +555,28 @@ def register_prompt_editor_edit_handlers(
                 row = []
         if row:
             rows.append(row)
-        rows.append([InlineKeyboardButton(text="Свой размер...", callback_data="pe_size:custom")])
         rows.append(
             [
                 InlineKeyboardButton(
-                    text="\u2b05\ufe0f \u041d\u0430\u0437\u0430\u0434",
+                    text=_t_cb(
+                        cb,
+                        "prompt_editor.edit.size.custom_button",
+                        "Свой размер...",
+                    ),
+                    callback_data="pe_size:custom",
+                )
+            ]
+        )
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=_t_cb(cb, "common.action.back", "⬅️ Назад"),
                     callback_data="pe:back",
                 )
             ]
         )
         await message.edit_text(
-            "Размер изображения:",
+            _t_cb(cb, "prompt_editor.edit.size.title", "Размер изображения:"),
             reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
         )
         await cb.answer()
@@ -429,7 +594,11 @@ def register_prompt_editor_edit_handlers(
         if value == "custom":
             await state.set_state(PromptEditorStates.entering_custom_size)
             await message.edit_text(
-                "Введите размер ШИРИНАxВЫСОТА (например 640x960):",
+                _t_cb(
+                    cb,
+                    "prompt_editor.edit.size.custom_prompt",
+                    "Введите размер ШИРИНАxВЫСОТА (например 640x960):",
+                ),
                 reply_markup=deps.back_keyboard(),
             )
             await cb.answer()
@@ -437,14 +606,26 @@ def register_prompt_editor_edit_handlers(
 
         size_parts = value.split(":", 1)
         if len(size_parts) != 2:
-            await cb.answer("❌ Некорректный размер.", show_alert=True)
+            await cb.answer(
+                _t_cb(cb, "prompt_editor.edit.size.invalid", "❌ Некорректный размер."),
+                show_alert=True,
+            )
             return
         try:
             req.params.width, req.params.height = int(size_parts[0]), int(size_parts[1])
         except ValueError:
-            await cb.answer("❌ Некорректный размер.", show_alert=True)
+            await cb.answer(
+                _t_cb(cb, "prompt_editor.edit.size.invalid", "❌ Некорректный размер."),
+                show_alert=True,
+            )
             return
-        await deps.show_prompt_editor(message, state, uid, edit=True, notice="✅ Размер обновлён.")
+        await deps.show_prompt_editor(
+            message,
+            state,
+            uid,
+            edit=True,
+            notice=_t_cb(cb, "prompt_editor.edit.size.updated", "✅ Размер обновлён."),
+        )
         await cb.answer()
 
     @router.message(PromptEditorStates.entering_custom_size, F.text)
@@ -456,7 +637,9 @@ def register_prompt_editor_edit_handlers(
         uid, req = payload
         text = (msg.text or "").strip().lower().replace(" ", "")
         if "x" not in text:
-            await msg.answer("Формат: ШИРИНАxВЫСОТА")
+            await msg.answer(
+                _t_msg(uid, msg, "prompt_editor.edit.size.format", "Формат: ШИРИНАxВЫСОТА")
+            )
             return
 
         try:
@@ -465,12 +648,24 @@ def register_prompt_editor_edit_handlers(
             if not (64 <= width_i <= 4096 and 64 <= height_i <= 4096):
                 raise ValueError
         except ValueError:
-            await msg.answer("Размеры 64-4096. Попробуйте ещё:")
+            await msg.answer(
+                _t_msg(
+                    uid,
+                    msg,
+                    "prompt_editor.edit.size.range",
+                    "Размеры 64-4096. Попробуйте ещё:",
+                )
+            )
             return
 
         req.params.width, req.params.height = width_i, height_i
         await deps.cleanup_user_message(msg)
-        await deps.show_prompt_editor(msg, state, uid, notice="✅ Размер обновлён.")
+        await deps.show_prompt_editor(
+            msg,
+            state,
+            uid,
+            notice=_t_msg(uid, msg, "prompt_editor.edit.size.updated", "✅ Размер обновлён."),
+        )
 
     _register_scalar_param(
         ScalarParamConfig(
@@ -551,17 +746,24 @@ def register_prompt_editor_edit_handlers(
             return
         kb = InlineKeyboardMarkup(
             inline_keyboard=[
-                [InlineKeyboardButton(text="Случайный", callback_data="pe_seed:random")],
+                [
+                    InlineKeyboardButton(
+                        text=_t_cb(cb, "prompt_editor.edit.seed.random", "Случайный"),
+                        callback_data="pe_seed:random",
+                    )
+                ],
                 custom_btn("pe_seed:custom"),
                 [
                     InlineKeyboardButton(
-                        text="\u2b05\ufe0f \u041d\u0430\u0437\u0430\u0434",
+                        text=_t_cb(cb, "common.action.back", "⬅️ Назад"),
                         callback_data="pe:back",
                     )
                 ],
             ]
         )
-        await message.edit_text("Seed:", reply_markup=kb)
+        await message.edit_text(
+            _t_cb(cb, "prompt_editor.edit.seed.title", "Seed:"), reply_markup=kb
+        )
         await cb.answer()
 
     @router.callback_query(F.data.startswith("pe_seed:"))
@@ -577,14 +779,20 @@ def register_prompt_editor_edit_handlers(
         if value == "custom":
             await state.set_state(PromptEditorStates.entering_custom_seed)
             await message.edit_text(
-                "Seed (>= 0):",
+                _t_cb(cb, "prompt_editor.edit.seed.custom_prompt", "Seed (>= 0):"),
                 reply_markup=deps.back_keyboard(),
             )
             await cb.answer()
             return
 
         req.params.seed = -1
-        await deps.show_prompt_editor(message, state, uid, edit=True, notice="✅ Seed обновлён.")
+        await deps.show_prompt_editor(
+            message,
+            state,
+            uid,
+            edit=True,
+            notice=_t_cb(cb, "prompt_editor.edit.seed.updated", "✅ Seed обновлён."),
+        )
         await cb.answer()
 
     @router.message(PromptEditorStates.entering_custom_seed, F.text)
@@ -599,12 +807,19 @@ def register_prompt_editor_edit_handlers(
             if value < 0:
                 raise ValueError
         except ValueError:
-            await msg.answer("Целое число >= 0:")
+            await msg.answer(
+                _t_msg(uid, msg, "prompt_editor.edit.seed.invalid", "Целое число >= 0:")
+            )
             return
 
         req.params.seed = value
         await deps.cleanup_user_message(msg)
-        await deps.show_prompt_editor(msg, state, uid, notice="✅ Seed обновлён.")
+        await deps.show_prompt_editor(
+            msg,
+            state,
+            uid,
+            notice=_t_msg(uid, msg, "prompt_editor.edit.seed.updated", "✅ Seed обновлён."),
+        )
 
     _register_scalar_param(
         ScalarParamConfig(
@@ -634,12 +849,21 @@ def register_prompt_editor_edit_handlers(
         message, uid, _ = context
         current = deps.get_user_pro_mode(deps.runtime, uid)
         deps.set_user_pro_mode(deps.runtime, uid, not current)
-        mode_name = "\U0001f527 Про" if not current else "\U0001f7e2 Простой"
+        mode_name = (
+            _t_cb(cb, "prompt_editor.edit.mode.pro", "🔧 Про")
+            if not current
+            else _t_cb(cb, "prompt_editor.edit.mode.simple", "🟢 Простой")
+        )
         await deps.show_prompt_editor(
             message,
             state,
             uid,
             edit=True,
-            notice=f"Режим переключён: {mode_name}",
+            notice=_t_cb(
+                cb,
+                "prompt_editor.edit.mode.switched",
+                "Режим переключён: {mode}",
+                params={"mode": mode_name},
+            ),
         )
         await cb.answer()

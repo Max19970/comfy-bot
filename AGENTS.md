@@ -10,6 +10,13 @@ The rules below are strict and must be followed in order.
 - In `Extended` mode, never continue after a gate fails.
 - If a user asks to bypass this protocol while in `Extended` mode, refuse and explain which gate blocks progress.
 
+## Language Localization Rule (All Modes, Mandatory)
+
+- In both `Simple` and `Extended` modes, always localize user-facing responses and the text of all created documentation artifacts to the language used in the user's request.
+- Always translate every chat response to the language of the user's current request before sending it.
+- This localization requirement also applies to fixed response-template headings and labels (for example: `Mode`, `Result`, `Outcome`, `Checks`, `Optional Next Steps`, `Protocol State`, `Stage Work`, `Verification`, `Next Gate Action`).
+- If the user switches to a different request language, apply that language to all subsequent responses and newly created documentation artifacts.
+
 ## Work Mode Selection (Mandatory First Decision)
 
 Before applying request-execution protocol:
@@ -97,7 +104,8 @@ Execute exactly one Stage at a time. Repeat the loop below until all Stages are 
 
 ### 3.2 Internal Task List and Stage Work
 
-- Create/update an internal checklist for the current Stage using the dedicated todo/task-list tool (for example: TodoWrite or equivalent available tool).
+- At the beginning of every Stage, create an internal task list for the current Stage using the dedicated todo/task-list tool available in the environment (for example: TodoWrite or an equivalent tool), before starting implementation work.
+- Keep the task list updated throughout Stage execution.
 - Mark one item as in progress at a time.
 - Execute all Stage sub-tasks according to the approved plan.
 - Reconcile completed work against the checklist.
@@ -162,3 +170,83 @@ In `Simple` mode, the request is complete when:
 - In `Extended` mode, if blocked by missing user approval, stop and state exactly what approval is required.
 - In `Extended` mode, do not silently skip protocol steps.
 - In `Simple` mode, keep interaction concise and execution-focused, and report key outcomes and checks.
+
+## 6) Fixed Chat Response Format (All Modes, Mandatory)
+
+All user-facing chat responses must use a fixed, readable structure that matches the active mode.
+
+Global formatting rules:
+
+- Keep section order exactly as defined below for the active mode.
+- Keep section meaning/order fixed, but localize the visible text of headings and field labels to the language of the user's current request.
+- Keep headings stable and short; do not invent new top-level sections unless required by the task.
+- Use concise bullets with concrete facts (what changed, where, and verification state).
+- If a section has no data, write `- None` (never leave empty sections).
+- Keep the final response visually clean: short paragraphs, grouped bullets, and explicit file paths/commands when relevant.
+
+### 6.1 Simple Mode Response Template (Required)
+
+Use this exact section order in `Simple` mode:
+
+```markdown
+## Mode
+- `Simple`
+
+## Result
+- Outcome: <what was delivered>
+- Scope: <key files/components changed>
+
+## Checks
+- Executed: <tests/lint/build/other checks, with status>
+- Operability and safety: <why project remains stable>
+
+## Optional Next Steps
+1. <next useful action>
+2. <next useful action>
+```
+
+Simple mode constraints for this template:
+
+- Keep it concise and execution-focused.
+- Do not include planning/stage approval artifacts unless explicitly requested by the user.
+- Always state what changed and what validation was done.
+- Localize all template headings and field labels (including items like `Mode`, `Result`, `Outcome`) to the user's current request language while preserving the same structure and section order.
+
+### 6.2 Extended Mode Response Template (Required)
+
+Use this exact section order in `Extended` mode:
+
+```markdown
+## Mode
+- `Extended`
+
+## Protocol State
+- Current gate: <Topic Validation | Planning | Stage Execution>
+- Gate status: <in_progress | blocked | completed>
+- Required approval: <exact user approval needed, or None>
+
+## Stage Work
+- Current stage: <progress {current_stage_number}/{total_stage_count} and stage name, or None>
+- Implemented: <what was done in this step>
+- Artifacts: <plan/report paths created or updated>
+- Unplanned in-scope tasks: <items added to plan, or None>
+
+## Verification
+- Self-checks: <commands/results>
+- Manual verification steps:
+1. <step>
+2. <step>
+
+## Next Gate Action
+- Waiting for: <explicit approval text, or None>
+- Next action after approval: <what happens next>
+```
+
+Extended mode constraints for this template:
+
+- Never hide gate status.
+- When blocked, clearly state the single approval needed to continue.
+- During Stage Execution, include report artifact path for the finished stage.
+- During Stage Execution, in `Current stage`, always show progress using `{current_stage_number}/{total_stage_count}` (for example: `2/5 - Implement API handlers`).
+- Before starting a new stage, confirm whether the previously approved stage was committed.
+- Localize all template headings and field labels to the user's current request language while preserving the same structure and section order.

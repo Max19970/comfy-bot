@@ -15,6 +15,7 @@ from aiogram.types import (
 
 from application.lora_catalog_service import LoraCatalogService
 from application.prompt_generation_use_case import PromptGenerationUseCase
+from application.user_locale_resolver import DefaultUserLocaleResolver
 from comfyui_client import ComfyUIClient
 from config import Config
 from core.models import GenerationParams
@@ -31,6 +32,7 @@ from core.ui import (
     paginated_keyboard,
     params_summary_for_mode,
 )
+from domain.localization import LocalizationService
 from model_downloader import ModelDownloader
 from smart_prompt import SmartPromptService
 
@@ -186,6 +188,7 @@ def register_prompt_editor_handlers(
     client: ComfyUIClient,
     downloader: ModelDownloader,
     runtime: RuntimeStore,
+    localization: LocalizationService,
     smart_prompt: SmartPromptService | None = None,
 ) -> PromptEditorService:
     _show_prompt_panel = partial(show_prompt_panel, runtime)
@@ -208,6 +211,7 @@ def register_prompt_editor_handlers(
         change_paginated_choice_page_impl,
         paginated_keyboard=paginated_keyboard,
     )
+    locale_resolver = DefaultUserLocaleResolver(localization)
 
     async def set_prompt_param_from_callback(
         cb: CallbackQuery,
@@ -284,6 +288,8 @@ def register_prompt_editor_handlers(
         incompatible_loras=incompatible_loras,
         editor_keyboard=editor_keyboard,
         show_prompt_panel=_show_prompt_panel,
+        localization=localization,
+        resolve_user_locale=locale_resolver.resolve,
     )
 
     show_prompt_editor = partial(show_prompt_editor_impl, deps=view_deps)
@@ -300,6 +306,8 @@ def register_prompt_editor_handlers(
         prompt_preview=prompt_preview,
         smart_prompt_result_keyboard=smart_prompt_result_keyboard,
         show_prompt_panel=_show_prompt_panel,
+        localization=localization,
+        resolve_user_locale=locale_resolver.resolve,
     )
 
     generation_result_keyboard = _generation_result_keyboard
@@ -326,6 +334,8 @@ def register_prompt_editor_handlers(
         preview_image_keyboard=preview_image_keyboard,
         deliver_generated_images=deliver_generated_images,
         prune_preview_artifacts=runtime.prune_preview_artifacts,
+        localization=localization,
+        resolve_user_locale=locale_resolver.resolve,
     )
 
     run_generate_operation = partial(run_generate_operation_impl, deps=generation_deps)
@@ -345,6 +355,8 @@ def register_prompt_editor_handlers(
         show_prompt_editor=show_prompt_editor,
         changed_params_count=changed_params_count,
         run_generate_operation=run_generate_operation,
+        localization=localization,
+        resolve_user_locale=locale_resolver.resolve,
     )
 
     smart_handlers_deps = PromptEditorSmartHandlersDeps(
@@ -385,6 +397,9 @@ def register_prompt_editor_handlers(
     )
 
     exchange_handlers_deps = PromptEditorExchangeHandlersDeps(
+        runtime=runtime,
+        localization=localization,
+        resolve_user_locale=locale_resolver.resolve,
         require_prompt_request_for_callback=require_prompt_request_for_callback,
         require_prompt_request_for_message=require_prompt_request_for_message,
         show_prompt_editor=show_prompt_editor,
@@ -424,6 +439,8 @@ def register_prompt_editor_handlers(
         back_keyboard=shell.back_keyboard,
         list_available_loras=lambda: list(client.info.loras),
         cleanup_user_message=cleanup_user_message,
+        localization=localization,
+        resolve_user_locale=locale_resolver.resolve,
     )
 
     reference_handlers_deps = PromptEditorReferenceHandlersDeps(
@@ -435,6 +452,8 @@ def register_prompt_editor_handlers(
         show_reference_menu=show_reference_menu,
         make_reference_image=make_reference_image,
         cleanup_user_message=cleanup_user_message,
+        localization=localization,
+        resolve_user_locale=locale_resolver.resolve,
     )
 
     send_handlers_deps = PromptEditorSendHandlersDeps(
@@ -446,6 +465,8 @@ def register_prompt_editor_handlers(
         deliver_generated_images=deliver_generated_images,
         generation_result_keyboard=generation_result_keyboard,
         preview_image_keyboard=preview_image_keyboard,
+        localization=localization,
+        resolve_user_locale=locale_resolver.resolve,
     )
 
     register_prompt_editor_subhandlers(

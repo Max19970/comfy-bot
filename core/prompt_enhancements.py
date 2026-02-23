@@ -7,6 +7,7 @@ from dataclasses import dataclass
 class NumericEnhancementControl:
     field: str
     label: str
+    label_i18n_key: str | None
     min_value: float
     max_value: float
     presets: tuple[str, ...]
@@ -15,6 +16,7 @@ class NumericEnhancementControl:
 HIRES_SCALE_CONTROL = NumericEnhancementControl(
     field="hires_scale",
     label="Hi-res scale",
+    label_i18n_key="prompt_editor.send.menu.enh.hires_scale",
     min_value=1.0,
     max_value=3.0,
     presets=("1.25", "1.5", "1.75", "2.0"),
@@ -23,6 +25,7 @@ HIRES_SCALE_CONTROL = NumericEnhancementControl(
 HIRES_DENOISE_CONTROL = NumericEnhancementControl(
     field="hires_denoise",
     label="Hi-res denoise",
+    label_i18n_key="prompt_editor.send.menu.enh.hires_denoise",
     min_value=0.0,
     max_value=1.0,
     presets=("0.3", "0.4", "0.5", "0.6", "0.7"),
@@ -31,6 +34,7 @@ HIRES_DENOISE_CONTROL = NumericEnhancementControl(
 PAG_SCALE_CONTROL = NumericEnhancementControl(
     field="pag_scale",
     label="PAG scale",
+    label_i18n_key="prompt_editor.send.menu.enh.pag_scale",
     min_value=0.5,
     max_value=10.0,
     presets=("1.0", "2.0", "3.0", "4.0", "5.0"),

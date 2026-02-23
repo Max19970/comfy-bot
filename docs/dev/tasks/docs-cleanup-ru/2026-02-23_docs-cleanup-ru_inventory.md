@@ -106,3 +106,44 @@
 - На этапе 2 выполняется фактическая сверка каждого документа из группы `оставить и обновить` с текущими возможностями кода.
 - Для группы `оставить` выполняется контроль сохранения ссылочной целостности при последующих правках документации.
 - Для группы `кандидат на удаление` на этапе 2 выполняется проверка входящих ссылок и дублирования, после чего принимается финальное решение.
+
+## Этап 2: Сверка документов со статусом `оставить и обновить`
+
+### Матрица сверки
+
+| Документ | Подтвержденные источники | Результат сверки | Выявленное расхождение и действие |
+| --- | --- | --- | --- |
+| `README.md` | `bot.py`, `handlers/common.py`, `config.py`, `.gitignore` | частично подтвержден | В индексе документации есть ссылки на документы из группы `кандидат на удаление`; на этапе 4 обновить блок ссылок после финального решения по удалению. |
+| `docs/SETUP.md` | `config.py:45`, `config.py:92`, `config.py:93`, `bot.py:131` | расхождение | Раздел "Минимум для старта" формулирует `COMFYUI_URL` как обязательный, хотя параметр имеет default; на этапе 3 уточнить формулировку обязательных/опциональных переменных. |
+| `docs/CONFIG.md` | `config.py`, `.env.example` | расхождение | В документе отсутствует `SMART_PROMPT_FORMAT`, который используется в конфигурации; на этапе 3 добавить параметр с описанием и примером. |
+| `docs/COMMANDS.md` | `bot.py:42`, `handlers/common_core_handlers.py`, `handlers/common_jobs_handlers.py`, `handlers/download_flow_handlers.py`, `handlers/prompt_editor_handlers_flow.py` | подтвержден | Функциональных расхождений по командам нет; на этапе 3 исправить дубли нумерации в сценариях (`6/6`, `4/4`) как редакторское улучшение. |
+| `docs/TRAINING.md` | `handlers/common_core_handlers.py:1605`, `handlers/common_core_handlers.py:1606`, `locales/ru/messages.json` | подтвержден | Критичных расхождений не выявлено; на этапе 3 выполнить языковую унификацию формулировок при общем проходе. |
+| `docs/TROUBLESHOOTING.md` | `config.py`, `handlers/common_middleware.py`, `comfyui_client.py`, `locales/ru/messages.json` | частично подтвержден | Заголовок и часть формулировок остаются англоязычными; на этапе 3 локализовать заголовок и выровнять стиль на русский язык в настоящем времени. |
+| `docs/LOCALIZATION.md` | `locales/ru/locale.meta.json`, `locales/ru/messages.json`, `locales/en/locale.meta.json`, `locales/en/messages.json`, `tests/test_localization_catalog.py`, `tests/test_localization_service.py`, `tests/test_localization_resources.py` | подтвержден | Фактических расхождений не выявлено. |
+| `docs/ARCHITECTURE.md` | `core/runtime.py`, `core/runtime_snapshot.py:321`, `core/runtime_snapshot.py:496`, `handlers/`, `app_context.py` | расхождение | Указано, что `active_generations` не восстанавливаются, но runtime восстанавливает их как `restored=True`; на этапе 3 обновить раздел runtime-состояния и убрать устаревший ретроспективный блок стадий. |
+| `CONTRIBUTING.md` | `requirements-dev.txt`, `.pre-commit-config.yaml`, `docs/CONFIG.md`, `docs/COMMANDS.md`, `docs/ARCHITECTURE.md` | частично подтвержден | Фактическая часть корректна; на этапе 3 локализовать заголовок и исправить нумерацию в разделе локального запуска. |
+| `SECURITY.md` | `.gitignore`, `.env.example` | частично подтвержден | Правила безопасности актуальны; на этапе 3 локализовать заголовок и синхронизировать формулировки со структурой runtime-данных из `.gitignore`. |
+| `docs/CHANGELOG.md` | `git log -8 --oneline`, `docs/REFACTOR_COMPLETION.md`, `docs/REGRESSION_R01_R13_REPORT.md` | расхождение | Документ полностью в ретроспективном формате, что не соответствует целевому стилю; на этапе 3 переработать в формат актуального состояния или сократить до релевантных текущих сведений. |
+| `docs/ARCHITECTURE_BOUNDARIES_FINAL.md` | `app_context.py`, `handlers/registry.py`, `handlers/prompt_editor.py`, `core/runtime_snapshot.py`, `core/runtime_persistence.py`, `tests/test_architecture_boundaries.py` | подтвержден | Фактических расхождений не выявлено. |
+| `docs/REFACTOR_GUARDRAILS.md` | `tests/test_architecture_boundaries.py`, `docs/UI_MIGRATION_PLAN.md`, `pyproject.toml` | частично подтвержден | Процедурные требования актуальны; на этапе 3 локализовать заголовок и убрать ретроспективные формулировки. |
+| `docs/UI_MIGRATION_PLAN.md` | `core/ui_kit/`, `core/interaction.py`, `core/panels.py`, `core/callbacks.py`, `docs/REGRESSION_R01_R13_REPORT.md` | подтвержден | Фактических расхождений не выявлено. |
+| `docs/dev/tasks/_templates/README.md` | `AGENTS.md`, `docs/dev/tasks/_templates/task_plan_template.md`, `docs/dev/tasks/_templates/stage_completion_report_template.md` | частично подтвержден | Пути и контракт корректны, но текст англоязычный; на этапе 3 локализовать шаблонный README. |
+| `docs/dev/tasks/_templates/task_plan_template.md` | `AGENTS.md` (раздел `2) Planning Gate`) | частично подтвержден | Структура шаблона соответствует протоколу, но текст англоязычный; на этапе 3 локализовать все секции на русский язык. |
+| `docs/dev/tasks/_templates/stage_completion_report_template.md` | `AGENTS.md` (раздел `3.4 Stage Completion Report`) | частично подтвержден | Структура шаблона соответствует протоколу, но текст англоязычный; на этапе 3 локализовать все секции на русский язык. |
+| `docs/dev/tasks/docs-cleanup-ru/2026-02-23_docs-cleanup-ru_plan.md` | `AGENTS.md`, `docs/dev/tasks/_templates/task_plan_template.md` | подтвержден | Фактических расхождений не выявлено; документ поддерживает текущий workflow. |
+| `docs/dev/tasks/docs-cleanup-ru/2026-02-23_docs-cleanup-ru_inventory.md` | `git ls-files "*.md"`, `git ls-files --others --ignored --exclude-standard "*.md"` | подтвержден | Фактических расхождений не выявлено; после корректировки статусов отражает актуальную классификацию. |
+| `docs/dev/tasks/docs-cleanup-ru/reports/2026-02-23_stage-1_inventory-and-classification_report.md` | `docs/dev/tasks/docs-cleanup-ru/2026-02-23_docs-cleanup-ru_plan.md`, `docs/dev/tasks/docs-cleanup-ru/2026-02-23_docs-cleanup-ru_inventory.md` | подтвержден | Фактических расхождений не выявлено; отчет отражает текущее состояние этапа 1. |
+
+### Итог этапа 2
+
+- Проверено документов со статусом `оставить и обновить`: `20`.
+- Подтверждено без фактических расхождений: `8`.
+- Подтверждено с редакторскими/языковыми корректировками: `8`.
+- Зафиксировано фактических расхождений по возможностям проекта: `4`.
+
+### Ключевые фактические расхождения для устранения на этапе 3
+
+1. `docs/SETUP.md`: уточнить обязательность `COMFYUI_URL` и `ALLOWED_USERS`.
+2. `docs/CONFIG.md`: добавить описание `SMART_PROMPT_FORMAT`.
+3. `docs/ARCHITECTURE.md`: исправить блок восстановления runtime (`active_generations`).
+4. `docs/CHANGELOG.md`: переработать формат под целевые требования проекта.

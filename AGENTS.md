@@ -81,6 +81,12 @@ Execute exactly one Stage at a time. Repeat the loop below until all Stages are 
 
 ### 3.4 Stage Completion Report
 
+- Save each Stage completion report as an artifact in `docs/dev/tasks/{short_task_name}/reports`.
+- Use report file naming format:
+  - `docs/dev/tasks/{short_task_name}/reports/YYYY-MM-DD_stage-<stage_number>_<short_stage_name>_report.md`
+- If the report directory does not exist, create it before writing the report.
+- After writing the report, provide the exact report file path in the user-facing completion message.
+
 Provide a detailed completion report to the user that includes:
 
 - What was implemented in the Stage.

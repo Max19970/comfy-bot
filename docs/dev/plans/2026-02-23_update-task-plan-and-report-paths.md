@@ -100,3 +100,7 @@
 
 - 2026-02-23: Plan approved by user.
 - 2026-02-23: Stage 1 implemented; awaiting explicit user approval.
+- 2026-02-23: Stage 1 approved by user.
+- 2026-02-23: Stage 1 committed in `2df5088`.
+- 2026-02-23: Stage 2 implemented; awaiting explicit user approval.
+- 2026-02-23: Stage 2 approved by user.

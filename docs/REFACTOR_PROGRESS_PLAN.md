@@ -15,9 +15,9 @@
 ## Сводка статуса
 
 - Всего этапов: **15**
-- Закрыто: **13**
+- Закрыто: **14**
 - В работе: **0**
-- Ожидают выполнения: **2**
+- Ожидают выполнения: **1**
 
 ---
 
@@ -158,7 +158,7 @@
 
 ### Этап 13 — Prompt edit/thematic/lora/references/session cleanup
 - Статус: ✅ Закрыт, ✅ Закоммичен
-- Commit: `<будет заполнено после коммита этапа 13>`
+- Commit: `da947aa`
 - Цель: разукрупнить крупные handler-модули редактора.
 - Сделано:
   - Централизованы callback-guards в `handlers/prompt_editor_handler_guards.py` и подключены в edit/thematic/lora/references handlers.
@@ -170,12 +170,15 @@
 - Ожидаемый результат: выше cohesion, ниже coupling, меньше дублирования.
 
 ### Этап 14 — Presets и финальная интеграционная стабилизация
-- Статус: ⏳ Ожидает выполнения
+- Статус: ✅ Закрыт, ✅ Закоммичен
+- Commit: `<будет заполнено после коммита этапа 14>`
 - Цель: упорядочить preset-flow и cross-module orchestration.
-- План:
-  - Упростить `handlers/presets.py` (разделить storage/UI/flow)
-  - Устранить остаточные пересечения слоев между preset и prompt editor
-  - Довести clear/overwrite/load сценарии до стабильного единообразия
+- Сделано:
+  - Выделены preset storage adapters: `handlers/presets_storage.py` (`load/save/resolve/normalize` helpers).
+  - Выделены preset UI builders: `handlers/presets_ui.py` (списки/кнопки/empty-state/overwrite UI).
+  - Выделены overwrite-flow helpers: `handlers/presets_flow.py` (state payloads, parse callback data, cleanup temp messages).
+  - `handlers/presets.py` упрощен: основной routing-flow опирается на split helpers вместо локальных монолитных utility-блоков.
+  - Добавлены тесты на presets split-модули: `tests/test_presets_storage.py`, `tests/test_presets_ui.py`, `tests/test_presets_flow.py`.
 - Ожидаемый результат: более надежная работа пресетов и меньше скрытых связей.
 
 ### Этап 15 — Финальный проход и закрытие техдолга

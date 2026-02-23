@@ -193,3 +193,6 @@ If none:
 | 2026-02-23 | Stage 1 committed in `6fd06b6` | Local commit created before Stage 2 execution |
 | 2026-02-23 | Stage 2 implemented; awaiting explicit user approval | `docs/dev/tasks/agent-work-modes/reports/2026-02-23_stage-2_mode-aware-gates_report.md` |
 | 2026-02-23 | Stage 2 approved by user | User message: "Этап 2 одобрен" |
+| 2026-02-23 | Stage 2 committed in `1415fb4` | Local commit created before Stage 3 execution |
+| 2026-02-23 | Stage 3 implemented; awaiting explicit user approval | `docs/dev/tasks/agent-work-modes/reports/2026-02-23_stage-3_consistency-pass_report.md` |
+| 2026-02-23 | Stage 3 approved by user | User message: "Этап 3 одобрен" |

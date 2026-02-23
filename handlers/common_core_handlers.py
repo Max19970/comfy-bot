@@ -21,7 +21,8 @@ from core.interaction import require_callback_message
 from core.states import ServiceSettingsStates
 from core.ui_kit import back_button, build_keyboard
 from core.ui_kit.buttons import button, menu_root_button, noop_button
-from core.user_preferences import read_download_defaults, read_generation_defaults
+from core.user_preferences import read_download_defaults, read_generation_defaults, read_user_locale
+from domain.localization import normalize_locale_code
 
 from .common_core_utils import (
     get_training_mode,
@@ -50,6 +51,8 @@ class CommonCoreDeps:
     callback_user_id: Callable[[CallbackQuery], int]
     message_user_id: Callable[[Message], int]
     render_user_panel: Callable[..., Awaitable[Message]]
+    localization: Any
+    resolve_user_locale: Callable[..., str]
     start_text: str
     training_text: str
     fallback_text: str
@@ -167,9 +170,82 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
     def _base_label(code: str) -> str:
         return download_base_label(code)
 
-    async def _show_settings(message: Message, uid: int) -> None:
+    def _resolved_locale(uid: int, *, telegram_locale: str | None) -> str:
+        prefs = deps.runtime.user_preferences.get(uid, {})
+        user_locale = read_user_locale(
+            prefs,
+            default_locale=deps.localization.default_locale(),
+        )
+        return deps.resolve_user_locale(
+            user_locale=user_locale,
+            telegram_locale=telegram_locale,
+        )
+
+    def _locale_label(locale: str) -> str:
+        locale_code = normalize_locale_code(locale, default="")
+        if not locale_code:
+            return "Unknown"
+        localized_name = deps.localization.t(
+            "system.language_name",
+            locale=locale_code,
+            default=locale_code.upper(),
+        )
+        return f"{localized_name} ({locale_code})"
+
+    async def _show_locale_settings(
+        message: Message,
+        uid: int,
+        *,
+        telegram_locale: str | None,
+    ) -> None:
+        current_locale = _resolved_locale(uid, telegram_locale=telegram_locale)
+        selected_locale = read_user_locale(
+            deps.runtime.user_preferences.get(uid, {}),
+            default_locale="",
+        )
+
+        rows = [
+            [
+                InlineKeyboardButton(
+                    text=(
+                        f"✅ {_locale_label(locale_code)}"
+                        if locale_code == current_locale
+                        else _locale_label(locale_code)
+                    ),
+                    callback_data=f"menu:settings:set:locale:{locale_code}",
+                )
+            ]
+            for locale_code in deps.localization.available_locales()
+        ]
+        rows.append([InlineKeyboardButton(text="⬅️ К настройкам", callback_data="menu:settings")])
+        rows.append([InlineKeyboardButton(text="🏠 В меню", callback_data="menu:root")])
+
+        explicit_line = (
+            f"<b>Явный выбор пользователя:</b> <code>{deps.h(_locale_label(selected_locale))}</code>"
+            if selected_locale
+            else "<b>Явный выбор пользователя:</b> <code>не задан</code>"
+        )
+
+        await deps.render_user_panel(
+            message,
+            deps.runtime,
+            uid,
+            "🌐 <b>Язык интерфейса</b>\n\n"
+            f"<b>Текущий язык:</b> <code>{deps.h(_locale_label(current_locale))}</code>\n"
+            f"{explicit_line}\n"
+            "\nВыберите язык для сохранения в персональных настройках.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
+        )
+
+    async def _show_settings(
+        message: Message,
+        uid: int,
+        *,
+        telegram_locale: str | None,
+    ) -> None:
         pro_mode = deps.runtime.user_preferences.get(uid, {}).get("pro_mode", False)
         mode_label = "🔧 Про" if pro_mode else "🟢 Простой"
+        locale_label = _locale_label(_resolved_locale(uid, telegram_locale=telegram_locale))
         smart_prompt_status = "❌ выключен"
         if deps.cfg.smart_prompt_enabled:
             model = deps.cfg.smart_prompt_model or "(модель не задана)"
@@ -188,8 +264,9 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
                         text=("🟢 Простой" if pro_mode else "🔧 Про"),
                         callback_data="menu:settings:toggle_mode",
                     ),
-                    InlineKeyboardButton(text="🔄 Обновить", callback_data="menu:settings"),
+                    InlineKeyboardButton(text="🌐 Язык", callback_data="menu:settings:locale"),
                 ],
+                [InlineKeyboardButton(text="🔄 Обновить", callback_data="menu:settings")],
                 [InlineKeyboardButton(text="⬅️ Сервис", callback_data="menu:service")],
                 [InlineKeyboardButton(text="🏠 В меню", callback_data="menu:root")],
             ]
@@ -201,6 +278,7 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
             uid,
             "⚙️ <b>Настройки</b>\n\n"
             f"<b>Режим интерфейса:</b> {mode_label}\n"
+            f"<b>Язык интерфейса:</b> <code>{deps.h(locale_label)}</code>\n"
             f"<b>Генерация по умолчанию:</b> <code>{gen['width']}×{gen['height']}</code> | "
             f"Steps <code>{gen['steps']}</code> | CFG <code>{gen['cfg']}</code> | "
             f"Denoise <code>{gen['denoise']}</code>\n"
@@ -830,15 +908,59 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
 
     @router.message(Command("settings"))
     async def cmd_settings(msg: Message):
-        await _show_settings(msg, deps.message_user_id(msg))
+        telegram_locale = msg.from_user.language_code if msg.from_user else None
+        await _show_settings(
+            msg,
+            deps.message_user_id(msg),
+            telegram_locale=telegram_locale,
+        )
 
     @router.callback_query(F.data == "menu:settings")
     async def menu_settings(cb: CallbackQuery):
         message = await _callback_message(cb)
         if message is None:
             return
-        await _show_settings(message, deps.callback_user_id(cb))
+        await _show_settings(
+            message,
+            deps.callback_user_id(cb),
+            telegram_locale=cb.from_user.language_code,
+        )
         await cb.answer()
+
+    @router.callback_query(F.data == "menu:settings:locale")
+    async def menu_settings_locale(cb: CallbackQuery):
+        message = await _callback_message(cb)
+        if message is None:
+            return
+        await _show_locale_settings(
+            message,
+            deps.callback_user_id(cb),
+            telegram_locale=cb.from_user.language_code,
+        )
+        await cb.answer()
+
+    @router.callback_query(F.data.startswith("menu:settings:set:locale:"))
+    async def menu_settings_set_locale(cb: CallbackQuery):
+        message = await _callback_message(cb)
+        if message is None:
+            return
+
+        prefix = "menu:settings:set:locale:"
+        data_value = cb.data or ""
+        locale = normalize_locale_code(data_value[len(prefix) :], default="")
+        available_locales = set(deps.localization.available_locales())
+        if not locale or locale not in available_locales:
+            await cb.answer("⚠️ Некорректный язык.", show_alert=True)
+            return
+
+        uid = deps.callback_user_id(cb)
+        set_pref(deps.runtime, uid, "locale", locale)
+        await _show_settings(
+            message,
+            uid,
+            telegram_locale=cb.from_user.language_code,
+        )
+        await cb.answer("✅ Язык обновлён")
 
     @router.callback_query(F.data == "menu:settings:toggle_mode")
     async def menu_settings_toggle_mode(cb: CallbackQuery):
@@ -850,7 +972,11 @@ def register_common_core_handlers(deps: CommonCoreDeps) -> None:
         if uid not in deps.runtime.user_preferences:
             deps.runtime.user_preferences[uid] = {}
         deps.runtime.user_preferences[uid]["pro_mode"] = not current
-        await _show_settings(message, uid)
+        await _show_settings(
+            message,
+            uid,
+            telegram_locale=cb.from_user.language_code,
+        )
         await cb.answer("✅ Режим обновлён")
 
     @router.callback_query(F.data == "menu:settings:gen")

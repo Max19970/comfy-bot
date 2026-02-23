@@ -28,7 +28,7 @@ def test_runtime_persisted_payload_keys_are_backward_compatible() -> None:
         last_params={uid: params},
         last_seeds={uid: 123},
         active_prompt_requests={uid: request},
-        user_preferences={uid: {"pro_mode": True, "download_source": "all"}},
+        user_preferences={uid: {"pro_mode": True, "download_source": "all", "locale": "EN_us"}},
         user_ui_panels={uid: {"chat_id": 10, "message_id": 20}},
     )
 
@@ -41,6 +41,7 @@ def test_runtime_persisted_payload_keys_are_backward_compatible() -> None:
     assert set(payload["active_prompt_requests"].keys()) == {"1001"}
     assert set(payload["user_preferences"].keys()) == {"1001"}
     assert set(payload["user_ui_panels"].keys()) == {"1001"}
+    assert payload["user_preferences"]["1001"]["locale"] == "en-us"
 
     request_payload = payload["active_prompt_requests"]["1001"]
     assert set(request_payload.keys()) == {
@@ -68,7 +69,7 @@ def test_runtime_schema_v1_migration_preserves_expected_contract_keys() -> None:
                 },
             }
         },
-        "user_preferences": {"1001": {"pro_mode": True}},
+        "user_preferences": {"1001": {"pro_mode": True, "locale": "RU"}},
         "user_ui_panels": {"1001": {"chat_id": 10, "message_id": 20}},
     }
 
@@ -87,3 +88,4 @@ def test_runtime_schema_v1_migration_preserves_expected_contract_keys() -> None:
             "file_path": "",
         }
     ]
+    assert migrated_payload["user_preferences"]["1001"]["locale"] == "ru"

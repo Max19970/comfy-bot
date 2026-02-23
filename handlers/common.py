@@ -9,6 +9,7 @@ from aiogram.types import (
     InlineKeyboardMarkup,
 )
 
+from application.user_locale_resolver import DefaultUserLocaleResolver
 from comfyui_client import ComfyUIClient
 from config import Config
 from core.html_utils import h, truncate
@@ -254,7 +255,7 @@ def register_common_handlers(
     runtime: RuntimeStore,
     localization: LocalizationService,
 ) -> None:
-    _ = localization
+    locale_resolver = DefaultUserLocaleResolver(localization)
 
     register_access_middlewares(
         router,
@@ -271,6 +272,8 @@ def register_common_handlers(
             callback_user_id=callback_user_id,
             message_user_id=message_user_id,
             render_user_panel=render_user_panel,
+            localization=localization,
+            resolve_user_locale=locale_resolver.resolve,
             start_text=START_TEXT,
             training_text=TRAINING_TEXT,
             fallback_text=FALLBACK_TEXT,

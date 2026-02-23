@@ -4,11 +4,13 @@ from .download_search_use_case import DownloadSearchCriteria, DownloadSearchUseC
 from .localization_service import DefaultLocalizationService
 from .lora_catalog_service import LoraCatalogService
 from .prompt_generation_use_case import GenerationPreparation, PromptGenerationUseCase
+from .user_locale_resolver import DefaultUserLocaleResolver
 
 __all__ = [
     "DownloadSearchCriteria",
     "DownloadSearchUseCase",
     "DefaultLocalizationService",
+    "DefaultUserLocaleResolver",
     "GenerationPreparation",
     "LoraCatalogService",
     "PromptGenerationUseCase",

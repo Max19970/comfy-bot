@@ -9,6 +9,7 @@ from core.download_filters import (
     normalize_download_sort_code,
     normalize_download_source,
 )
+from domain.localization import normalize_locale_code
 
 
 def read_generation_defaults(
@@ -74,6 +75,17 @@ def read_download_defaults(
         "nsfw": bool(prefs.get("dl_default_nsfw", False)),
         "author": author,
     }
+
+
+def read_user_locale(
+    prefs: Mapping[str, Any],
+    *,
+    default_locale: str,
+) -> str:
+    locale_raw = prefs.get("locale")
+    if isinstance(locale_raw, str):
+        return normalize_locale_code(locale_raw, default=default_locale)
+    return default_locale
 
 
 def normalize_user_preferences(raw: Any) -> dict[str, Any]:
@@ -147,6 +159,12 @@ def normalize_user_preferences(raw: Any) -> dict[str, Any]:
     author = raw.get("dl_default_author")
     if isinstance(author, str):
         normalized["dl_default_author"] = author.strip().replace("@", "")[:256]
+
+    locale = raw.get("locale")
+    if isinstance(locale, str):
+        locale_norm = normalize_locale_code(locale, default="")
+        if locale_norm:
+            normalized["locale"] = locale_norm
 
     return normalized
 

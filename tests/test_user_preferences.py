@@ -4,6 +4,7 @@ from core.user_preferences import (
     normalize_user_preferences,
     read_download_defaults,
     read_generation_defaults,
+    read_user_locale,
 )
 
 
@@ -88,3 +89,12 @@ def test_normalize_user_preferences_sanitizes_known_fields() -> None:
     assert normalized["dl_default_source"] == "huggingface"
     assert normalized["dl_default_author"] == "creator"
     assert "unknown" not in normalized
+
+
+def test_user_locale_preferences_are_normalized() -> None:
+    normalized = normalize_user_preferences({"locale": " EN_us "})
+    assert normalized["locale"] == "en-us"
+
+    assert read_user_locale({"locale": "ru"}, default_locale="en") == "ru"
+    assert read_user_locale({"locale": "bad locale"}, default_locale="en") == "en"
+    assert read_user_locale({}, default_locale="ru") == "ru"

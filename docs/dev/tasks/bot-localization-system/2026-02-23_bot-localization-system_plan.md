@@ -258,3 +258,5 @@
 | 2026-02-23 | Этап 1 закоммичен | `9ba4602` |
 | 2026-02-23 | Этап 2 реализован; ожидает явного одобрения пользователя | `docs/dev/tasks/bot-localization-system/reports/2026-02-23_stage-2_localization-core-and-loader_report.md` |
 | 2026-02-23 | Этап 2 одобрен пользователем | Сообщение пользователя: "Этап 2 одобрен" |
+| 2026-02-23 | Этап 2 закоммичен | `7b4f565` |
+| 2026-02-23 | Этап 3 реализован; ожидает явного одобрения пользователя | `docs/dev/tasks/bot-localization-system/reports/2026-02-23_stage-3_user-locale-resolution-and-switch_report.md` |

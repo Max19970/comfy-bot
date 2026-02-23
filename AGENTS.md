@@ -35,10 +35,13 @@ If the request is one coherent topic:
    - Explicit sub-tasks with concrete actions.
    - Why this Stage does not break overall project operability.
    - Validation/check steps for that Stage.
-3. Save the plan as an artifact document in `docs/dev/tasks/{short_task_name}`.
-4. Use file naming format:
+3. Create the plan artifact by copying the plan template file:
+   - Source template: `docs/dev/tasks/_templates/task_plan_template.md`
+4. Save the copied plan artifact in `docs/dev/tasks/{short_task_name}`.
+5. Use file naming format:
    - `docs/dev/tasks/{short_task_name}/YYYY-MM-DD_<short_task_name>_plan.md`
-5. The plan artifact must contain these sections:
+6. Fill all mandatory sections from the template and replace all placeholder values before presenting the plan for approval.
+7. The plan artifact must contain these sections:
    - Task context.
    - Topic validation result.
    - Stage-by-stage plan.
@@ -46,9 +49,9 @@ If the request is one coherent topic:
    - Risk notes.
    - Unplanned additional tasks (initially empty).
    - Stage approval log.
-6. After saving the plan, report to the user that the plan was created and provide the file path.
-7. Stop and wait for explicit user approval.
-8. If the user requests plan changes or does not approve:
+8. After saving the plan, report to the user that the plan was created and provide the file path.
+9. Stop and wait for explicit user approval.
+10. If the user requests plan changes or does not approve:
    - Update the plan artifact.
    - Report what changed.
    - Stop and wait for approval again.
@@ -81,10 +84,13 @@ Execute exactly one Stage at a time. Repeat the loop below until all Stages are 
 
 ### 3.4 Stage Completion Report
 
-- Save each Stage completion report as an artifact in `docs/dev/tasks/{short_task_name}/reports`.
+- Create each Stage completion report by copying this template file:
+  - Source template: `docs/dev/tasks/_templates/stage_completion_report_template.md`
+- Save each copied Stage report artifact in `docs/dev/tasks/{short_task_name}/reports`.
 - Use the same `{short_task_name}` folder as the approved plan artifact for this task.
 - Use report file naming format:
   - `docs/dev/tasks/{short_task_name}/reports/YYYY-MM-DD_stage-<stage_number>_<short_stage_name>_report.md`
+- Fill all mandatory sections from the template (including stage metadata) and replace all placeholder values before sharing the report.
 - If the report directory does not exist, create it before writing the report.
 - After writing the report, provide the exact report file path in the user-facing completion message.
 

@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "locale": "en",
+  "name": "English",
+  "native_name": "English",
+  "messages_file": "messages.json",
+  "is_default": false,
+  "enabled": true,
+  "fallback_locale": "ru"
+}

@@ -19,6 +19,7 @@ from core.telegram import callback_user_id, message_user_id
 from core.ui_copy import FALLBACK_TEXT, START_TEXT, main_menu_keyboard
 from core.ui_kit import back_button, build_keyboard
 from core.ui_kit.buttons import button, cancel_button, noop_button
+from domain.localization import LocalizationService
 from model_downloader import ModelDownloader
 
 from .common_core_handlers import CommonCoreDeps, register_common_core_handlers
@@ -251,7 +252,10 @@ def register_common_handlers(
     client: ComfyUIClient,
     downloader: ModelDownloader,
     runtime: RuntimeStore,
+    localization: LocalizationService,
 ) -> None:
+    _ = localization
+
     register_access_middlewares(
         router,
         allowed_users=cfg.allowed_users,

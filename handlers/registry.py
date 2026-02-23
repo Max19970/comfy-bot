@@ -7,6 +7,7 @@ from aiogram import Router
 from comfyui_client import ComfyUIClient
 from config import Config
 from core.runtime import RuntimeStore
+from domain.localization import LocalizationService
 from model_downloader import ModelDownloader
 from smart_prompt import SmartPromptService
 
@@ -23,10 +24,18 @@ class HandlerRegistryDeps:
     downloader: ModelDownloader
     runtime: RuntimeStore
     smart_prompt: SmartPromptService
+    localization: LocalizationService
 
 
 def register_handlers_with_deps(router: Router, deps: HandlerRegistryDeps) -> None:
-    register_common_handlers(router, deps.cfg, deps.client, deps.downloader, deps.runtime)
+    register_common_handlers(
+        router,
+        deps.cfg,
+        deps.client,
+        deps.downloader,
+        deps.runtime,
+        deps.localization,
+    )
     prompt_editor = register_prompt_editor_handlers(
         router,
         deps.cfg,
@@ -47,6 +56,7 @@ def register_handlers(
     downloader: ModelDownloader,
     runtime: RuntimeStore,
     smart_prompt: SmartPromptService,
+    localization: LocalizationService,
 ) -> None:
     register_handlers_with_deps(
         router,
@@ -56,5 +66,6 @@ def register_handlers(
             downloader=downloader,
             runtime=runtime,
             smart_prompt=smart_prompt,
+            localization=localization,
         ),
     )

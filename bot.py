@@ -77,6 +77,7 @@ def create_app(cfg: Config) -> AppContext:
             downloader=app.downloader,
             runtime=app.runtime,
             smart_prompt=app.smart_prompt,
+            localization=app.localization,
         ),
     )
     return app

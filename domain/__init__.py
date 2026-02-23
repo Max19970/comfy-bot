@@ -10,6 +10,14 @@ from .generation_request import (
     GenerationSamplingConfig,
     ReferenceImageInput,
 )
+from .localization import (
+    LocaleMetadata,
+    LocalizationService,
+    TranslationBundle,
+    TranslationCatalog,
+    UserLocaleResolver,
+    normalize_locale_code,
+)
 from .loras import (
     EditorLoraSelection,
     LoraCatalogEntry,
@@ -29,6 +37,12 @@ __all__ = [
     "GenerationRequest",
     "GenerationSamplingConfig",
     "ReferenceImageInput",
+    "LocaleMetadata",
+    "LocalizationService",
+    "TranslationBundle",
+    "TranslationCatalog",
+    "UserLocaleResolver",
+    "normalize_locale_code",
     "EditorLoraSelection",
     "LoraCatalogEntry",
     "WorkflowLoraAttachment",

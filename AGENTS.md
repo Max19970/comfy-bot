@@ -10,6 +10,27 @@ The rules below are strict and must be followed in order.
 - Never continue after a gate fails.
 - If a user asks to bypass this protocol, refuse and explain which gate blocks progress.
 
+## Work Mode Selection (Mandatory First Decision)
+
+Before applying request-execution protocol:
+
+1. Detect the requested work mode from the user message.
+2. Supported modes:
+   - `Simple`: fast execution mode with concise process overhead.
+   - `Extended`: full strict protocol mode defined in this file.
+3. If the user explicitly provides one mode, use it.
+4. If mode is missing, default to `Extended`.
+5. If mode is ambiguous or conflicting, ask for clarification and stop until clarified.
+
+Mode semantics:
+
+- `Simple` mode:
+  - Prioritize fast, direct execution in a practical format at agent discretion.
+  - Do not create low-quality or risky solutions (no temporary hacks/costyls that can damage project maintainability).
+  - Keep project operability and safety intact.
+- `Extended` mode:
+  - Apply the full strict gated workflow and artifact discipline described below.
+
 ## 1) Topic Validation Gate (Mandatory First Step)
 
 Before any implementation work:

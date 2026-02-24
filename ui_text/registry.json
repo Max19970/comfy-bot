@@ -9,13 +9,45 @@
       "default": "Я не ожидаю текст. Откройте меню кнопками ниже.",
       "localization_key": "ui.fallback"
     },
+    "ui.menu.generation": {
+      "default": "🎨 Генерация",
+      "localization_key": "ui.menu.generation"
+    },
+    "ui.menu.models": {
+      "default": "📦 Модели",
+      "localization_key": "ui.menu.models"
+    },
+    "ui.menu.service": {
+      "default": "⚙️ Сервис",
+      "localization_key": "ui.menu.service"
+    },
+    "ui.menu.cancel": {
+      "default": "🛑 Отмена",
+      "localization_key": "ui.menu.cancel"
+    },
+    "common.action.back": {
+      "default": "⬅️ Назад",
+      "localization_key": "common.action.back"
+    },
     "common.menu.back_to_menu": {
       "default": "⬅️ В меню",
       "localization_key": "common.menu.back_to_menu"
     },
+    "common.menu.root": {
+      "default": "🏠 В меню",
+      "localization_key": "common.menu.root"
+    },
     "common.action.cancel": {
       "default": "❌ Отмена",
       "localization_key": "common.action.cancel"
+    },
+    "common.action.enter_manual": {
+      "default": "✏️ Ввести своё значение",
+      "localization_key": "common.action.enter_manual"
+    },
+    "core.ui_kit.dialogs.confirm": {
+      "default": "✅ Подтвердить",
+      "localization_key": "core.ui_kit.dialogs.confirm"
     },
     "prompt_editor.send.button.enhance": {
       "default": "✨ Улучшить",

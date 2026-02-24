@@ -34,6 +34,7 @@ from core.ui import (
     params_summary_for_mode,
 )
 from domain.localization import LocalizationService
+from domain.ui_text import UITextService
 from infrastructure.comfyui_client import ComfyUIClient
 
 from .prompt_editor_generation import (
@@ -189,6 +190,7 @@ def register_prompt_editor_handlers(
     downloader: ModelDownloader,
     runtime: RuntimeStore,
     localization: LocalizationService,
+    ui_text: UITextService,
     smart_prompt: SmartPromptService | None = None,
 ) -> PromptEditorService:
     _show_prompt_panel = partial(show_prompt_panel, runtime)
@@ -466,6 +468,7 @@ def register_prompt_editor_handlers(
         generation_result_keyboard=generation_result_keyboard,
         preview_image_keyboard=preview_image_keyboard,
         localization=localization,
+        ui_text=ui_text,
         resolve_user_locale=locale_resolver.resolve,
     )
 

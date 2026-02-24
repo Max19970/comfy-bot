@@ -25,6 +25,7 @@ from core.runtime import PreviewArtifact, PromptRequest, RuntimeStore
 from core.ui_copy import main_menu_keyboard, start_text
 from core.user_preferences import read_user_locale
 from domain.localization import LocalizationService
+from domain.ui_text import UITextService
 from infrastructure.comfyui_client import ComfyUIClient
 
 from .prompt_editor_enhancement import (
@@ -58,6 +59,7 @@ class PromptEditorSendHandlersDeps:
     generation_result_keyboard: Callable[[], InlineKeyboardMarkup]
     preview_image_keyboard: Callable[[str, str | None], InlineKeyboardMarkup]
     localization: LocalizationService
+    ui_text: UITextService
     resolve_user_locale: Callable[..., str]
 
 
@@ -900,8 +902,16 @@ def register_prompt_editor_send_handlers(
                 uid,
                 telegram_locale=cb.from_user.language_code,
             )
-            start_panel_text = start_text(deps.localization, locale=locale)
-            root_keyboard = main_menu_keyboard(deps.localization, locale=locale)
+            start_panel_text = start_text(
+                deps.localization,
+                locale=locale,
+                text_service=deps.ui_text,
+            )
+            root_keyboard = main_menu_keyboard(
+                deps.localization,
+                locale=locale,
+                text_service=deps.ui_text,
+            )
             try:
                 await message.edit_text(
                     start_panel_text,

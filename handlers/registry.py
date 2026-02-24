@@ -45,6 +45,7 @@ def register_handlers_with_deps(router: Router, deps: HandlerRegistryDeps) -> No
         downloader=deps.downloader,
         runtime=deps.runtime,
         localization=deps.localization,
+        ui_text=deps.ui_text,
         smart_prompt=deps.smart_prompt,
     )
     register_preset_handlers(router, deps.runtime, prompt_editor, deps.localization)

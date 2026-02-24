@@ -34,7 +34,7 @@ from infrastructure.comfy_execution_orchestrator import (
     GenerationProgressCallback,
 )
 from infrastructure.comfy_transport import ComfyHttpTransport, ComfyTransportProtocol
-from infrastructure.comfy_workflow_builder import build_comfy_workflow
+from infrastructure.comfy_workflow_builder import build_comfy_upscale_workflow, build_comfy_workflow
 
 logger = logging.getLogger(__name__)
 
@@ -1288,21 +1288,10 @@ class ComfyUIClient:
             raise ValueError("upscale_model is required")
 
         reference_image_name = await self.upload_input_image(image_bytes)
-        workflow: dict[str, Any] = {
-            "1": {"class_type": "LoadImage", "inputs": {"image": reference_image_name}},
-            "2": {
-                "class_type": "UpscaleModelLoader",
-                "inputs": {"model_name": upscale_model},
-            },
-            "3": {
-                "class_type": "ImageUpscaleWithModel",
-                "inputs": {"upscale_model": ["2", 0], "image": ["1", 0]},
-            },
-            "4": {
-                "class_type": "SaveImage",
-                "inputs": {"images": ["3", 0], "filename_prefix": "ComfyBot"},
-            },
-        }
+        workflow = build_comfy_upscale_workflow(
+            reference_image_name=reference_image_name,
+            upscale_model=upscale_model,
+        )
 
         return await self._run_workflow_and_collect(
             workflow,

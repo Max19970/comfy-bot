@@ -34,11 +34,14 @@ def test_requires_image_generation_for_hires_without_sampler_pass() -> None:
 def test_requires_image_generation_for_other_sampling_enhancements() -> None:
     freeu_artifact = _artifact(params=GenerationParams(enable_freeu=True))
     pag_artifact = _artifact(params=GenerationParams(enable_pag=True))
-    tiled_artifact = _artifact(params=GenerationParams(enable_tiled_diffusion=True))
 
     assert _requires_image_generation(freeu_artifact, freeu_artifact.params) is True
     assert _requires_image_generation(pag_artifact, pag_artifact.params) is True
-    assert _requires_image_generation(tiled_artifact, tiled_artifact.params) is True
+
+
+def test_requires_image_generation_false_for_tiled_only_in_send_flow() -> None:
+    tiled_artifact = _artifact(params=GenerationParams(enable_tiled_diffusion=True))
+    assert _requires_image_generation(tiled_artifact, tiled_artifact.params) is False
 
 
 def test_requires_image_generation_false_for_upscaler_only() -> None:

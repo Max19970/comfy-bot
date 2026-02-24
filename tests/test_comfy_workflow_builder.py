@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from core.models import GenerationParams
-from infrastructure.comfy_workflow_builder import build_comfy_workflow
+from infrastructure.comfy_workflow_builder import build_comfy_upscale_workflow, build_comfy_workflow
 
 
 @dataclass
@@ -120,3 +120,46 @@ def test_build_comfy_workflow_hires_img2img_skips_base_sampler_when_requested() 
     class_types = _class_types(workflow)
     assert class_types.count("KSampler") == 1
     assert "LatentUpscale" in class_types
+
+
+def test_build_comfy_workflow_hires_img2img_skips_base_sampler_via_params_flag() -> None:
+    params = GenerationParams(
+        positive="portrait",
+        negative="blurry",
+        checkpoint="sdxl.safetensors",
+        enable_hires_fix=True,
+        seed=7,
+    )
+    setattr(params, "_skip_base_sampler_pass", True)
+
+    workflow = build_comfy_workflow(
+        params,
+        reference_image_name="source.png",
+        reference_mode="img2img",
+        object_info={},
+        info=_InfoStub(),
+        required_input_defaults=_defaults,
+        select_field_name=_select,
+    )
+
+    class_types = _class_types(workflow)
+    assert class_types.count("KSampler") == 1
+    assert "LatentUpscale" in class_types
+
+
+def test_build_comfy_upscale_workflow_uses_upscale_node_package() -> None:
+    workflow = build_comfy_upscale_workflow(
+        reference_image_name="input/source.png",
+        upscale_model="4x-ultrasharp.pth",
+    )
+
+    assert _class_types(workflow) == [
+        "LoadImage",
+        "UpscaleModelLoader",
+        "ImageUpscaleWithModel",
+        "SaveImage",
+    ]
+    assert workflow["1"]["inputs"]["image"] == "input/source.png"
+    assert workflow["2"]["inputs"]["model_name"] == "4x-ultrasharp.pth"
+    assert workflow["3"]["inputs"]["upscale_model"] == ["2", 0]
+    assert workflow["3"]["inputs"]["image"] == ["1", 0]

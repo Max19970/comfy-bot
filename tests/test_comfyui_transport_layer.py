@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from typing import Any
+from unittest.mock import patch
 
 import aiohttp
 
@@ -137,3 +138,56 @@ def test_close_delegates_to_transport_close() -> None:
     asyncio.run(client.close())
 
     assert fake.closed is True
+
+
+def test_upscale_image_only_uses_node_based_builder() -> None:
+    fake = _FakeTransport()
+    fake.post_json_result = {"name": "img.png", "subfolder": "input"}
+    client = _client_with_fake_transport(fake)
+
+    captured_workflow: dict[str, Any] = {}
+
+    async def _fake_run_workflow_and_collect(
+        workflow: dict[str, Any],
+        *,
+        progress_cb: Any = None,
+        prompt_id_cb: Any = None,
+        image_cb: Any = None,
+    ) -> list[bytes]:
+        captured_workflow.clear()
+        captured_workflow.update(workflow)
+        return [b"ok"]
+
+    client._run_workflow_and_collect = _fake_run_workflow_and_collect  # type: ignore[method-assign]
+
+    expected_workflow = {
+        "1": {"class_type": "LoadImage", "inputs": {"image": "input/img.png"}},
+        "2": {"class_type": "UpscaleModelLoader", "inputs": {"model_name": "4x.pth"}},
+        "3": {
+            "class_type": "ImageUpscaleWithModel",
+            "inputs": {"upscale_model": ["2", 0], "image": ["1", 0]},
+        },
+        "4": {
+            "class_type": "SaveImage",
+            "inputs": {"images": ["3", 0], "filename_prefix": "ComfyBot"},
+        },
+    }
+
+    with patch(
+        "infrastructure.comfyui_client.build_comfy_upscale_workflow",
+        return_value=expected_workflow,
+    ) as build_mock:
+        result = asyncio.run(
+            client.upscale_image_only(
+                image_bytes=b"image",
+                upscale_model="4x.pth",
+            )
+        )
+
+    assert result == [b"ok"]
+    build_mock.assert_called_once_with(
+        reference_image_name="input/img.png",
+        upscale_model="4x.pth",
+    )
+    assert captured_workflow == expected_workflow
+

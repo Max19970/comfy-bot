@@ -103,7 +103,6 @@ def _requires_image_generation(
         or params.enable_hires_fix
         or params.enable_freeu
         or params.enable_pag
-        or params.enable_tiled_diffusion
     )
 
 
@@ -189,6 +188,7 @@ async def start_image_enhancement(
             run_params.batch_size = 1
             run_params.reference_images = []
             run_params.reference_strength = 0.8
+            run_params.enable_tiled_diffusion = False
             requires_image_generation = _requires_image_generation(artifact, run_params)
             if requires_image_generation and run_params.seed < 0:
                 run_params.seed = random.randint(0, 2**63 - 1)

@@ -243,8 +243,19 @@ def register_prompt_editor_thematic_handlers(
             return
         message, _, req = context
         params = req.params
+        uid = cb.from_user.id if cb.from_user else 0
+        telegram_locale = cb.from_user.language_code if cb.from_user else None
 
-        enh_label = enhancements_menu_label(params)
+        enh_label = enhancements_menu_label(
+            params,
+            translate=lambda key, locale, default: _t(
+                uid,
+                key,
+                default,
+                telegram_locale=locale,
+            ),
+            locale=telegram_locale,
+        )
 
         kb = InlineKeyboardMarkup(
             inline_keyboard=[

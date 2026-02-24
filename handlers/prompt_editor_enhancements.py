@@ -25,15 +25,15 @@ def enhancements_menu_label(
 ) -> str:
     count = enhancements_count(params)
     if translate is None:
-        return f"✨ Enhancements ({count})" if count else "✨ Enhancements"
+        return f"✨ Улучшения ({count})" if count else "✨ Улучшения"
     if count:
         return translate(
             "prompt_editor.ui.button.enhancements.count",
             locale,
-            "✨ Enhancements ({count})",
+            "✨ Улучшения ({count})",
         ).format(count=count)
     return translate(
         "prompt_editor.ui.button.enhancements",
         locale,
-        "✨ Enhancements",
+        "✨ Улучшения",
     )

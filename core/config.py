@@ -81,6 +81,12 @@ class Config:
     default_scheduler: str = "normal"
     default_denoise: float = 1.0
 
+    # UI text pipeline
+    ui_text_modifier_factories: str = (
+        "infrastructure.ui_text_modifiers:create_localization_modifier,"
+        "infrastructure.ui_text_modifiers:create_copy_profile_modifier"
+    )
+
     @classmethod
     def from_env(cls) -> "Config":
         token = _env("TELEGRAM_BOT_TOKEN", "")
@@ -128,6 +134,11 @@ class Config:
             default_sampler=_env("DEFAULT_SAMPLER", "euler"),
             default_scheduler=_env("DEFAULT_SCHEDULER", "normal"),
             default_denoise=_env_float("DEFAULT_DENOISE", 1.0),
+            ui_text_modifier_factories=_env(
+                "UI_TEXT_MODIFIER_FACTORIES",
+                "infrastructure.ui_text_modifiers:create_localization_modifier,"
+                "infrastructure.ui_text_modifiers:create_copy_profile_modifier",
+            ),
         )
 
     @property

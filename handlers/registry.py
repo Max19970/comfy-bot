@@ -9,6 +9,7 @@ from application.smart_prompt_service import SmartPromptService
 from core.config import Config
 from core.runtime import RuntimeStore
 from domain.localization import LocalizationService
+from domain.ui_text import UITextService
 from infrastructure.comfyui_client import ComfyUIClient
 
 from .common import register_common_handlers
@@ -25,6 +26,7 @@ class HandlerRegistryDeps:
     runtime: RuntimeStore
     smart_prompt: SmartPromptService
     localization: LocalizationService
+    ui_text: UITextService
 
 
 def register_handlers_with_deps(router: Router, deps: HandlerRegistryDeps) -> None:
@@ -64,6 +66,7 @@ def register_handlers(
     runtime: RuntimeStore,
     smart_prompt: SmartPromptService,
     localization: LocalizationService,
+    ui_text: UITextService,
 ) -> None:
     register_handlers_with_deps(
         router,
@@ -74,5 +77,6 @@ def register_handlers(
             runtime=runtime,
             smart_prompt=smart_prompt,
             localization=localization,
+            ui_text=ui_text,
         ),
     )

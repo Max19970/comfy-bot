@@ -27,6 +27,19 @@ from .loras import (
     lora_catalog_entry_from_metadata,
     workflow_lora_attachments_from_legacy,
 )
+from .ui_text import (
+    UICopyProfile,
+    UICopyProfileCatalog,
+    UIText,
+    UITextDefinition,
+    UITextLocalizer,
+    UITextModifier,
+    UITextRegistry,
+    UITextRequest,
+    UITextService,
+    normalize_profile_name,
+    normalize_text_id,
+)
 
 __all__ = [
     "BaseModelPolicy",
@@ -50,4 +63,15 @@ __all__ = [
     "legacy_lora_pairs",
     "lora_catalog_entry_from_metadata",
     "workflow_lora_attachments_from_legacy",
+    "UICopyProfile",
+    "UICopyProfileCatalog",
+    "UIText",
+    "UITextDefinition",
+    "UITextLocalizer",
+    "UITextModifier",
+    "UITextRequest",
+    "UITextRegistry",
+    "UITextService",
+    "normalize_profile_name",
+    "normalize_text_id",
 ]

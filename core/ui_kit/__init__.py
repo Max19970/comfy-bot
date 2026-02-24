@@ -5,6 +5,7 @@ from .dialogs import back_to_menu_rows, confirm_cancel_rows
 from .keyboards import build_keyboard, build_row
 from .nav import MenuNavSpec, menu_nav_row
 from .pagination import build_page_window, item_callback, page_nav_row
+from .text_blocks import resolve_ui_text, text_button, ui_text
 
 __all__ = [
     "MenuNavSpec",
@@ -21,4 +22,7 @@ __all__ = [
     "menu_root_button",
     "noop_button",
     "page_nav_row",
+    "resolve_ui_text",
+    "text_button",
+    "ui_text",
 ]

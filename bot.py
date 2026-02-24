@@ -110,6 +110,7 @@ def create_app(cfg: Config) -> AppContext:
             runtime=app.runtime,
             smart_prompt=app.smart_prompt,
             localization=app.localization,
+            ui_text=app.ui_text,
         ),
     )
     return app

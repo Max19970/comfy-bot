@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "entries": {
+    "ui.start": {
+      "default": "🎨 <b>ComfyUI Generator Bot</b>\n\nВыберите раздел в меню ниже.\nКоманды тоже работают, но кнопочная навигация быстрее.",
+      "localization_key": "ui.start"
+    },
+    "ui.fallback": {
+      "default": "Я не ожидаю текст. Откройте меню кнопками ниже.",
+      "localization_key": "ui.fallback"
+    },
+    "common.menu.back_to_menu": {
+      "default": "⬅️ В меню",
+      "localization_key": "common.menu.back_to_menu"
+    },
+    "common.action.cancel": {
+      "default": "❌ Отмена",
+      "localization_key": "common.action.cancel"
+    },
+    "prompt_editor.send.button.enhance": {
+      "default": "✨ Улучшить",
+      "localization_key": "prompt_editor.send.button.enhance"
+    }
+  }
+}

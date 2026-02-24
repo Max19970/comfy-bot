@@ -110,14 +110,18 @@ python -m pytest -q
 ## Структура проекта
 
 ```text
-bot.py                   # Точка входа
-app_context.py           # Сборка зависимостей и lifecycle приложения
-config.py                # Конфиг из .env
-comfyui_client.py        # Клиент ComfyUI API и сборка workflow
-model_downloader.py      # Поиск/скачивание моделей и метаданные
-smart_prompt.py          # Локальная интеграция TIPO для Smart Prompt
-core/                    # Доменные модули: состояния, runtime, UI, storage, media
-bot_core.py              # Совместимый facade для core/*
+bot.py                                # Точка входа
+bot_core.py                           # Совместимый facade для core/*
+bootstrap/
+  app_context.py                      # Сборка зависимостей и lifecycle приложения
+core/
+  config.py                           # Конфиг из .env
+  ...                                 # Shared runtime, UI, storage, helpers
+application/
+  model_downloader.py                 # Поиск/скачивание моделей и метаданные
+  smart_prompt_service.py             # Локальная интеграция TIPO для Smart Prompt
+infrastructure/
+  comfyui_client.py                   # Клиент ComfyUI API и сборка workflow
 handlers/
   registry.py            # Централизованная регистрация обработчиков
   common.py              # /start, /help, /models, /queue, /settings, /cancel
@@ -129,6 +133,9 @@ handlers/
   prompt_editor_send.py  # Отправка результатов генерации
   presets.py             # Пресеты пользователя
   download.py            # Диалог скачивания моделей
+tools/
+  i18n/                  # Служебные i18n-утилиты
+  manual/                # Ручные скрипты и проверки
 presets/                 # Локальные пресеты пользователей (runtime)
 sessions/                # Снимок runtime-сессий между перезапусками
 ```

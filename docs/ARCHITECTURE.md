@@ -33,23 +33,23 @@ ComfyBot работает как Telegram-бот на `aiogram`, который 
   - Точка входа.
   - Инициализирует приложение, настраивает команды Telegram и запускает polling.
 
-- `app_context.py`
+- `bootstrap/app_context.py`
   - Композиция зависимостей приложения (`Bot`, `Dispatcher`, сервисы, runtime).
   - Единый lifecycle для закрытия внешних сессий.
 
-- `config.py`
+- `core/config.py`
   - Загрузка и нормализация переменных окружения.
   - Формирование объекта `Config` и вычисляемых путей к каталогам моделей.
 
-- `comfyui_client.py`
+- `infrastructure/comfyui_client.py`
   - Взаимодействие с ComfyUI API.
   - Обновление доступных ресурсов (`/object_info`), выполнение workflow и получение результатов.
 
-- `model_downloader.py`
+- `application/model_downloader.py`
   - Поиск и загрузка моделей из CivitAI/HuggingFace.
   - Подбор целевых файлов и синхронизация локального индекса метаданных.
 
-- `smart_prompt.py`
+- `application/smart_prompt_service.py`
   - Интеграция Smart Prompt на базе локальной модели TIPO.
   - Преобразование естественного языка в структуру positive/negative.
 
@@ -118,7 +118,7 @@ ComfyBot работает как Telegram-бот на `aiogram`, который 
 
 ## Где расширять проект
 
-- Новый источник моделей: `model_downloader.py` и адаптеры в `infrastructure/`.
-- Новый параметр генерации: доменная/прикладная модель + UI в handler-модулях редактора + сборка workflow в `comfyui_client.py`.
+- Новый источник моделей: `application/model_downloader.py` и адаптеры в `infrastructure/`.
+- Новый параметр генерации: доменная/прикладная модель + UI в handler-модулях редактора + сборка workflow в `infrastructure/comfyui_client.py`.
 - Новые команды меню: `handlers/common.py` и профильные handler-модули.
 - Новые локали интерфейса: `locales/<locale>/locale.meta.json` и `locales/<locale>/messages.json`.

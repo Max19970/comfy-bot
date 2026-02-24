@@ -28,7 +28,7 @@
 
 ## Ключевые композиционные точки
 
-- `app_context.py`
+- `bootstrap/app_context.py`
   - Композиция runtime + сервисов + внешних адаптеров.
 - `handlers/registry.py`
   - Централизованная регистрация handler-модулей.

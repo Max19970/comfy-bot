@@ -26,7 +26,7 @@ python -m compileall -q .
 
 ## Архитектурные границы для новой разработки
 
-Legacy-модули (`core/*`, `handlers/*`, `model_downloader.py`, `comfyui_client.py`, `smart_prompt.py`) остаются зоной поэтапной миграции.
+Legacy-модули (`core/*`, `handlers/*`, `application/model_downloader.py`, `infrastructure/comfyui_client.py`, `application/smart_prompt_service.py`) остаются зоной поэтапной миграции.
 
 Новый код размещается в целевых слоях:
 

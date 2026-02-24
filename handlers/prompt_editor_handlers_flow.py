@@ -17,9 +17,9 @@ from core.callbacks import ValueSelectionCallback
 from core.interaction import require_callback_message
 from core.models import GenerationParams
 from core.runtime import PromptRequest, RuntimeStore
-from core.user_preferences import read_user_locale
 from core.ui_kit import back_button, build_keyboard
 from core.ui_kit.buttons import button
+from core.user_preferences import read_user_locale
 from domain.localization import LocalizationService
 
 

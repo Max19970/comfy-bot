@@ -7,6 +7,7 @@ from aiogram import Router
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import CallbackQuery, Message
 from aiogram.types.base import TelegramObject
+
 from domain.localization import LocalizationService
 
 

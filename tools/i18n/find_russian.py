@@ -16,5 +16,5 @@ for root, _, files in os.walk('.'):
                 for i, line in enumerate(lines):
                     if ru_pattern.search(line):
                         print(f"{path}:{i+1}: {line.strip()}")
-        except Exception as e:
+        except Exception:
             pass

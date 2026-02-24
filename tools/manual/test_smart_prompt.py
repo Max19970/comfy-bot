@@ -1,6 +1,6 @@
 """
 Standalone test script for TIPO Smart Prompt inference.
-Run:  python test_smart_prompt.py
+Run:  python tools/manual/test_smart_prompt.py
 
 Tests the full TIPO pipeline without starting the Telegram bot.
 """
@@ -14,6 +14,7 @@ import time
 # Minimal Config stub so SmartPromptService can be instantiated standalone
 # ---------------------------------------------------------------------------
 from dataclasses import dataclass
+from pathlib import Path
 
 
 @dataclass
@@ -39,6 +40,10 @@ class _TestConfig:
 
 
 # Patch config module so smart_prompt can import Config
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
 sys.modules.setdefault("config", type(sys)("config"))
 sys.modules["config"].Config = _TestConfig  # type: ignore[attr-defined]
 

@@ -11,7 +11,7 @@ select = ["E", "F", "I"]
 ignore = ["E501", "E731"]
 
 [tool.ruff.lint.per-file-ignores]
-"test_smart_prompt.py" = ["E402"]
+"tools/manual/test_smart_prompt.py" = ["E402"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -51,7 +51,7 @@ files = [
   "smart_prompt.py",
   "tests",
 ]
-exclude = ["test_smart_prompt.py"]
+exclude = ["tools/manual/test_smart_prompt.py"]
 
 [[tool.mypy.overrides]]
 module = [

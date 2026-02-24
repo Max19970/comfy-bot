@@ -34,7 +34,11 @@ from infrastructure.comfy_execution_orchestrator import (
     GenerationProgressCallback,
 )
 from infrastructure.comfy_transport import ComfyHttpTransport, ComfyTransportProtocol
-from infrastructure.comfy_workflow_builder import build_comfy_upscale_workflow, build_comfy_workflow
+from infrastructure.comfy_workflow_builder import (
+    build_comfy_upscale_workflow,
+    build_comfy_workflow,
+    comfy_workflow_stage_labels,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -144,6 +148,7 @@ class ComfyUIClient:
         self._locale = locale
         self.info = ComfyUIInfo()
         self._object_info: dict[str, Any] = {}
+        self._stage_labels_by_class_type = comfy_workflow_stage_labels()
         self._execution_orchestrator = ComfyExecutionOrchestrator(self)
 
     def _translate(
@@ -499,104 +504,12 @@ class ComfyUIClient:
         return node_types
 
     def _stage_name(self, class_type: str) -> str:
-        labels = {
-            "CheckpointLoaderSimple": self._translate(
-                "comfyui.progress.stage.checkpoint_loader",
-                "подготовка модели",
-            ),
-            "LoraLoader": self._translate("comfyui.progress.stage.lora_loader", "применение LoRA"),
-            "VAELoader": self._translate("comfyui.progress.stage.vae_loader", "загрузка VAE"),
-            "CLIPTextEncode": self._translate(
-                "comfyui.progress.stage.clip_text_encode",
-                "кодирование промпта",
-            ),
-            "ControlNetLoader": self._translate(
-                "comfyui.progress.stage.controlnet_loader",
-                "загрузка ControlNet",
-            ),
-            "ControlNetApply": self._translate(
-                "comfyui.progress.stage.controlnet_apply",
-                "применение ControlNet",
-            ),
-            "ControlNetApplyAdvanced": self._translate(
-                "comfyui.progress.stage.controlnet_apply",
-                "применение ControlNet",
-            ),
-            "CLIPVisionLoader": self._translate(
-                "comfyui.progress.stage.clip_vision_loader",
-                "загрузка CLIP Vision",
-            ),
-            "IPAdapterModelLoader": self._translate(
-                "comfyui.progress.stage.ipadapter_model_loader",
-                "загрузка IP-Adapter",
-            ),
-            "IPAdapterApply": self._translate(
-                "comfyui.progress.stage.ipadapter_apply",
-                "применение IP-Adapter",
-            ),
-            "IPAdapterApplyAdvanced": self._translate(
-                "comfyui.progress.stage.ipadapter_apply",
-                "применение IP-Adapter",
-            ),
-            "LoadImage": self._translate(
-                "comfyui.progress.stage.load_image", "загрузка изображения"
-            ),
-            "VAEEncode": self._translate(
-                "comfyui.progress.stage.vae_encode",
-                "кодирование референса",
-            ),
-            "EmptyLatentImage": self._translate(
-                "comfyui.progress.stage.empty_latent_image",
-                "подготовка латента",
-            ),
-            "RepeatLatentBatch": self._translate(
-                "comfyui.progress.stage.repeat_latent_batch",
-                "подготовка батча",
-            ),
-            "KSampler": self._translate("comfyui.progress.stage.ksampler", "сэмплинг"),
-            "VAEDecode": self._translate(
-                "comfyui.progress.stage.vae_decode",
-                "декодирование изображения",
-            ),
-            "UpscaleModelLoader": self._translate(
-                "comfyui.progress.stage.upscale_model_loader",
-                "загрузка апскейлера",
-            ),
-            "ImageUpscaleWithModel": self._translate(
-                "comfyui.progress.stage.image_upscale_with_model",
-                "апскейл",
-            ),
-            "SaveImage": self._translate(
-                "comfyui.progress.stage.save_image",
-                "сохранение результата",
-            ),
-            "FreeU_V2": self._translate("comfyui.progress.stage.freeu", "применение FreeU"),
-            "PerturbedAttentionGuidance": self._translate(
-                "comfyui.progress.stage.pag",
-                "применение PAG",
-            ),
-            "LatentUpscale": self._translate(
-                "comfyui.progress.stage.latent_upscale",
-                "Hi-res: апскейл латента",
-            ),
-            "HyperTile": self._translate(
-                "comfyui.progress.stage.hypertile",
-                "настройка HyperTile",
-            ),
-            "VAEDecodeTiled": self._translate(
-                "comfyui.progress.stage.vae_decode_tiled",
-                "тайловое декодирование",
-            ),
-            "VAEEncodeTiled": self._translate(
-                "comfyui.progress.stage.vae_encode_tiled",
-                "тайловое кодирование",
-            ),
-        }
-        return labels.get(
-            class_type,
-            class_type
-            or self._translate("comfyui.progress.stage.node_execution", "выполнение узла"),
-        )
+        label = self._stage_labels_by_class_type.get(class_type)
+        if label is not None:
+            return self._translate(label.localization_key, label.default_text)
+        if class_type:
+            return class_type
+        return self._translate("comfyui.progress.stage.node_execution", "выполнение узла")
 
     @staticmethod
     def _status_queue_remaining(data: Any) -> int | None:

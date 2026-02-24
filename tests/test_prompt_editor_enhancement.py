@@ -45,3 +45,8 @@ def test_requires_image_generation_false_for_upscaler_only() -> None:
     params = GenerationParams(upscale_model="RealESRGAN_x4plus")
     artifact = _artifact(params=params, enable_sampler_pass=False)
     assert _requires_image_generation(artifact, artifact.params) is False
+
+
+def test_requires_image_generation_false_without_sampling_or_enhancements() -> None:
+    artifact = _artifact(enable_sampler_pass=False)
+    assert _requires_image_generation(artifact, artifact.params) is False

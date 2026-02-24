@@ -90,6 +90,9 @@ class Config:
     # Handler plugin pipeline
     handler_plugin_packages: str = "handlers.plugins.builtin"
 
+    # Model source provider pipeline
+    model_source_provider_packages: str = "application.model_source_plugins.builtin"
+
     @classmethod
     def from_env(cls) -> "Config":
         token = _env("TELEGRAM_BOT_TOKEN", "")
@@ -145,6 +148,10 @@ class Config:
             handler_plugin_packages=_env(
                 "HANDLER_PLUGIN_PACKAGES",
                 "handlers.plugins.builtin",
+            ),
+            model_source_provider_packages=_env(
+                "MODEL_SOURCE_PROVIDER_PACKAGES",
+                "application.model_source_plugins.builtin",
             ),
         )
 

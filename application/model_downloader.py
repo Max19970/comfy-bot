@@ -14,6 +14,14 @@ from urllib.parse import urlsplit
 
 import aiohttp
 
+from application.model_source_provider_loader import (
+    ModelSourceProviderLoaderError,
+    load_model_source_provider_registry,
+)
+from application.model_source_providers import (
+    ModelSourceProviderBuildContext,
+    ModelSourceProviderRegistry,
+)
 from core.config import Config
 from core.formatting import human_size, short_number
 from domain.base_model_policy import BaseModelPolicy
@@ -38,9 +46,15 @@ def _t(
     default: str,
     params: Mapping[str, object] | None = None,
 ) -> str:
-    if localization is None:
-        return default
-    return localization.t(key, locale=locale, params=params, default=default)
+    text = default
+    if localization is not None:
+        text = localization.t(key, locale=locale, params=params, default=default)
+    if params:
+        try:
+            return text.format_map({str(name): value for name, value in params.items()})
+        except (ValueError, TypeError, KeyError):
+            return text
+    return text
 
 
 # Internal model type -> CivitAI "types" parameter
@@ -324,6 +338,28 @@ class ModelDownloader:
         self._civitai_api = CivitaiApiClient(self._get_session)
         self._huggingface_api = HuggingFaceApiClient(self._get_session)
         self._remote_file_downloader = RemoteFileDownloader(self._get_session)
+
+        provider_context = ModelSourceProviderBuildContext(
+            civitai_search=self.search_civitai,
+            civitai_fetch_model=self.fetch_civitai_model,
+            civitai_extract_model_id=self._extract_civitai_model_id,
+            civitai_api_key=self.cfg.civitai_api_key,
+            huggingface_search=self.search_huggingface,
+            huggingface_fetch_repo=self.fetch_huggingface_repo,
+            huggingface_extract_repo_id=self._extract_hf_repo_id,
+            huggingface_token=self.cfg.huggingface_token,
+        )
+        try:
+            self._source_providers = load_model_source_provider_registry(
+                self.cfg.model_source_provider_packages,
+                context=provider_context,
+            )
+        except ModelSourceProviderLoaderError as exc:
+            raise RuntimeError(f"Failed to load model source providers: {exc}") from exc
+
+    @property
+    def source_providers(self) -> ModelSourceProviderRegistry:
+        return self._source_providers
 
     def _translate(
         self,

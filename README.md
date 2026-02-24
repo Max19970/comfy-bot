@@ -106,6 +106,7 @@ python -m pytest -q
 - `docs/ARCHITECTURE.md` — устройство проекта, поток данных, зоны ответственности.
 - `docs/REFACTOR_GUARDRAILS.md` — протокол безопасного поэтапного рефакторинга.
 - `docs/LOCALIZATION.md` — структура переводов и добавление новых языков без правки ядра.
+- `docs/HANDLER_PLUGINS.md` — контракт handler-плагинов и добавление новых handler-блоков без правки registry.
 - `docs/TROUBLESHOOTING.md` — типовые проблемы и решения.
 - `SECURITY.md` — правила безопасной публикации и работы с секретами.
 - `CONTRIBUTING.md` — рекомендации по развитию проекта.
@@ -126,7 +127,8 @@ application/
 infrastructure/
   comfyui_client.py                   # Клиент ComfyUI API и сборка workflow
 handlers/
-  registry.py            # Централизованная регистрация обработчиков
+  registry.py            # Plugin-first регистрация обработчиков
+  plugins/               # Встроенные handler plugins (builtin)
   common.py              # /start, /help, /models, /queue, /settings, /cancel
   prompt_editor.py       # Оркестрация редактора генерации
   prompt_editor_ui.py    # Клавиатуры/базовые UI-блоки редактора
@@ -136,6 +138,7 @@ handlers/
   prompt_editor_send.py  # Отправка результатов генерации
   presets.py             # Пресеты пользователя
   download.py            # Диалог скачивания моделей
+plugins/                              # Plugin kernel (contracts/loader)
 tools/
   i18n/                  # Служебные i18n-утилиты
   manual/                # Ручные скрипты и проверки

@@ -241,3 +241,6 @@ If none:
 | 2026-02-24 | Stage 3 implemented; awaiting explicit user approval | `docs/dev/tasks/plugin_kernel_handler_pluginization/reports/2026-02-24_stage-3_plugin-first-registration_report.md` |
 | 2026-02-25 | Stage 3 дополнен follow-up диагностикой LoRA; ожидается явное одобрение | `docs/dev/tasks/plugin_kernel_handler_pluginization/reports/2026-02-24_stage-3_plugin-first-registration_report.md` |
 | 2026-02-25 | Stage 3 approved by user | User message: `Этап 3 одобрен` |
+| 2026-02-25 | Stage 3 committed | `6c9da48` |
+| 2026-02-25 | Stage 4 implemented; awaiting explicit user approval | `docs/dev/tasks/plugin_kernel_handler_pluginization/reports/2026-02-24_stage-4_final-p1-p2-package_report.md` |
+| 2026-02-25 | Stage 4 approved by user | User message: `Этап 4 одобрен` |

@@ -87,6 +87,23 @@ SMART_PROMPT_TOP_K=80
 SMART_PROMPT_FORMAT=both_tag_first
 ```
 
+## Handler plugin pipeline
+
+| Переменная | По умолчанию | Описание |
+|---|---|---|
+| `HANDLER_PLUGIN_PACKAGES` | `handlers.plugins.builtin` | CSV-список пакетов для discovery handler plugins. Порядок пакетов влияет на порядок загрузки, а итоговая регистрация определяется `(order, plugin_id)` в descriptor. |
+
+Пример:
+
+```env
+HANDLER_PLUGIN_PACKAGES=handlers.plugins.builtin,my_project.handlers.plugins
+```
+
+Примечания:
+
+- Если список пустой или не дал валидных плагинов, используется fallback на `handlers.plugins.builtin`.
+- Для каждого плагина обязателен `register_plugins(registry)` и capability `handlers.registration`.
+
 ## Типичные ошибки конфигурации
 
 - Неверный `TELEGRAM_BOT_TOKEN` -> бот не стартует.

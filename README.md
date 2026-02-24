@@ -65,6 +65,9 @@ python bot.py
 pip install -r requirements-dev.txt
 python -m ruff check .
 python -m ruff format --check .
+python -m pytest -q tests/test_ui_text_localization_bridge.py tests/test_handler_registry_bridge.py
+python -m pytest -q tests/test_ui_text_guardrails.py
+python tools/i18n/locale_maintenance.py --project-root . audit --strict
 python -m mypy
 python -m pytest -q
 ```

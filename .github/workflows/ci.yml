@@ -28,6 +28,16 @@ jobs:
       - name: Ruff format check
         run: python -m ruff format --check .
 
+      - name: UI text contract check
+        run: |
+          python -m pytest -q tests/test_ui_text_localization_bridge.py tests/test_handler_registry_bridge.py
+
+      - name: No raw UI text check
+        run: python -m pytest -q tests/test_ui_text_guardrails.py
+
+      - name: Locale sync check
+        run: python tools/i18n/locale_maintenance.py --project-root . audit --strict
+
       - name: Mypy
         run: python -m mypy
 

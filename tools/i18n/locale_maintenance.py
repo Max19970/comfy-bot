@@ -82,9 +82,13 @@ def main() -> int:
 
         if args.strict and (
             totals.get("missing_keys", 0) > 0
+            or totals.get("orphan_keys", 0) > 0
             or totals.get("placeholder_mismatches", 0) > 0
-            or totals.get("mixed_script_keys", 0) > 0
         ):
+            return 2
+        if args.fail_on_mixed_script and totals.get("mixed_script_keys", 0) > 0:
+            return 3
+        if args.fail_on_untranslated and totals.get("untranslated_keys", 0) > 0:
             return 2
         return 0
 
@@ -125,7 +129,20 @@ def _build_parser() -> argparse.ArgumentParser:
     audit.add_argument(
         "--strict",
         action="store_true",
-        help="Return non-zero code when critical issues are found",
+        help=(
+            "Return non-zero when locale parity issues are found "
+            "(missing/orphan/placeholder mismatches)."
+        ),
+    )
+    audit.add_argument(
+        "--fail-on-mixed-script",
+        action="store_true",
+        help="Also fail when mixed-script values are detected.",
+    )
+    audit.add_argument(
+        "--fail-on-untranslated",
+        action="store_true",
+        help="Also fail when untranslated values are detected.",
     )
 
     sync = sub.add_parser("sync", help="Sync missing canonical keys into all locales")

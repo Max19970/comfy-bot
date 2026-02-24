@@ -212,3 +212,6 @@
 | 2026-02-24 | Stage 1 закоммичен | `c5fead6` |
 | 2026-02-24 | Stage 2 реализован; ожидается явное одобрение пользователя | `docs/dev/tasks/core_architecture_cleanup/reports/2026-02-24_stage-2_debt-catalog_report.md` |
 | 2026-02-24 | Stage 2 уточнен по follow-up запросу пользователя; ожидается явное одобрение | `docs/dev/tasks/core_architecture_cleanup/reports/2026-02-24_stage-2_debt-catalog_report.md` |
+| 2026-02-24 | Stage 2 одобрен пользователем | Сообщение пользователя: `Этап 2 одобрен` |
+| 2026-02-24 | Stage 2 закоммичен | `ec1dcc5` |
+| 2026-02-24 | Stage 3 реализован; ожидается явное одобрение пользователя | `docs/dev/tasks/core_architecture_cleanup/reports/2026-02-24_stage-3_target-architecture-roadmap_report.md` |

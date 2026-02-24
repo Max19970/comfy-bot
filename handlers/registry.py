@@ -6,6 +6,7 @@ from aiogram import Router
 
 from application.model_downloader import ModelDownloader
 from application.smart_prompt_service import SmartPromptService
+from application.ui_text_localization_bridge import UITextLocalizationBridge
 from core.config import Config
 from core.runtime import RuntimeStore
 from domain.localization import LocalizationService
@@ -30,13 +31,18 @@ class HandlerRegistryDeps:
 
 
 def register_handlers_with_deps(router: Router, deps: HandlerRegistryDeps) -> None:
+    handler_localization = UITextLocalizationBridge(
+        localization=deps.localization,
+        ui_text=deps.ui_text,
+    )
+
     register_common_handlers(
         router,
         deps.cfg,
         deps.client,
         deps.downloader,
         deps.runtime,
-        deps.localization,
+        handler_localization,
     )
     prompt_editor = register_prompt_editor_handlers(
         router=router,
@@ -44,17 +50,17 @@ def register_handlers_with_deps(router: Router, deps: HandlerRegistryDeps) -> No
         client=deps.client,
         downloader=deps.downloader,
         runtime=deps.runtime,
-        localization=deps.localization,
+        localization=handler_localization,
         ui_text=deps.ui_text,
         smart_prompt=deps.smart_prompt,
     )
-    register_preset_handlers(router, deps.runtime, prompt_editor, deps.localization)
+    register_preset_handlers(router, deps.runtime, prompt_editor, handler_localization)
     register_download_handlers(
         router,
         deps.client,
         deps.downloader,
         deps.runtime,
-        deps.localization,
+        handler_localization,
     )
 
 

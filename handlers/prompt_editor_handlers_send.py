@@ -41,6 +41,7 @@ from .prompt_editor_send_menu_utils import (
     simple_value_keyboard,
     submenu_back_callback,
     submenu_for_field,
+    toggle_hires_fix,
 )
 
 
@@ -1122,9 +1123,7 @@ def register_prompt_editor_send_handlers(
             artifact.enable_sampler_pass = not artifact.enable_sampler_pass
             submenu = "smp"
         elif toggle_key == "hi":
-            artifact.params.enable_hires_fix = not artifact.params.enable_hires_fix
-            if artifact.params.enable_hires_fix:
-                artifact.enable_sampler_pass = True
+            toggle_hires_fix(artifact)
             submenu = "enh"
         elif toggle_key == "fu":
             if not deps.client.info.freeu_supported:

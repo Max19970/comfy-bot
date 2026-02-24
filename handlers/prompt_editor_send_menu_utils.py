@@ -297,3 +297,8 @@ def apply_field_value(
         artifact.compression_percent = int(value)
         return True
     return False
+
+
+def toggle_hires_fix(artifact: PreviewArtifact) -> bool:
+    artifact.params.enable_hires_fix = not artifact.params.enable_hires_fix
+    return artifact.params.enable_hires_fix

@@ -5,6 +5,7 @@ from core.runtime import PreviewArtifact
 from handlers.prompt_editor_send_menu_utils import (
     apply_field_value,
     parse_shrink_size,
+    toggle_hires_fix,
 )
 
 
@@ -37,3 +38,15 @@ def test_apply_field_value_enables_sampler_for_steps() -> None:
     assert apply_field_value(artifact, field="steps", value=30) is True
     assert artifact.params.steps == 30
     assert artifact.enable_sampler_pass is True
+
+
+def test_toggle_hires_fix_does_not_change_sampler_pass() -> None:
+    artifact = _artifact()
+    artifact.enable_sampler_pass = False
+    assert artifact.params.enable_hires_fix is False
+
+    enabled = toggle_hires_fix(artifact)
+
+    assert enabled is True
+    assert artifact.params.enable_hires_fix is True
+    assert artifact.enable_sampler_pass is False

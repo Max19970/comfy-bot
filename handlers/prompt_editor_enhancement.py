@@ -94,6 +94,19 @@ def _t(
     return text
 
 
+def _requires_image_generation(
+    artifact: PreviewArtifact,
+    params: GenerationParams,
+) -> bool:
+    return (
+        artifact.enable_sampler_pass
+        or params.enable_hires_fix
+        or params.enable_freeu
+        or params.enable_pag
+        or params.enable_tiled_diffusion
+    )
+
+
 async def start_image_enhancement(
     message: Message,
     *,
@@ -176,7 +189,8 @@ async def start_image_enhancement(
             run_params.batch_size = 1
             run_params.reference_images = []
             run_params.reference_strength = 0.8
-            if artifact.enable_sampler_pass and run_params.seed < 0:
+            requires_image_generation = _requires_image_generation(artifact, run_params)
+            if requires_image_generation and run_params.seed < 0:
                 run_params.seed = random.randint(0, 2**63 - 1)
             result_seed = int(run_params.seed) if run_params.seed >= 0 else artifact.used_seed
 
@@ -186,7 +200,7 @@ async def start_image_enhancement(
                     active.prompt_id = prompt_id
                     deps.runtime.persist()
 
-            if artifact.enable_sampler_pass:
+            if requires_image_generation:
                 images = await deps.client.generate_from_image(
                     run_params,
                     image_bytes=source_bytes,

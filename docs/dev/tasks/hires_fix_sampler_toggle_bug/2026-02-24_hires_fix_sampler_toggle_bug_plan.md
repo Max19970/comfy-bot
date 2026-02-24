@@ -125,9 +125,9 @@
 
 #### Подзадачи [M]
 
-- [ ] Убрать принудительное включение `enable_sampler_pass` при активации `enable_hires_fix`.
-- [ ] Обновить условие запуска `generate_from_image`, чтобы enhancement-путь включался при активном Hi-Res (и других enhancement-флагах, если применимо), даже когда sampler-pass отключен.
-- [ ] Сохранить существующее поведение для sampler-pass как отдельного режима «дополнительного прохода».
+- [x] Убрать принудительное включение `enable_sampler_pass` при активации `enable_hires_fix`.
+- [x] Обновить условие запуска `generate_from_image`, чтобы enhancement-путь включался при активном Hi-Res (и других enhancement-флагах, если применимо), даже когда sampler-pass отключен.
+- [x] Сохранить существующее поведение для sampler-pass как отдельного режима «дополнительного прохода».
 
 #### Почему этап не ломает общую работоспособность [M]
 
@@ -213,3 +213,6 @@ python -m ruff check handlers/prompt_editor_enhancement.py handlers/prompt_edito
 | --- | --- | --- |
 | 2026-02-24 | План создан; ожидание одобрения | `docs/dev/tasks/hires_fix_sampler_toggle_bug/2026-02-24_hires_fix_sampler_toggle_bug_plan.md` |
 | 2026-02-24 | Этап 1 реализован; ожидание явного одобрения пользователя | `docs/dev/tasks/hires_fix_sampler_toggle_bug/reports/2026-02-24_stage-1_diagnosis_report.md` |
+| 2026-02-24 | Этап 1 одобрен пользователем | `Пользователь: "Этап 1 одобрен"` |
+| 2026-02-24 | Этап 1 закоммичен | `a798b5b` |
+| 2026-02-24 | Этап 2 реализован; ожидание явного одобрения пользователя | `docs/dev/tasks/hires_fix_sampler_toggle_bug/reports/2026-02-24_stage-2_toggle_pipeline_fix_report.md` |

@@ -14,10 +14,11 @@ from aiogram.types import (
 )
 
 from application.lora_catalog_service import LoraCatalogService
+from application.model_downloader import ModelDownloader
 from application.prompt_generation_use_case import PromptGenerationUseCase
+from application.smart_prompt_service import SmartPromptService
 from application.user_locale_resolver import DefaultUserLocaleResolver
-from comfyui_client import ComfyUIClient
-from config import Config
+from core.config import Config
 from core.models import GenerationParams
 from core.runtime import (
     PromptRequest,
@@ -33,8 +34,7 @@ from core.ui import (
     params_summary_for_mode,
 )
 from domain.localization import LocalizationService
-from model_downloader import ModelDownloader
-from smart_prompt import SmartPromptService
+from infrastructure.comfyui_client import ComfyUIClient
 
 from .prompt_editor_generation import (
     PromptEditorGenerationDeps,

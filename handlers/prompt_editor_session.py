@@ -10,8 +10,7 @@ from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 
-from comfyui_client import ComfyUIClient
-from config import Config
+from core.config import Config
 from core.html_utils import h
 from core.interaction import (
     edit_message_by_anchor,
@@ -22,6 +21,7 @@ from core.models import GenerationParams
 from core.runtime import PromptRequest, RuntimeStore
 from core.telegram import callback_user_id, message_user_id
 from core.user_preferences import read_generation_defaults
+from infrastructure.comfyui_client import ComfyUIClient
 
 TranslateText = Callable[[str, str | None, str], str]
 

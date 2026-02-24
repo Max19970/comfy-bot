@@ -14,12 +14,12 @@ from aiogram.types import (
     Message,
 )
 
+from application.smart_prompt_service import SmartPromptError, SmartPromptService
 from core.html_utils import h
 from core.interaction import require_callback_message
 from core.runtime import PromptRequest
 from core.states import PromptEditorStates
 from domain.localization import LocalizationService
-from smart_prompt import SmartPromptError, SmartPromptService
 
 
 @dataclass

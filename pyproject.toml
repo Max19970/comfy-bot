@@ -28,12 +28,12 @@ check_untyped_defs = true
 ignore_missing_imports = true
 pretty = true
 files = [
+  "bootstrap",
   "application",
   "domain",
   "infrastructure",
   "presentation",
   "core",
-  "comfyui_client.py",
   "handlers/common.py",
   "handlers/common_core_handlers.py",
   "handlers/common_ops_handlers.py",
@@ -47,8 +47,6 @@ files = [
   "handlers/prompt_editor_subhandlers.py",
   "handlers/prompt_editor_view.py",
   "handlers/registry.py",
-  "model_downloader.py",
-  "smart_prompt.py",
   "tests",
 ]
 exclude = ["tools/manual/test_smart_prompt.py"]

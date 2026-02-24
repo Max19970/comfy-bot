@@ -7,13 +7,13 @@ from aiogram import Bot, Dispatcher, Router
 from aiogram.client.default import DefaultBotProperties
 
 from application.localization_service import DefaultLocalizationService
-from comfyui_client import ComfyUIClient
-from config import Config
+from application.model_downloader import ModelDownloader
+from application.smart_prompt_service import SmartPromptService
+from core.config import Config
 from core.runtime import RuntimeStore, load_runtime_store
 from domain.localization import LocalizationService
+from infrastructure.comfyui_client import ComfyUIClient
 from infrastructure.localization_catalog import FileSystemTranslationCatalog
-from model_downloader import ModelDownloader
-from smart_prompt import SmartPromptService
 
 
 @dataclass(slots=True)
@@ -46,7 +46,7 @@ class AppContext:
 
 
 def create_app_services(cfg: Config) -> AppServices:
-    locales_root = Path(__file__).resolve().parent / "locales"
+    locales_root = Path(__file__).resolve().parent.parent / "locales"
     catalog = FileSystemTranslationCatalog(str(locales_root))
     localization = DefaultLocalizationService(catalog)
 

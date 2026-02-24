@@ -4,12 +4,12 @@ from dataclasses import dataclass
 
 from aiogram import Router
 
-from comfyui_client import ComfyUIClient
-from config import Config
+from application.model_downloader import ModelDownloader
+from application.smart_prompt_service import SmartPromptService
+from core.config import Config
 from core.runtime import RuntimeStore
 from domain.localization import LocalizationService
-from model_downloader import ModelDownloader
-from smart_prompt import SmartPromptService
+from infrastructure.comfyui_client import ComfyUIClient
 
 from .common import register_common_handlers
 from .download import register_download_handlers

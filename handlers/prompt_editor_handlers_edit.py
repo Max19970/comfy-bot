@@ -13,7 +13,6 @@ from aiogram.types import (
     Message,
 )
 
-from comfyui_client import ComfyUIClient
 from core.interaction import require_callback_message
 from core.models import GenerationParams
 from core.runtime import PromptRequest, RuntimeStore
@@ -21,6 +20,7 @@ from core.states import PromptEditorStates
 from core.ui import custom_btn
 from core.user_preferences import read_user_locale
 from domain.localization import LocalizationService
+from infrastructure.comfyui_client import ComfyUIClient
 
 from .prompt_editor_handler_guards import require_message_and_request
 from .prompt_editor_scalar_utils import parse_scalar_value

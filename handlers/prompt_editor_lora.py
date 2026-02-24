@@ -7,7 +7,6 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 
 from application.lora_catalog_service import LoraCatalogService
-from comfyui_client import ComfyUIClient
 from core.html_utils import h
 from core.models import GenerationParams
 from core.runtime import PromptRequest, RuntimeStore
@@ -18,6 +17,7 @@ from core.ui_kit.buttons import button
 from core.user_preferences import read_user_locale
 from domain.localization import LocalizationService
 from domain.loras import EditorLoraSelection
+from infrastructure.comfyui_client import ComfyUIClient
 
 from .prompt_editor_session import show_prompt_panel
 

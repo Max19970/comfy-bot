@@ -9,13 +9,13 @@ from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 
-from comfyui_client import ComfyUIClient
 from core.html_utils import h
 from core.runtime import RuntimeStore
 from core.states import PromptEditorStates
 from core.ui import MAX_REFERENCE_IMAGES
 from core.ui_kit import back_button, build_keyboard
 from core.ui_kit.buttons import button
+from infrastructure.comfyui_client import ComfyUIClient
 
 from .prompt_editor_session import show_prompt_panel
 

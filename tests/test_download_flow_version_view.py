@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+from application.model_downloader import SearchResult, SearchVersionOption
 from handlers.download_flow_version_view import build_version_selection_view
-from model_downloader import SearchResult, SearchVersionOption
 
 
 def _callback_payloads(markup) -> set[str]:

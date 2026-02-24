@@ -12,7 +12,6 @@ from aiogram.types import (
     Message,
 )
 
-from comfyui_client import ComfyUIClient
 from core.callbacks import ValueSelectionCallback
 from core.interaction import require_callback_message
 from core.models import GenerationParams
@@ -21,6 +20,7 @@ from core.ui_kit import back_button, build_keyboard
 from core.ui_kit.buttons import button
 from core.user_preferences import read_user_locale
 from domain.localization import LocalizationService
+from infrastructure.comfyui_client import ComfyUIClient
 
 
 @dataclass

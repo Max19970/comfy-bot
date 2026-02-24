@@ -24,7 +24,7 @@ from urllib.parse import urlencode, urlsplit, urlunsplit
 import aiohttp
 from PIL import Image, ImageOps
 
-from config import Config
+from core.config import Config
 from core.models import GenerationParams
 from core.queue_utils import queue_item_prompt_id
 from domain.localization import LocalizationService
@@ -172,7 +172,7 @@ class ComfyUIClient:
     # -- fetch server info ---------------------------------------------------
 
     @staticmethod
-    def _extract_combo_options(input_val: list) -> list[str]:
+    def _extract_combo_options(input_val: list[Any]) -> list[str]:
         """
         Extract option list from a ComfyUI input definition.
 
@@ -185,11 +185,13 @@ class ComfyUIClient:
         first = input_val[0]
         # Old format: first element is a list of strings
         if isinstance(first, list):
-            return first
+            return [str(item) for item in first]
         # New format: first element is "COMBO" (or another type string),
         # second element is a dict with "options"
         if isinstance(first, str) and len(input_val) > 1 and isinstance(input_val[1], dict):
-            return input_val[1].get("options", [])
+            options = input_val[1].get("options", [])
+            if isinstance(options, list):
+                return [str(item) for item in options]
         return []
 
     @classmethod
@@ -445,7 +447,7 @@ class ComfyUIClient:
         if not isinstance(data, dict):
             raise ValueError("Invalid /prompt payload type")
 
-        prompt_id = data.get("prompt_id", "")
+        prompt_id = str(data.get("prompt_id", "")).strip()
         if not prompt_id:
             raise RuntimeError(f"ComfyUI did not return prompt_id: {data}")
         logger.info("Queued prompt %s", prompt_id)
@@ -1099,11 +1101,19 @@ class ComfyUIClient:
 
                 async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
                     if resp.status == 200:
-                        data = await resp.json()
+                        raw_data = await resp.json()
+                        if not isinstance(raw_data, dict):
+                            raise ValueError("Invalid /history payload type")
+                        data: dict[str, Any] = raw_data
                         if prompt_id in data:
-                            entry = data[prompt_id]
-                            status = entry.get("status", {})
-                            messages = status.get("messages", [])
+                            raw_entry = data[prompt_id]
+                            if not isinstance(raw_entry, dict):
+                                raise ValueError("Invalid history entry payload type")
+                            entry: dict[str, Any] = raw_entry
+                            raw_status = entry.get("status", {})
+                            status = raw_status if isinstance(raw_status, dict) else {}
+                            raw_messages = status.get("messages", [])
+                            messages = raw_messages if isinstance(raw_messages, list) else []
 
                             if progress_cb:
                                 sampler_progress = self._extract_latest_sampler_progress(messages)

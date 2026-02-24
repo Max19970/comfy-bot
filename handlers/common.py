@@ -10,9 +10,9 @@ from aiogram.types import (
     InlineKeyboardMarkup,
 )
 
+from application.model_downloader import ModelDownloader
 from application.user_locale_resolver import DefaultUserLocaleResolver
-from comfyui_client import ComfyUIClient
-from config import Config
+from core.config import Config
 from core.html_utils import h, truncate
 from core.panels import render_user_panel
 from core.queue_utils import queue_item_prompt_id
@@ -23,7 +23,7 @@ from core.ui_kit import back_button, build_keyboard
 from core.ui_kit.buttons import button, cancel_button, noop_button
 from core.user_preferences import read_user_locale
 from domain.localization import LocalizationService
-from model_downloader import ModelDownloader
+from infrastructure.comfyui_client import ComfyUIClient
 
 from .common_core_handlers import CommonCoreDeps, register_common_core_handlers
 from .common_middleware import register_access_middlewares
@@ -478,6 +478,20 @@ def register_common_handlers(
             telegram_locale=telegram_locale,
         )
 
+    def _localized_models_section(
+        title: str,
+        emoji: str,
+        items: list[str],
+        limit: int = 15,
+    ) -> str:
+        return _models_section(
+            title,
+            emoji,
+            items,
+            limit,
+            localization=localization,
+        )
+
     register_access_middlewares(
         router,
         allowed_users=cfg.allowed_users,
@@ -507,13 +521,7 @@ def register_common_handlers(
             service_menu_keyboard=(
                 lambda locale: _service_menu_keyboard(localization=localization, locale=locale)
             ),
-            models_section=lambda title, emoji, items, limit=15: _models_section(
-                title,
-                emoji,
-                items,
-                limit,
-                localization=localization,
-            ),
+            models_section=_localized_models_section,
             user_generations=_user_generations,
             truncate=truncate,
             h=h,

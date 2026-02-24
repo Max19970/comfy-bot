@@ -14,7 +14,7 @@ from urllib.parse import urlsplit
 
 import aiohttp
 
-from config import Config
+from core.config import Config
 from core.formatting import human_size, short_number
 from domain.base_model_policy import BaseModelPolicy
 from domain.localization import LocalizationService
@@ -461,7 +461,11 @@ class ModelDownloader:
             return True
         return any(name.endswith(ext) for ext in exts)
 
-    def _pick_civitai_file(self, files: list[dict[str, Any]], model_type: str) -> dict | None:
+    def _pick_civitai_file(
+        self,
+        files: list[dict[str, Any]],
+        model_type: str,
+    ) -> dict[str, Any] | None:
         if not files:
             return None
 
@@ -812,7 +816,11 @@ class ModelDownloader:
     # HuggingFace
     # ===================================================================
 
-    async def _hf_list_files(self, repo_id: str, headers: dict[str, str]) -> list[dict]:
+    async def _hf_list_files(
+        self,
+        repo_id: str,
+        headers: dict[str, str],
+    ) -> list[dict[str, Any]]:
         """List files in a HuggingFace repo (recursive tree)."""
         try:
             return await self._huggingface_api.list_files(

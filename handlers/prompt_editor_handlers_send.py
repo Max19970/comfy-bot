@@ -14,7 +14,6 @@ from aiogram.types import (
     Message,
 )
 
-from comfyui_client import ComfyUIClient
 from core.callbacks import ValueSelectionCallback
 from core.html_utils import h
 from core.interaction import require_callback_message
@@ -26,6 +25,7 @@ from core.runtime import PreviewArtifact, PromptRequest, RuntimeStore
 from core.ui_copy import main_menu_keyboard, start_text
 from core.user_preferences import read_user_locale
 from domain.localization import LocalizationService
+from infrastructure.comfyui_client import ComfyUIClient
 
 from .prompt_editor_enhancement import (
     PromptEditorEnhancementDeps,

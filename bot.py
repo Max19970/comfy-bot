@@ -24,13 +24,13 @@ from aiogram import Bot, Dispatcher
 from aiogram.exceptions import TelegramAPIError
 from aiogram.types import BotCommand
 
-from app_context import AppContext, create_app_context, create_app_services
-from comfyui_client import ComfyUIClient
-from config import Config
+from application.model_downloader import ModelDownloader
+from application.smart_prompt_service import SmartPromptService
+from bootstrap.app_context import AppContext, create_app_context, create_app_services
+from core.config import Config
 from domain.localization import LocalizationService
 from handlers.registry import HandlerRegistryDeps, register_handlers_with_deps
-from model_downloader import ModelDownloader
-from smart_prompt import SmartPromptService
+from infrastructure.comfyui_client import ComfyUIClient
 
 logging.basicConfig(
     level=logging.INFO,

@@ -3,8 +3,8 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from config import Config
-from smart_prompt import SmartPromptService
+from application.smart_prompt_service import SmartPromptService
+from core.config import Config
 
 
 class _FakeTipoBackend:

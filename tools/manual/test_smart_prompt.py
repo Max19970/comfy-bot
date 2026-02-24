@@ -9,12 +9,12 @@ from __future__ import annotations
 
 import sys
 import time
-
-# ---------------------------------------------------------------------------
-# Minimal Config stub so SmartPromptService can be instantiated standalone
-# ---------------------------------------------------------------------------
 from dataclasses import dataclass
 from pathlib import Path
+
+# ---------------------------------------------------------------------------
+# Minimal config object for standalone SmartPromptService run
+# ---------------------------------------------------------------------------
 
 
 @dataclass
@@ -39,15 +39,11 @@ class _TestConfig:
     )
 
 
-# Patch config module so smart_prompt can import Config
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-sys.modules.setdefault("config", type(sys)("config"))
-sys.modules["config"].Config = _TestConfig  # type: ignore[attr-defined]
-
-from smart_prompt import SmartPromptError, SmartPromptService  # noqa: E402
+from application.smart_prompt_service import SmartPromptError, SmartPromptService  # noqa: E402
 
 # ---------------------------------------------------------------------------
 CONTROL_MARKERS = ("<|", "|>", "<0x", "target:", "target :")

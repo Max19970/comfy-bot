@@ -5,8 +5,8 @@ from typing import Any
 
 import aiohttp
 
-from comfyui_client import ComfyUIClient
-from config import Config
+from core.config import Config
+from infrastructure.comfyui_client import ComfyUIClient
 
 
 class _FakeTransport:

@@ -13,7 +13,7 @@ from application.smart_prompt_text import (
     sanitize_final_prompt,
     split_tags,
 )
-from config import Config
+from core.config import Config
 from domain.localization import LocalizationService
 from infrastructure.tipo_backend import TipoBackend, TipoBackendError, TipoBackendProtocol
 

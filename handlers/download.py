@@ -12,8 +12,13 @@ from aiogram.types import (
     Message,
 )
 
+from application.model_downloader import (
+    ModelDownloader,
+    SearchResult,
+    SearchVersionOption,
+    apply_version_option,
+)
 from application.user_locale_resolver import DefaultUserLocaleResolver
-from comfyui_client import ComfyUIClient
 from core.download_filters import (
     DOWNLOAD_BASE_CODE_TO_API,
     DOWNLOAD_FILTER_PROFILES,
@@ -35,12 +40,7 @@ from core.ui_kit import back_button, build_keyboard
 from core.ui_kit.buttons import button, cancel_button, noop_button
 from core.user_preferences import read_user_locale
 from domain.localization import LocalizationService
-from model_downloader import (
-    ModelDownloader,
-    SearchResult,
-    SearchVersionOption,
-    apply_version_option,
-)
+from infrastructure.comfyui_client import ComfyUIClient
 
 from .download_flow_handlers import DownloadFlowDeps, register_download_flow_handlers
 

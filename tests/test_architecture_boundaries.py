@@ -110,3 +110,26 @@ def test_layer_absolute_import_boundaries() -> None:
             violations.append(f"{rel_path}: {', '.join(blocked)}")
 
     assert not violations, "Forbidden absolute imports detected:\n" + "\n".join(violations)
+
+
+def test_handler_registry_avoids_static_handler_wiring_imports() -> None:
+    registry_file = PROJECT_ROOT / "handlers" / "registry.py"
+    imported_modules = _absolute_import_modules(registry_file)
+    forbidden_modules = {
+        "handlers.common",
+        "handlers.download",
+        "handlers.presets",
+        "handlers.prompt_editor",
+    }
+
+    blocked = sorted(
+        module
+        for module in imported_modules
+        for forbidden in forbidden_modules
+        if module == forbidden or module.startswith(f"{forbidden}.")
+    )
+
+    assert not blocked, (
+        "handlers/registry.py must not wire handler modules directly; "
+        "use plugin registration path instead:\n" + "\n".join(blocked)
+    )

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 from aiogram import Router
@@ -15,10 +16,9 @@ from infrastructure.comfyui_client import ComfyUIClient
 from plugins.contracts import HANDLER_CAPABILITY_REGISTRATION, HandlerPluginContext
 from plugins.loader import HandlerPluginLoaderError, load_handler_plugins_from_packages
 
-from .common import register_common_handlers
-from .download import register_download_handlers
-from .presets import register_preset_handlers
-from .prompt_editor import register_prompt_editor_handlers
+logger = logging.getLogger(__name__)
+
+_DEFAULT_HANDLER_PLUGIN_PACKAGES = "handlers.plugins.builtin"
 
 _HANDLER_LOCALIZATION_BRIDGE_KEY = "handlers.localization.bridge"
 
@@ -34,64 +34,70 @@ class HandlerRegistryDeps:
     ui_text: UITextService
 
 
+def _load_plugins_with_default_fallback(packages_csv: str):
+    configured_packages = (packages_csv or "").strip()
+    try:
+        plugins = load_handler_plugins_from_packages(configured_packages)
+    except HandlerPluginLoaderError as exc:
+        raise RuntimeError(f"Failed to load handler plugins: {exc}") from exc
+
+    if plugins:
+        return plugins
+
+    if configured_packages and configured_packages != _DEFAULT_HANDLER_PLUGIN_PACKAGES:
+        logger.warning(
+            "No handler plugins discovered from '%s'; falling back to '%s'",
+            configured_packages,
+            _DEFAULT_HANDLER_PLUGIN_PACKAGES,
+        )
+
+    try:
+        fallback_plugins = load_handler_plugins_from_packages(_DEFAULT_HANDLER_PLUGIN_PACKAGES)
+    except HandlerPluginLoaderError as exc:
+        raise RuntimeError(f"Failed to load default handler plugins: {exc}") from exc
+
+    if not fallback_plugins:
+        raise RuntimeError("No handler plugins available after fallback to default plugin package")
+    return fallback_plugins
+
+
 def register_handlers_with_deps(router: Router, deps: HandlerRegistryDeps) -> None:
     handler_localization = UITextLocalizationBridge(
         localization=deps.localization,
         ui_text=deps.ui_text,
     )
 
-    try:
-        plugins = load_handler_plugins_from_packages(deps.cfg.handler_plugin_packages)
-    except HandlerPluginLoaderError as exc:
-        raise RuntimeError(f"Failed to load handler plugins: {exc}") from exc
-
-    if not plugins:
-        _register_handlers_legacy(router, deps, handler_localization)
-        return
+    plugins = _load_plugins_with_default_fallback(deps.cfg.handler_plugin_packages)
 
     context = HandlerPluginContext(router=router, deps=deps)
     context.shared[_HANDLER_LOCALIZATION_BRIDGE_KEY] = handler_localization
 
+    discovered = ", ".join(
+        f"{plugin.descriptor.plugin_id}@{plugin.descriptor.api_version}" for plugin in plugins
+    )
+    logger.info("Discovered handler plugins: %s", discovered)
+
+    registered_ids: list[str] = []
+
     for plugin in plugins:
         descriptor = plugin.descriptor
         if not descriptor.enabled_by_default:
+            logger.info("Skipping disabled handler plugin: %s", descriptor.plugin_id)
             continue
         if HANDLER_CAPABILITY_REGISTRATION not in descriptor.capabilities:
+            logger.info(
+                "Skipping plugin without '%s' capability: %s",
+                HANDLER_CAPABILITY_REGISTRATION,
+                descriptor.plugin_id,
+            )
             continue
         plugin.register(context)
+        registered_ids.append(descriptor.plugin_id)
 
+    if not registered_ids:
+        raise RuntimeError("No handler plugins with registration capability were enabled/loaded")
 
-def _register_handlers_legacy(
-    router: Router,
-    deps: HandlerRegistryDeps,
-    handler_localization: UITextLocalizationBridge,
-) -> None:
-    register_common_handlers(
-        router,
-        deps.cfg,
-        deps.client,
-        deps.downloader,
-        deps.runtime,
-        handler_localization,
-    )
-    prompt_editor = register_prompt_editor_handlers(
-        router=router,
-        cfg=deps.cfg,
-        client=deps.client,
-        downloader=deps.downloader,
-        runtime=deps.runtime,
-        localization=handler_localization,
-        ui_text=deps.ui_text,
-        smart_prompt=deps.smart_prompt,
-    )
-    register_preset_handlers(router, deps.runtime, prompt_editor, handler_localization)
-    register_download_handlers(
-        router,
-        deps.client,
-        deps.downloader,
-        deps.runtime,
-        handler_localization,
-    )
+    logger.info("Registered handler plugins: %s", ", ".join(registered_ids))
 
 
 def register_handlers(

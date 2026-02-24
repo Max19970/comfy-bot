@@ -221,10 +221,11 @@
 
 | Date | Task | Why needed | Resolution |
 | --- | --- | --- | --- |
+| 2026-02-25 | Диагностика регрессии LoRA (style/character) после pluginization | Follow-up запрос пользователя в ходе Stage 3 | done (проверка выполнена, вывод добавлен в отчет Stage 3) |
 
 If none:
 
-- None.
+- N/A (выполнена одна дополнительная задача в рамках Stage 3).
 
 ## Stage approval log
 
@@ -236,3 +237,7 @@ If none:
 | 2026-02-24 | Stage 1 committed | `8cbc258` |
 | 2026-02-24 | Stage 2 implemented; awaiting explicit user approval | `docs/dev/tasks/plugin_kernel_handler_pluginization/reports/2026-02-24_stage-2_builtin-handler-plugins_report.md` |
 | 2026-02-24 | Stage 2 approved by user | User message: `Этап 2 одобрен` |
+| 2026-02-24 | Stage 2 committed | `25c5e58` |
+| 2026-02-24 | Stage 3 implemented; awaiting explicit user approval | `docs/dev/tasks/plugin_kernel_handler_pluginization/reports/2026-02-24_stage-3_plugin-first-registration_report.md` |
+| 2026-02-25 | Stage 3 дополнен follow-up диагностикой LoRA; ожидается явное одобрение | `docs/dev/tasks/plugin_kernel_handler_pluginization/reports/2026-02-24_stage-3_plugin-first-registration_report.md` |
+| 2026-02-25 | Stage 3 approved by user | User message: `Этап 3 одобрен` |

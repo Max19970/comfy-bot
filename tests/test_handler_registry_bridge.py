@@ -3,6 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import cast
 
+import pytest
 from aiogram import Router
 
 from application.model_downloader import ModelDownloader
@@ -15,6 +16,7 @@ from domain.ui_text import UITextService
 from handlers.prompt_editor import PromptEditorService
 from handlers.registry import HandlerRegistryDeps, register_handlers_with_deps
 from infrastructure.comfyui_client import ComfyUIClient
+from plugins.contracts import PluginDescriptor
 
 
 def test_registry_wraps_handler_localization_with_ui_text_bridge(monkeypatch) -> None:
@@ -95,19 +97,28 @@ def test_registry_wraps_handler_localization_with_ui_text_bridge(monkeypatch) ->
     assert captured["common"] is captured["presets"]
 
 
-def test_registry_falls_back_to_legacy_when_plugin_list_is_empty(monkeypatch) -> None:
-    captured: dict[str, object] = {}
+def test_registry_falls_back_to_default_plugins_when_plugin_list_is_empty(monkeypatch) -> None:
+    calls: list[str] = []
 
-    def _fake_load_plugins(_: str):
+    class _FallbackPlugin:
+        descriptor = PluginDescriptor(
+            plugin_id="handlers.fallback",
+            display_name="Fallback plugin",
+            order=10,
+        )
+
+        def register(self, context):
+            context.shared["fallback.registered"] = True
+
+    def _fake_load_plugins(packages_csv: str):
+        calls.append(packages_csv)
+        if not packages_csv:
+            return ()
+        if packages_csv == "handlers.plugins.builtin":
+            return (_FallbackPlugin(),)
         return ()
 
-    def _fake_legacy_register(router, deps, handler_localization):
-        captured["router"] = router
-        captured["deps"] = deps
-        captured["localization"] = handler_localization
-
     monkeypatch.setattr("handlers.registry.load_handler_plugins_from_packages", _fake_load_plugins)
-    monkeypatch.setattr("handlers.registry._register_handlers_legacy", _fake_legacy_register)
 
     deps = HandlerRegistryDeps(
         cfg=cast(Config, SimpleNamespace(handler_plugin_packages="")),
@@ -133,9 +144,51 @@ def test_registry_falls_back_to_legacy_when_plugin_list_is_empty(monkeypatch) ->
         ),
     )
 
-    router = Router()
-    register_handlers_with_deps(router, deps)
+    register_handlers_with_deps(Router(), deps)
 
-    assert captured["router"] is router
-    assert captured["deps"] is deps
-    assert isinstance(captured["localization"], UITextLocalizationBridge)
+    assert calls == ["", "handlers.plugins.builtin"]
+
+
+def test_registry_raises_when_no_registration_plugins_available(monkeypatch) -> None:
+    class _NonHandlerPlugin:
+        descriptor = PluginDescriptor(
+            plugin_id="plugins.non_handler",
+            display_name="Non-handler plugin",
+            capabilities=("other.capability",),
+            order=10,
+        )
+
+        def register(self, context):
+            raise AssertionError("register should not be called for non-handler capability")
+
+    monkeypatch.setattr(
+        "handlers.registry.load_handler_plugins_from_packages",
+        lambda _: (_NonHandlerPlugin(),),
+    )
+
+    deps = HandlerRegistryDeps(
+        cfg=cast(Config, SimpleNamespace(handler_plugin_packages="handlers.plugins.builtin")),
+        client=cast(ComfyUIClient, SimpleNamespace()),
+        downloader=cast(ModelDownloader, SimpleNamespace()),
+        runtime=cast(RuntimeStore, SimpleNamespace()),
+        smart_prompt=cast(SmartPromptService, SimpleNamespace()),
+        localization=cast(
+            LocalizationService,
+            SimpleNamespace(
+                t=lambda *args, **kwargs: "ok",
+                default_locale=lambda: "ru",
+                available_locales=lambda: ("ru", "en"),
+            ),
+        ),
+        ui_text=cast(
+            UITextService,
+            SimpleNamespace(
+                text=lambda *args, **kwargs: "ok",
+                default_profile=lambda: "base",
+                available_profiles=lambda: ("base",),
+            ),
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="No handler plugins with registration capability"):
+        register_handlers_with_deps(Router(), deps)

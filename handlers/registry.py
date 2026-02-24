@@ -12,11 +12,15 @@ from core.runtime import RuntimeStore
 from domain.localization import LocalizationService
 from domain.ui_text import UITextService
 from infrastructure.comfyui_client import ComfyUIClient
+from plugins.contracts import HANDLER_CAPABILITY_REGISTRATION, HandlerPluginContext
+from plugins.loader import HandlerPluginLoaderError, load_handler_plugins_from_packages
 
 from .common import register_common_handlers
 from .download import register_download_handlers
 from .presets import register_preset_handlers
 from .prompt_editor import register_prompt_editor_handlers
+
+_HANDLER_LOCALIZATION_BRIDGE_KEY = "handlers.localization.bridge"
 
 
 @dataclass(slots=True)
@@ -36,6 +40,32 @@ def register_handlers_with_deps(router: Router, deps: HandlerRegistryDeps) -> No
         ui_text=deps.ui_text,
     )
 
+    try:
+        plugins = load_handler_plugins_from_packages(deps.cfg.handler_plugin_packages)
+    except HandlerPluginLoaderError as exc:
+        raise RuntimeError(f"Failed to load handler plugins: {exc}") from exc
+
+    if not plugins:
+        _register_handlers_legacy(router, deps, handler_localization)
+        return
+
+    context = HandlerPluginContext(router=router, deps=deps)
+    context.shared[_HANDLER_LOCALIZATION_BRIDGE_KEY] = handler_localization
+
+    for plugin in plugins:
+        descriptor = plugin.descriptor
+        if not descriptor.enabled_by_default:
+            continue
+        if HANDLER_CAPABILITY_REGISTRATION not in descriptor.capabilities:
+            continue
+        plugin.register(context)
+
+
+def _register_handlers_legacy(
+    router: Router,
+    deps: HandlerRegistryDeps,
+    handler_localization: UITextLocalizationBridge,
+) -> None:
     register_common_handlers(
         router,
         deps.cfg,

@@ -233,3 +233,6 @@ If none:
 | 2026-02-24 | Plan created; awaiting approval | `docs/dev/tasks/plugin_kernel_handler_pluginization/2026-02-24_plugin_kernel_handler_pluginization_plan.md` |
 | 2026-02-24 | Stage 1 implemented; awaiting explicit user approval | `docs/dev/tasks/plugin_kernel_handler_pluginization/reports/2026-02-24_stage-1_plugin-kernel-foundation_report.md` |
 | 2026-02-24 | Stage 1 approved by user | User message: `Этап 1 одобрен` |
+| 2026-02-24 | Stage 1 committed | `8cbc258` |
+| 2026-02-24 | Stage 2 implemented; awaiting explicit user approval | `docs/dev/tasks/plugin_kernel_handler_pluginization/reports/2026-02-24_stage-2_builtin-handler-plugins_report.md` |
+| 2026-02-24 | Stage 2 approved by user | User message: `Этап 2 одобрен` |

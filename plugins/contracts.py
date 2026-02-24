@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Protocol, runtime_checkable
+from typing import Protocol, runtime_checkable
 
 HANDLER_CAPABILITY_REGISTRATION = "handlers.registration"
 
@@ -50,8 +50,8 @@ class PluginDescriptor:
 
 @dataclass(slots=True)
 class HandlerPluginContext:
-    router: Any
-    deps: Any
+    router: object
+    deps: object
     shared: dict[str, object] = field(default_factory=dict)
 
 

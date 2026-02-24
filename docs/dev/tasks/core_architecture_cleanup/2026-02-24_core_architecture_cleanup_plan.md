@@ -196,10 +196,11 @@
 
 | Дата | Задача | Почему потребовалось | Решение |
 | --- | --- | --- | --- |
+| 2026-02-24 | Дополнительный анализ расширяемости без модификации ядра и динамических загрузок | Follow-up запрос пользователя в рамках Stage 2 каталога техдолга | done (добавлено в отчет Stage 2) |
 
 Если отсутствуют:
 
-- Нет.
+- N/A (выполнена одна дополнительная задача в рамках scope).
 
 ## Журнал одобрений этапов
 
@@ -207,3 +208,7 @@
 | --- | --- | --- |
 | 2026-02-24 | План создан; ожидается одобрение | `docs/dev/tasks/core_architecture_cleanup/2026-02-24_core_architecture_cleanup_plan.md` |
 | 2026-02-24 | Stage 1 реализован; ожидается явное одобрение пользователя | `docs/dev/tasks/core_architecture_cleanup/reports/2026-02-24_stage-1_architecture-baseline_report.md` |
+| 2026-02-24 | Stage 1 одобрен пользователем | Сообщение пользователя: `Этап 1 одобрен` |
+| 2026-02-24 | Stage 1 закоммичен | `c5fead6` |
+| 2026-02-24 | Stage 2 реализован; ожидается явное одобрение пользователя | `docs/dev/tasks/core_architecture_cleanup/reports/2026-02-24_stage-2_debt-catalog_report.md` |
+| 2026-02-24 | Stage 2 уточнен по follow-up запросу пользователя; ожидается явное одобрение | `docs/dev/tasks/core_architecture_cleanup/reports/2026-02-24_stage-2_debt-catalog_report.md` |

@@ -12,7 +12,13 @@ def _fingerprint() -> list[tuple[int, int, str]]:
 
 def test_load_discovered_nodes_detects_nodes_from_directory() -> None:
     node_ids = [node.node_id for node in load_discovered_nodes()]
-    assert "legacy_workflow" in node_ids
+    assert "checkpoint_loader" in node_ids
+    assert "clip_text_encode" in node_ids
+    assert "controlnet" in node_ids
+    assert "ipadapter" in node_ids
+    assert "sampler" in node_ids
+    assert "save_image" in node_ids
+    assert len(node_ids) >= 10
 
 
 def test_discovered_nodes_order_is_deterministic() -> None:
@@ -20,6 +26,18 @@ def test_discovered_nodes_order_is_deterministic() -> None:
     second = _fingerprint()
     assert first == second
     assert first == sorted(first)
+
+
+def test_load_discovered_nodes_supports_upscale_package() -> None:
+    node_ids = [
+        node.node_id for node in load_discovered_nodes("infrastructure.comfy_nodes.upscale_nodes")
+    ]
+    assert node_ids == [
+        "upscale_load_image",
+        "upscale_model_loader",
+        "image_upscale_with_model",
+        "upscale_save_image",
+    ]
 
 
 def test_build_comfy_workflow_signature_is_compatible() -> None:

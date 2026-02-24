@@ -87,6 +87,9 @@ class Config:
         "infrastructure.ui_text_modifiers:create_copy_profile_modifier"
     )
 
+    # Handler plugin pipeline
+    handler_plugin_packages: str = "handlers.plugins.builtin"
+
     @classmethod
     def from_env(cls) -> "Config":
         token = _env("TELEGRAM_BOT_TOKEN", "")
@@ -138,6 +141,10 @@ class Config:
                 "UI_TEXT_MODIFIER_FACTORIES",
                 "infrastructure.ui_text_modifiers:create_localization_modifier,"
                 "infrastructure.ui_text_modifiers:create_copy_profile_modifier",
+            ),
+            handler_plugin_packages=_env(
+                "HANDLER_PLUGIN_PACKAGES",
+                "handlers.plugins.builtin",
             ),
         )
 

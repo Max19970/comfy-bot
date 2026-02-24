@@ -22,6 +22,7 @@ def build_comfy_workflow(
     info: ComfyInfoLike,
     required_input_defaults: Callable[[str], dict[str, Any]],
     select_field_name: Callable[[dict[str, Any], tuple[str, ...]], str | None],
+    skip_base_sampler_pass: bool = False,
 ) -> dict[str, Any]:
     request = params.to_generation_request()
     prompt = request.prompt
@@ -339,27 +340,42 @@ def build_comfy_workflow(
             },
         )
 
-    sampler_id = _node(
-        "KSampler",
-        {
+    def _ksampler_inputs(*, latent_image: list[Any], denoise: float) -> dict[str, Any]:
+        return {
             "model": model_out,
             "positive": positive_ref,
             "negative": negative_ref,
-            "latent_image": [latent_id, 0],
+            "latent_image": latent_image,
             "seed": seed,
             "steps": sampling.steps,
             "cfg": sampling.cfg,
             "sampler_name": sampling.sampler,
             "scheduler": sampling.scheduler,
-            "denoise": sampling.denoise,
-        },
-    )
+            "denoise": denoise,
+        }
+
+    params_skip_flag = bool(getattr(params, "_skip_base_sampler_pass", False))
+    skip_base_sampling = (
+        skip_base_sampler_pass or params_skip_flag
+    ) and enhancements.enable_hires_fix
+    base_sampler_id: str | None = None
+    if not skip_base_sampling:
+        base_sampler_id = _node(
+            "KSampler",
+            _ksampler_inputs(latent_image=[latent_id, 0], denoise=sampling.denoise),
+        )
 
     if enhancements.enable_hires_fix:
+        if skip_base_sampling:
+            hires_sampler_source = [latent_id, 0]
+        elif base_sampler_id is not None:
+            hires_sampler_source = [base_sampler_id, 0]
+        else:
+            hires_sampler_source = [latent_id, 0]
         hires_latent_id = _node(
             "LatentUpscale",
             {
-                "samples": [sampler_id, 0],
+                "samples": hires_sampler_source,
                 "upscale_method": "bislerp",
                 "width": max(64, ((int(w * enhancements.hires_scale) + 7) // 8) * 8),
                 "height": max(64, ((int(h * enhancements.hires_scale) + 7) // 8) * 8),
@@ -368,19 +384,15 @@ def build_comfy_workflow(
         )
         sampler_id = _node(
             "KSampler",
-            {
-                "model": model_out,
-                "positive": positive_ref,
-                "negative": negative_ref,
-                "latent_image": [hires_latent_id, 0],
-                "seed": seed,
-                "steps": sampling.steps,
-                "cfg": sampling.cfg,
-                "sampler_name": sampling.sampler,
-                "scheduler": sampling.scheduler,
-                "denoise": enhancements.hires_denoise,
-            },
+            _ksampler_inputs(latent_image=[hires_latent_id, 0], denoise=enhancements.hires_denoise),
         )
+    else:
+        if base_sampler_id is None:
+            base_sampler_id = _node(
+                "KSampler",
+                _ksampler_inputs(latent_image=[latent_id, 0], denoise=sampling.denoise),
+            )
+        sampler_id = base_sampler_id
 
     if enhancements.enable_tiled_diffusion:
         decode_id = _node(

@@ -76,3 +76,47 @@ def test_build_comfy_workflow_includes_lora_and_upscale_nodes() -> None:
     assert "LoraLoader" in class_types
     assert "UpscaleModelLoader" in class_types
     assert "ImageUpscaleWithModel" in class_types
+
+
+def test_build_comfy_workflow_hires_img2img_uses_two_samplers_by_default() -> None:
+    workflow = build_comfy_workflow(
+        GenerationParams(
+            positive="portrait",
+            negative="blurry",
+            checkpoint="sdxl.safetensors",
+            enable_hires_fix=True,
+            seed=7,
+        ),
+        reference_image_name="source.png",
+        reference_mode="img2img",
+        object_info={},
+        info=_InfoStub(),
+        required_input_defaults=_defaults,
+        select_field_name=_select,
+    )
+
+    class_types = _class_types(workflow)
+    assert class_types.count("KSampler") == 2
+
+
+def test_build_comfy_workflow_hires_img2img_skips_base_sampler_when_requested() -> None:
+    workflow = build_comfy_workflow(
+        GenerationParams(
+            positive="portrait",
+            negative="blurry",
+            checkpoint="sdxl.safetensors",
+            enable_hires_fix=True,
+            seed=7,
+        ),
+        reference_image_name="source.png",
+        reference_mode="img2img",
+        object_info={},
+        info=_InfoStub(),
+        required_input_defaults=_defaults,
+        select_field_name=_select,
+        skip_base_sampler_pass=True,
+    )
+
+    class_types = _class_types(workflow)
+    assert class_types.count("KSampler") == 1
+    assert "LatentUpscale" in class_types

@@ -201,6 +201,11 @@ async def start_image_enhancement(
                     deps.runtime.persist()
 
             if requires_image_generation:
+                skip_base_sampler_pass = (
+                    run_params.enable_hires_fix and not artifact.enable_sampler_pass
+                )
+                if skip_base_sampler_pass:
+                    setattr(run_params, "_skip_base_sampler_pass", True)
                 images = await deps.client.generate_from_image(
                     run_params,
                     image_bytes=source_bytes,

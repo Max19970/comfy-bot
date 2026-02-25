@@ -96,6 +96,9 @@ class Config:
     # Comfy workflow node pipeline
     comfy_node_packages: str = "infrastructure.comfy_nodes.nodes"
 
+    # Runtime gateway extension pipeline
+    runtime_gateway_extension_packages: str = "core.runtime_gateway_plugins.builtin"
+
     @classmethod
     def from_env(cls) -> "Config":
         token = _env("TELEGRAM_BOT_TOKEN", "")
@@ -159,6 +162,10 @@ class Config:
             comfy_node_packages=_env(
                 "COMFY_NODE_PACKAGES",
                 "infrastructure.comfy_nodes.nodes",
+            ),
+            runtime_gateway_extension_packages=_env(
+                "RUNTIME_GATEWAY_EXTENSION_PACKAGES",
+                "core.runtime_gateway_plugins.builtin",
             ),
         )
 

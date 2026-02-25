@@ -138,6 +138,23 @@ COMFY_NODE_PACKAGES=infrastructure.comfy_nodes.nodes,my_project.comfy_nodes
 - Пакеты дедуплицируются автоматически, порядок загрузки детерминированный.
 - Конфликты `node_id` и конфликтующие `stage_labels` завершают запуск fail-fast с диагностикой.
 
+## Runtime gateway extensions
+
+| Переменная | По умолчанию | Описание |
+|---|---|---|
+| `RUNTIME_GATEWAY_EXTENSION_PACKAGES` | `core.runtime_gateway_plugins.builtin` | CSV-список пакетов с функцией `register_runtime_gateway_extensions(gateways, runtime)`, подключающих runtime gateway hooks без правок core runtime/handlers wiring. |
+
+Пример:
+
+```env
+RUNTIME_GATEWAY_EXTENSION_PACKAGES=core.runtime_gateway_plugins.builtin,my_project.runtime_gateway_plugins
+```
+
+Примечания:
+
+- Каждый extension package может регистрировать один или несколько extension-объектов через `gateways.register_extension(name, extension)`.
+- Дубликаты extension-имен приводят к fail-fast ошибке загрузки.
+
 ## Типичные ошибки конфигурации
 
 - Неверный `TELEGRAM_BOT_TOKEN` -> бот не стартует.

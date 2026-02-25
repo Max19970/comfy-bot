@@ -12,6 +12,11 @@ from application.smart_prompt_service import SmartPromptService
 from application.ui_text_service import DefaultUITextService
 from core.config import Config
 from core.runtime import RuntimeStore, load_runtime_store
+from core.runtime_gateway_extension_loader import (
+    RuntimeGatewayExtensionLoaderError,
+    load_runtime_gateway_extensions,
+)
+from core.runtime_gateways import RuntimeGateways, create_runtime_gateways
 from domain.localization import LocalizationService
 from domain.ui_text import UITextService
 from infrastructure.comfy_workflow_builder import set_generation_node_packages
@@ -30,6 +35,7 @@ class AppServices:
     downloader: ModelDownloader
     smart_prompt: SmartPromptService
     runtime: RuntimeStore
+    runtime_gateways: RuntimeGateways
     localization: LocalizationService
     ui_text: UITextService
 
@@ -44,6 +50,7 @@ class AppContext:
     downloader: ModelDownloader
     smart_prompt: SmartPromptService
     runtime: RuntimeStore
+    runtime_gateways: RuntimeGateways
     localization: LocalizationService
     ui_text: UITextService
 
@@ -57,6 +64,15 @@ class AppContext:
 
 def create_app_services(cfg: Config) -> AppServices:
     set_generation_node_packages(cfg.comfy_node_packages)
+    runtime = load_runtime_store()
+    runtime_gateways = create_runtime_gateways(runtime)
+    try:
+        load_runtime_gateway_extensions(
+            cfg.runtime_gateway_extension_packages,
+            gateways=runtime_gateways,
+        )
+    except RuntimeGatewayExtensionLoaderError as exc:
+        raise RuntimeError(f"Failed to load runtime gateway extensions: {exc}") from exc
 
     locales_root = Path(__file__).resolve().parent.parent / "locales"
     catalog = FileSystemTranslationCatalog(str(locales_root))
@@ -82,7 +98,8 @@ def create_app_services(cfg: Config) -> AppServices:
         client=ComfyUIClient(cfg),
         downloader=ModelDownloader(cfg),
         smart_prompt=SmartPromptService(cfg),
-        runtime=load_runtime_store(),
+        runtime=runtime,
+        runtime_gateways=runtime_gateways,
         localization=localization,
         ui_text=ui_text,
     )
@@ -112,6 +129,7 @@ def create_app_context(cfg: Config, *, services: AppServices | None = None) -> A
         downloader=active_services.downloader,
         smart_prompt=active_services.smart_prompt,
         runtime=active_services.runtime,
+        runtime_gateways=active_services.runtime_gateways,
         localization=active_services.localization,
         ui_text=active_services.ui_text,
     )

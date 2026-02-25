@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import textwrap
 from pathlib import Path
 from typing import Any
 
@@ -8,6 +9,15 @@ from application.model_downloader import ModelDownloader, SearchResult
 from application.model_source_providers import ModelSourceProviderRegistry, ModelSourceSearchRequest
 from core.config import Config
 from infrastructure.model_source_clients import FileDownloadResult
+
+
+def _write_provider_package(tmp_path: Path, package_name: str, files: dict[str, str]) -> None:
+    package_dir = tmp_path / package_name
+    package_dir.mkdir(parents=True, exist_ok=True)
+    for relative_path, content in files.items():
+        file_path = package_dir / relative_path
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        file_path.write_text(textwrap.dedent(content).strip() + "\n", encoding="utf-8")
 
 
 class _ProviderStub:
@@ -180,8 +190,8 @@ def test_download_model_uses_provider_download_headers(tmp_path: Path) -> None:
     async def _record_metadata(*_: Any, **__: Any) -> None:
         return None
 
-    downloader._remote_file_downloader = _RemoteDownloaderStub()
-    downloader._record_download_metadata = _record_metadata
+    setattr(downloader, "_remote_file_downloader", _RemoteDownloaderStub())
+    setattr(downloader, "_record_download_metadata", _record_metadata)
 
     result = SearchResult(
         name="custom-model",
@@ -198,3 +208,74 @@ def test_download_model_uses_provider_download_headers(tmp_path: Path) -> None:
 
     assert captured["headers"] == {"Authorization": "Bearer custom-token"}
     assert Path(target_path).exists()
+
+
+def test_model_downloader_loads_dynamic_provider_package(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    package_name = "fixture_model_source_dynamic"
+    _write_provider_package(
+        tmp_path,
+        package_name,
+        {
+            "__init__.py": "",
+            "main.py": """
+from application.model_downloader import SearchResult
+
+
+class _DynamicProvider:
+    source = "dynamic"
+
+    async def search(self, request):
+        return [
+            SearchResult(
+                name="Dynamic provider model",
+                source=self.source,
+                model_id="dynamic/model",
+                version_id="v1",
+                filename="dynamic.safetensors",
+                download_url="https://example.com/dynamic",
+                model_type=request.model_type,
+                download_count=7,
+                rating=1.0,
+            )
+        ]
+
+    async def resolve_direct(self, request):
+        return []
+
+    def download_headers(self):
+        return {"X-Provider": "dynamic"}
+
+
+def register_providers(registry, context):
+    registry.register(_DynamicProvider())
+""",
+        },
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+
+    cfg = Config(
+        telegram_token="test-token",
+        comfyui_models_path=str(tmp_path / "models"),
+        model_source_provider_packages=package_name,
+    )
+    downloader = ModelDownloader(cfg)
+
+    try:
+        assert downloader.source_providers.sources() == ("dynamic",)
+
+        results = asyncio.run(
+            downloader.search(
+                "anything",
+                "checkpoint",
+                source="dynamic",
+                limit=3,
+            )
+        )
+        assert len(results) == 1
+        assert results[0].source == "dynamic"
+        assert results[0].model_id == "dynamic/model"
+    finally:
+        asyncio.run(downloader.close())

@@ -107,6 +107,7 @@ python -m pytest -q
 - `docs/REFACTOR_GUARDRAILS.md` — протокол безопасного поэтапного рефакторинга.
 - `docs/LOCALIZATION.md` — структура переводов и добавление новых языков без правки ядра.
 - `docs/HANDLER_PLUGINS.md` — контракт handler-плагинов и добавление новых handler-блоков без правки registry.
+- `docs/PROVIDER_WORKFLOW_EXTENSIONS.md` — расширение источников моделей и workflow-нод без модификации ядра.
 - `docs/TROUBLESHOOTING.md` — типовые проблемы и решения.
 - `SECURITY.md` — правила безопасной публикации и работы с секретами.
 - `CONTRIBUTING.md` — рекомендации по развитию проекта.
@@ -123,6 +124,9 @@ core/
   ...                                 # Shared runtime, UI, storage, helpers
 application/
   model_downloader.py                 # Поиск/скачивание моделей и метаданные
+  model_source_provider_loader.py     # Dynamic loader для источников моделей
+  model_source_providers.py           # Контракты/registry провайдеров источников
+  model_source_plugins/               # Built-in source provider plugins
   smart_prompt_service.py             # Локальная интеграция TIPO для Smart Prompt
 infrastructure/
   comfyui_client.py                   # Клиент ComfyUI API и сборка workflow

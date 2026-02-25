@@ -104,6 +104,40 @@ HANDLER_PLUGIN_PACKAGES=handlers.plugins.builtin,my_project.handlers.plugins
 - Если список пустой или не дал валидных плагинов, используется fallback на `handlers.plugins.builtin`.
 - Для каждого плагина обязателен `register_plugins(registry)` и capability `handlers.registration`.
 
+## Model source provider pipeline
+
+| Переменная | По умолчанию | Описание |
+|---|---|---|
+| `MODEL_SOURCE_PROVIDER_PACKAGES` | `application.model_source_plugins.builtin` | CSV-список пакетов с функцией `register_providers(registry, context)`, подключающих источники моделей без правки `ModelDownloader`. |
+
+Пример:
+
+```env
+MODEL_SOURCE_PROVIDER_PACKAGES=application.model_source_plugins.builtin,my_project.model_source_plugins
+```
+
+Примечания:
+
+- Если список пустой или не дал провайдеров, применяется fallback на `application.model_source_plugins.builtin`.
+- Новый источник подключается через package hook, а не через изменение ядра downloader.
+
+## Comfy workflow node packages
+
+| Переменная | По умолчанию | Описание |
+|---|---|---|
+| `COMFY_NODE_PACKAGES` | `infrastructure.comfy_nodes.nodes` | CSV-список пакетов comfy-нод с `register_nodes(registry)` для расширения workflow без модификации ядра. |
+
+Пример:
+
+```env
+COMFY_NODE_PACKAGES=infrastructure.comfy_nodes.nodes,my_project.comfy_nodes
+```
+
+Примечания:
+
+- Пакеты дедуплицируются автоматически, порядок загрузки детерминированный.
+- Конфликты `node_id` и конфликтующие `stage_labels` завершают запуск fail-fast с диагностикой.
+
 ## Типичные ошибки конфигурации
 
 - Неверный `TELEGRAM_BOT_TOKEN` -> бот не стартует.

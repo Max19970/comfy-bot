@@ -225,10 +225,11 @@
 | Date | Task | Why needed | Resolution |
 | --- | --- | --- | --- |
 | 2026-02-25 | Добавить динамическую загрузку provider-слоя без модификации ядра | Follow-up запрос пользователя во время Stage 1 | done (реализовано в Stage 1 foundation) |
+| 2026-02-25 | Обновить локальный `.env` под текущий формат extension pipelines | Follow-up запрос пользователя во время Stage 4 | done (добавлены актуальные env-переменные pipelines) |
 
 If none:
 
-- N/A (выполнена одна дополнительная задача в рамках Stage 1).
+- N/A (выполнены дополнительные задачи в рамках Stage 1 и Stage 4).
 
 ## Журнал одобрений этапов
 
@@ -244,3 +245,7 @@ If none:
 | 2026-02-25 | Stage 2 committed | `e9dce96` |
 | 2026-02-25 | Stage 3 implemented; awaiting explicit user approval | `docs/dev/tasks/provider_workflow_extensions/reports/2026-02-25_stage-3_workflow-extension-contracts_report.md` |
 | 2026-02-25 | Stage 3 approved by user | User message: `Этап 3 одобрен` |
+| 2026-02-25 | Stage 3 committed | `90f077b` |
+| 2026-02-25 | Stage 4 implemented; awaiting explicit user approval | `docs/dev/tasks/provider_workflow_extensions/reports/2026-02-25_stage-4_final-p3-p4-package_report.md` |
+| 2026-02-25 | Stage 4 дополнен follow-up обновлением `.env`; ожидается явное одобрение | `docs/dev/tasks/provider_workflow_extensions/reports/2026-02-25_stage-4_final-p3-p4-package_report.md` |
+| 2026-02-25 | Stage 4 approved by user | User message: `Этап 4 одобрен` |

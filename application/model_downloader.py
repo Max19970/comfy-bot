@@ -19,8 +19,11 @@ from application.model_source_provider_loader import (
     load_model_source_provider_registry,
 )
 from application.model_source_providers import (
+    SOURCE_ALL,
+    ModelSourceProvider,
     ModelSourceProviderBuildContext,
     ModelSourceProviderRegistry,
+    ModelSourceSearchRequest,
 )
 from core.config import Config
 from core.formatting import human_size, short_number
@@ -1231,9 +1234,14 @@ class ModelDownloader:
             raise FileExistsError(f"File already exists: {target_path}")
 
         headers: dict[str, str] = {}
-        if result.source == "civitai" and self.cfg.civitai_api_key:
+        provider = self._source_providers.get(result.source)
+        if provider is not None:
+            headers = dict(provider.download_headers())
+        elif result.source == "civitai" and self.cfg.civitai_api_key:
+            # Backward-compatible fallback for legacy source identifiers.
             headers["Authorization"] = f"Bearer {self.cfg.civitai_api_key}"
         elif result.source == "huggingface" and self.cfg.huggingface_token:
+            # Backward-compatible fallback for legacy source identifiers.
             headers["Authorization"] = f"Bearer {self.cfg.huggingface_token}"
 
         if progress_cb:
@@ -1317,20 +1325,62 @@ class ModelDownloader:
     # Combined search
     # ===================================================================
 
+    def _providers_for_source(self, source: str) -> tuple[ModelSourceProvider, ...]:
+        providers = self._source_providers.resolve(source)
+        if not providers:
+            logger.warning("No model source providers resolved for source='%s'", source)
+        return providers
+
+    async def _search_with_providers(
+        self,
+        providers: tuple[ModelSourceProvider, ...],
+        request: ModelSourceSearchRequest,
+        *,
+        log_prefix: str,
+    ) -> list[SearchResult]:
+        if not providers:
+            return []
+
+        async def _run_provider(
+            provider: ModelSourceProvider,
+        ) -> tuple[str, list[SearchResult], Exception | None]:
+            try:
+                raw = await provider.search(request)
+                return (
+                    provider.source,
+                    [item for item in raw if isinstance(item, SearchResult)],
+                    None,
+                )
+            except (aiohttp.ClientError, asyncio.TimeoutError, ValueError, RuntimeError) as exc:
+                return provider.source, [], exc
+
+        batches: list[SearchResult] = []
+        for coro in asyncio.as_completed([_run_provider(provider) for provider in providers]):
+            source_name, payload, error = await coro
+            if error is not None:
+                logger.warning("%s source '%s' error: %s", log_prefix, source_name, error)
+                continue
+            batches.extend(payload)
+        return batches
+
     async def _search_direct_url(
         self,
-        query: str,
-        *,
-        model_type: str,
+        request: ModelSourceSearchRequest,
     ) -> list[SearchResult]:
-        civitai_model_id = self._extract_civitai_model_id(query)
-        if civitai_model_id:
-            return await self.fetch_civitai_model(civitai_model_id, model_type=model_type)
-
-        hf_repo_id = self._extract_hf_repo_id(query)
-        if hf_repo_id:
-            return await self.fetch_huggingface_repo(hf_repo_id, model_type=model_type)
-
+        providers = self._providers_for_source(SOURCE_ALL)
+        for provider in providers:
+            try:
+                raw = await provider.resolve_direct(request)
+            except (aiohttp.ClientError, asyncio.TimeoutError, ValueError, RuntimeError) as exc:
+                logger.warning(
+                    "Direct URL provider '%s' failed: %s",
+                    provider.source,
+                    exc,
+                )
+                continue
+            matches = [item for item in raw if isinstance(item, SearchResult)]
+            if matches:
+                return matches
         return []
 
     async def search(
@@ -1356,14 +1406,6 @@ class ModelDownloader:
         if not query:
             return []
 
-        # URL mode: direct model link from CivitAI/HuggingFace.
-        try:
-            direct_results = await self._search_direct_url(query, model_type=model_type)
-            if direct_results:
-                return direct_results
-        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError, RuntimeError) as exc:
-            logger.warning("Direct URL search failed: %s", exc)
-
         author_filters = [
             item.strip().lstrip("@").lower()
             for item in (civitai_authors or [])
@@ -1372,56 +1414,43 @@ class ModelDownloader:
         if not author_filters and civitai_author.strip():
             author_filters = [civitai_author.strip().lstrip("@").lower()]
 
-        tasks = []
-        if source in ("civitai", "all"):
-            tasks.append(
-                self.search_civitai(
-                    query,
-                    model_type,
-                    limit,
-                    sort=sort,
-                    period=period,
-                    base_models=base_models,
-                    include_nsfw=include_nsfw,
-                    authors=author_filters,
-                )
-            )
-        if source in ("huggingface", "all"):
-            tasks.append(self.search_huggingface(query, model_type, limit))
+        request = ModelSourceSearchRequest(
+            query=query,
+            model_type=model_type,
+            limit=limit,
+            sort=sort,
+            period=period,
+            base_models=tuple(base_models or []),
+            include_nsfw=include_nsfw,
+            civitai_authors=tuple(author_filters),
+            strict_type=True,
+        )
 
-        results: list[SearchResult] = []
-        for coro in asyncio.as_completed(tasks):
-            try:
-                batch = await coro
-                results.extend(batch)
-            except (aiohttp.ClientError, asyncio.TimeoutError, ValueError, RuntimeError) as exc:
-                logger.warning("Search source error: %s", exc)
+        # URL mode: direct model link from CivitAI/HuggingFace.
+        direct_results = await self._search_direct_url(request)
+        if direct_results:
+            return direct_results
+
+        providers = self._providers_for_source(source)
+        results = await self._search_with_providers(providers, request, log_prefix="Search")
 
         if not results:
-            relaxed_tasks = []
-            if source in ("civitai", "all"):
-                relaxed_tasks.append(
-                    self.search_civitai(
-                        query,
-                        model_type,
-                        limit,
-                        sort="Most Downloaded",
-                        period="AllTime",
-                        base_models=None,
-                        include_nsfw=include_nsfw,
-                        authors=[],
-                        strict_type=False,
-                    )
-                )
-            if source in ("huggingface", "all"):
-                relaxed_tasks.append(self.search_huggingface(query, model_type, limit))
-
-            for coro in asyncio.as_completed(relaxed_tasks):
-                try:
-                    batch = await coro
-                    results.extend(batch)
-                except (aiohttp.ClientError, asyncio.TimeoutError, ValueError, RuntimeError) as exc:
-                    logger.warning("Relaxed search source error: %s", exc)
+            relaxed_request = ModelSourceSearchRequest(
+                query=query,
+                model_type=model_type,
+                limit=limit,
+                sort="Most Downloaded",
+                period="AllTime",
+                base_models=(),
+                include_nsfw=include_nsfw,
+                civitai_authors=(),
+                strict_type=False,
+            )
+            results = await self._search_with_providers(
+                providers,
+                relaxed_request,
+                log_prefix="Relaxed search",
+            )
 
         # Rank primarily by downloads, secondarily by rating.
         results.sort(

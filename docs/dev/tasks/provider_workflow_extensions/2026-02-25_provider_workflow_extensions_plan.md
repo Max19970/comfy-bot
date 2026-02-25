@@ -238,3 +238,5 @@ If none:
 | 2026-02-25 | Stage 1 implemented; awaiting explicit user approval | `docs/dev/tasks/provider_workflow_extensions/reports/2026-02-25_stage-1_model-source-provider-foundation_report.md` |
 | 2026-02-25 | Stage 1 дополнен dynamic-loading provider extension; ожидается явное одобрение | `docs/dev/tasks/provider_workflow_extensions/reports/2026-02-25_stage-1_model-source-provider-foundation_report.md` |
 | 2026-02-25 | Stage 1 approved by user | User message: `Этап 1 одобрен` |
+| 2026-02-25 | Stage 1 committed | `2832db9` |
+| 2026-02-25 | Stage 2 implemented; awaiting explicit user approval | `docs/dev/tasks/provider_workflow_extensions/reports/2026-02-25_stage-2_model-downloader-provider-integration_report.md` |

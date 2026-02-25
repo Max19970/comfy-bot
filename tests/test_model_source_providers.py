@@ -93,6 +93,7 @@ def test_civitai_provider_maps_search_and_direct_contracts() -> None:
         "base_models": ["SDXL"],
         "include_nsfw": True,
         "authors": ["alice", "bob"],
+        "strict_type": True,
     }
 
     assert asyncio.run(provider.resolve_direct(request)) == ["direct-ok"]

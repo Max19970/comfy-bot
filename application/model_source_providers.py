@@ -28,6 +28,7 @@ class ModelSourceSearchRequest:
     base_models: tuple[str, ...] = ()
     include_nsfw: bool = False
     civitai_authors: tuple[str, ...] = ()
+    strict_type: bool = True
 
 
 @runtime_checkable
@@ -113,6 +114,7 @@ class CivitaiModelSourceProvider:
             base_models=list(request.base_models),
             include_nsfw=request.include_nsfw,
             authors=list(request.civitai_authors),
+            strict_type=request.strict_type,
         )
 
     async def resolve_direct(self, request: ModelSourceSearchRequest) -> list[Any]:

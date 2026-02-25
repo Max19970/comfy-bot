@@ -240,3 +240,7 @@ If none:
 | 2026-02-25 | Stage 1 approved by user | User message: `Этап 1 одобрен` |
 | 2026-02-25 | Stage 1 committed | `2832db9` |
 | 2026-02-25 | Stage 2 implemented; awaiting explicit user approval | `docs/dev/tasks/provider_workflow_extensions/reports/2026-02-25_stage-2_model-downloader-provider-integration_report.md` |
+| 2026-02-25 | Stage 2 approved by user | User message: `Этап 2 одобрен` |
+| 2026-02-25 | Stage 2 committed | `e9dce96` |
+| 2026-02-25 | Stage 3 implemented; awaiting explicit user approval | `docs/dev/tasks/provider_workflow_extensions/reports/2026-02-25_stage-3_workflow-extension-contracts_report.md` |
+| 2026-02-25 | Stage 3 approved by user | User message: `Этап 3 одобрен` |

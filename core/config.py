@@ -93,6 +93,9 @@ class Config:
     # Model source provider pipeline
     model_source_provider_packages: str = "application.model_source_plugins.builtin"
 
+    # Comfy workflow node pipeline
+    comfy_node_packages: str = "infrastructure.comfy_nodes.nodes"
+
     @classmethod
     def from_env(cls) -> "Config":
         token = _env("TELEGRAM_BOT_TOKEN", "")
@@ -152,6 +155,10 @@ class Config:
             model_source_provider_packages=_env(
                 "MODEL_SOURCE_PROVIDER_PACKAGES",
                 "application.model_source_plugins.builtin",
+            ),
+            comfy_node_packages=_env(
+                "COMFY_NODE_PACKAGES",
+                "infrastructure.comfy_nodes.nodes",
             ),
         )
 

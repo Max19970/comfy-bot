@@ -3,7 +3,11 @@ from __future__ import annotations
 import inspect
 
 from infrastructure.comfy_nodes.registry import load_discovered_nodes
-from infrastructure.comfy_workflow_builder import build_comfy_workflow
+from infrastructure.comfy_workflow_builder import (
+    build_comfy_workflow,
+    generation_node_packages,
+    set_generation_node_packages,
+)
 
 
 def _fingerprint() -> list[tuple[int, int, str]]:
@@ -59,3 +63,15 @@ def test_build_comfy_workflow_signature_is_compatible() -> None:
     for parameter in parameters[1:]:
         assert parameter.kind is inspect.Parameter.KEYWORD_ONLY
     assert signature.parameters["skip_base_sampler_pass"].default is False
+
+
+def test_generation_node_packages_setting_deduplicates_entries() -> None:
+    previous = generation_node_packages()
+    try:
+        configured = set_generation_node_packages(
+            "infrastructure.comfy_nodes.nodes, infrastructure.comfy_nodes.nodes"
+        )
+        assert configured == ("infrastructure.comfy_nodes.nodes",)
+        assert generation_node_packages() == configured
+    finally:
+        set_generation_node_packages(",".join(previous))

@@ -9,9 +9,25 @@ from core.models import GenerationParams
 from .comfy_nodes.builder import build_workflow_from_nodes, collect_workflow_stage_labels
 from .comfy_nodes.context import ComfyInfoLike, ComfyWorkflowBuildContext
 from .comfy_nodes.contracts import WorkflowStageLabel
+from .comfy_nodes.registry import parse_node_packages
 
 UPSCALE_NODES_PACKAGE = "infrastructure.comfy_nodes.upscale_nodes"
 GENERATION_NODES_PACKAGE = "infrastructure.comfy_nodes.nodes"
+_DEFAULT_GENERATION_NODE_PACKAGES = (GENERATION_NODES_PACKAGE,)
+_generation_node_packages = _DEFAULT_GENERATION_NODE_PACKAGES
+
+
+def set_generation_node_packages(packages_csv: str | None) -> tuple[str, ...]:
+    global _generation_node_packages
+    _generation_node_packages = parse_node_packages(
+        packages_csv,
+        default_packages=_DEFAULT_GENERATION_NODE_PACKAGES,
+    )
+    return _generation_node_packages
+
+
+def generation_node_packages() -> tuple[str, ...]:
+    return _generation_node_packages
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,7 +73,7 @@ def build_comfy_workflow(
         select_field_name=select_field_name,
         skip_base_sampler_pass=skip_base_sampler_pass or params_skip_flag,
     )
-    return build_workflow_from_nodes(context)
+    return build_workflow_from_nodes(context, package_names=_generation_node_packages)
 
 
 def build_comfy_upscale_workflow(
@@ -84,7 +100,10 @@ def build_comfy_upscale_workflow(
 
 
 def comfy_workflow_stage_labels() -> dict[str, WorkflowStageLabel]:
+    package_names = parse_node_packages(
+        (*_generation_node_packages, UPSCALE_NODES_PACKAGE),
+        default_packages=(_DEFAULT_GENERATION_NODE_PACKAGES[0], UPSCALE_NODES_PACKAGE),
+    )
     return collect_workflow_stage_labels(
-        GENERATION_NODES_PACKAGE,
-        UPSCALE_NODES_PACKAGE,
+        *package_names,
     )

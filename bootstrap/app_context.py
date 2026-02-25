@@ -14,6 +14,7 @@ from core.config import Config
 from core.runtime import RuntimeStore, load_runtime_store
 from domain.localization import LocalizationService
 from domain.ui_text import UITextService
+from infrastructure.comfy_workflow_builder import set_generation_node_packages
 from infrastructure.comfyui_client import ComfyUIClient
 from infrastructure.localization_catalog import FileSystemTranslationCatalog
 from infrastructure.ui_text_pipeline import build_ui_text_modifiers
@@ -55,6 +56,8 @@ class AppContext:
 
 
 def create_app_services(cfg: Config) -> AppServices:
+    set_generation_node_packages(cfg.comfy_node_packages)
+
     locales_root = Path(__file__).resolve().parent.parent / "locales"
     catalog = FileSystemTranslationCatalog(str(locales_root))
     localization = DefaultLocalizationService(catalog)

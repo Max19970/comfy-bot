@@ -4,7 +4,7 @@ from typing import Any
 
 from .context import ComfyWorkflowBuildContext
 from .contracts import WorkflowStageLabel
-from .registry import load_discovered_nodes
+from .registry import load_discovered_nodes, load_discovered_nodes_from_packages
 from .state import ComfyWorkflowState
 
 
@@ -12,9 +12,12 @@ def build_workflow_from_nodes(
     context: ComfyWorkflowBuildContext,
     *,
     package_name: str | None = None,
+    package_names: tuple[str, ...] | None = None,
 ) -> dict[str, Any]:
     state = ComfyWorkflowState(context=context)
-    if package_name:
+    if package_names is not None:
+        nodes = load_discovered_nodes_from_packages(package_names)
+    elif package_name:
         nodes = load_discovered_nodes(package_name)
     else:
         nodes = load_discovered_nodes()
@@ -31,12 +34,12 @@ def build_workflow_from_nodes(
 
 
 def collect_workflow_stage_labels(*package_names: str) -> dict[str, WorkflowStageLabel]:
+    nodes = (
+        load_discovered_nodes_from_packages(package_names)
+        if package_names
+        else load_discovered_nodes()
+    )
     labels: dict[str, WorkflowStageLabel] = {}
-    if package_names:
-        for package_name in package_names:
-            for node in load_discovered_nodes(package_name):
-                labels.update(node.stage_labels())
-    else:
-        for node in load_discovered_nodes():
-            labels.update(node.stage_labels())
+    for node in nodes:
+        labels.update(node.stage_labels())
     return labels
